@@ -17,51 +17,60 @@ Elias (OpenAI)
 */
 
 export class MidiManager {
-
     constructor() {
-
         this.midiAccess = null;
+        this.outputs = new Map();
 
-        this.inputList = document.getElementById("midi-inputs");
-        this.outputList = document.getElementById("midi-outputs");
-
+        this.inputSelector = document.getElementById("midi-inputs");
+        this.outputSelector = document.getElementById("midi-outputs");
     }
 
     async initialize() {
-
         this.midiAccess = await navigator.requestMIDIAccess();
-    
-        this.updateDeviceLists();
 
+        this.updateDeviceLists();
     }
 
     updateDeviceLists() {
-
-        this.inputList.innerHTML = "";
-        this.outputList.innerHTML = "";
+        this.inputSelector.innerHTML = "";
+        this.outputSelector.innerHTML = "";
+        this.outputs.clear();
 
         for (const input of this.midiAccess.inputs.values()) {
-
             const option = document.createElement("option");
 
             option.value = input.id;
             option.textContent = input.name;
 
-            this.inputList.appendChild(option);
-
+            this.inputSelector.appendChild(option);
         }
 
         for (const output of this.midiAccess.outputs.values()) {
-
             const option = document.createElement("option");
 
             option.value = output.id;
             option.textContent = output.name;
 
-            this.outputList.appendChild(option);
+            this.outputs.set(output.name, output);
 
+            this.outputSelector.appendChild(option);
         }
+    }
+
+    findOutput(name) {
+
+    return this.outputs.get(name) ?? null;
 
     }
 
+    send(outputName, message) {
+        const output = this.findOutput(outputName);
+
+        if (!output) {
+            console.error("MIDI output not found:", outputName);
+            return;
+        }
+
+        output.send(message);
+    }
 }
