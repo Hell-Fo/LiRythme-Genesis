@@ -1,7 +1,13 @@
 import { MidiManager } from "./hardware/midi/MidiManager.js";
+import { LaunchpadMini } from "./hardware/launchpad/LaunchpadMini.js";
 
 const midiManager = new MidiManager();
 
 await midiManager.initialize();
 
-midiManager.send("Launchpad Mini", [0x90, 0, 127]);
+const launchpad = new LaunchpadMini(midiManager);
+
+midiManager.listenToInput(
+    "Launchpad Mini",
+    (data) => launchpad.handleMidiMessage(data)
+);

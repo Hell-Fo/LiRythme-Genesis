@@ -58,9 +58,7 @@ export class MidiManager {
     }
 
     findOutput(name) {
-
-    return this.outputs.get(name) ?? null;
-
+        return this.outputs.get(name) ?? null;
     }
 
     send(outputName, message) {
@@ -72,5 +70,19 @@ export class MidiManager {
         }
 
         output.send(message);
+    }
+
+    listenToInput(inputName, callback) {
+        for (const input of this.midiAccess.inputs.values()) {
+            if (input.name === inputName) {
+                input.onmidimessage = (event) => {
+                    callback(event.data);
+                };
+
+                return;
+            }
+        }
+
+        console.error("MIDI input not found:", inputName);
     }
 }
