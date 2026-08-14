@@ -23,10 +23,27 @@ export const LaunchpadMapping = {
         108, 109, 110, 111
     ],
 
+    TOP_CONTROLS: {
+        SHIFT: 104,
+        MODULATION: 105,
+        PLAY_STOP: 106,
+        SOLO: 107,
+        MUTE: 108,
+        MUTATION: 109,
+        PREVIOUS: 110,
+        NEXT: 111
+    },
+
     VALUE: [
         120, 104, 88, 72,
         56, 40, 24, 8
     ],
+
+    VALUE_CONTROLS: {
+        DELETE: 88,
+        COPY: 104,
+        SWITCH: 120
+    },
 
     MOTIF: [
         0, 1, 2, 3, 4, 5, 6, 7,
