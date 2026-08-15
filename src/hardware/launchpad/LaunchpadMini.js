@@ -36,6 +36,8 @@ export class LaunchpadMini {
         this.previousPressed = false;
         this.nextPressed = false;
         this.navigationCombo = false;
+        this.playStopTimer = null;
+        this.playStopLongPressTriggered = false;
     }
 
     setLed(note, value) {
@@ -87,59 +89,96 @@ export class LaunchpadMini {
             this.setTopLed(controller, colorValue);
         }
     }
+    drawTransport() {
+        const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
+
+        if (this.state.transportState === "PLAY") {
+            this.setTopLed(
+                playStop,
+                this.colors.GREEN
+            );
+        } else {
+            this.setTopLed(
+                playStop,
+                this.colors.DIM_GREEN
+            );
+        }
+    }
+    // temp timeline
+    drawPlayhead() {
+        const note = this.mapping.MOTIF[
+            this.state.playheadPosition
+        ];
+
+        this.setLed(
+            note,
+            this.state.currentTimeline === "MOTIF"
+                ? this.colors.GREEN
+                : this.colors.RED
+        );
+    }
+
     drawTimelineSelection() {
         const previous = this.mapping.TOP_CONTROLS.PREVIOUS;
         const next = this.mapping.TOP_CONTROLS.NEXT;
 
-        // FREEZE MODE
-        if (this.state.freezeMode) {
-            if (this.state.currentTimeline === "MOTIF") {
-                this.setTopLed(
-                    previous,
-                    this.colors.GREEN
-                );
+        const isMotif = this.state.currentTimeline === "MOTIF";
 
-                this.setTopLed(
-                    next,
-                    this.colors.DIM_GREEN
-                );
-            } else {
-                this.setTopLed(
-                    previous,
-                    this.colors.DIM_GREEN
-                );
+        // LOCK + FREEZE
+        if (this.state.lockMode && this.state.freezeMode) {
+            this.setTopLed(
+                previous,
+                isMotif ? this.colors.RED : this.colors.DIM_GREEN
+            );
 
-                this.setTopLed(
-                    next,
-                    this.colors.GREEN
-                );
-            }
+            this.setTopLed(
+                next,
+                isMotif ? this.colors.DIM_GREEN : this.colors.RED
+            );
 
             return;
         }
 
-        // NORMAL PLAY MODE
-        if (this.state.currentTimeline === "MOTIF") {
+        // LOCK
+        if (this.state.lockMode) {
             this.setTopLed(
                 previous,
-                this.colors.AMBER
+                isMotif ? this.colors.RED : this.colors.DIM_RED
             );
 
             this.setTopLed(
                 next,
-                this.colors.DIM_AMBER
-            );
-        } else {
-            this.setTopLed(
-                previous,
-                this.colors.DIM_AMBER
+                isMotif ? this.colors.DIM_RED : this.colors.RED
             );
 
-            this.setTopLed(
-                next,
-                this.colors.AMBER
-            );
+            return;
         }
+
+        // FREEZE
+        if (this.state.freezeMode) {
+            this.setTopLed(
+                previous,
+                isMotif ? this.colors.GREEN : this.colors.DIM_GREEN
+            );
+
+            this.setTopLed(
+                next,
+                isMotif ? this.colors.DIM_GREEN : this.colors.GREEN
+            );
+
+            return;
+        }
+
+        // NORMAL
+        this.setTopLed(
+            previous,
+            isMotif ? this.colors.AMBER : this.colors.DIM_AMBER
+        );
+
+        this.setTopLed(
+            next,
+            isMotif ? this.colors.DIM_AMBER : this.colors.AMBER
+        );
     }
 
     drawInstruments() {
@@ -281,8 +320,13 @@ export class LaunchpadMini {
                 if (this.nextPressed) {
                     this.navigationCombo = true;
 
-                    if (this.state.isPlaying) {
-                        this.actions.toggleFreezeMode();
+                    if (this.state.transportState === "PLAY") {
+                        if (this.shiftPressed) {
+                            this.actions.toggleLockMode();
+                        } else {
+                            this.actions.toggleFreezeMode();
+                        }
+
                         this.drawTimelineSelection();
                     }
                 }
@@ -305,11 +349,15 @@ export class LaunchpadMini {
                 return;
             }
 
-            if (this.state.isPlaying) {
+            if (this.state.transportState === "PLAY") {
                 this.actions.selectMotifTimeline();
                 this.drawTimelineSelection();
+                this.drawMotif();
+                this.drawPlayhead();
             } else {
-                console.log("NAV: PREVIOUS released");
+                this.actions.previousStep();
+                this.drawMotif();
+                this.drawPlayhead();
             }
 
             return;
@@ -322,8 +370,13 @@ export class LaunchpadMini {
                 if (this.previousPressed) {
                     this.navigationCombo = true;
 
-                    if (this.state.isPlaying) {
-                        this.actions.toggleFreezeMode();
+                    if (this.state.transportState === "PLAY") {
+                        if (this.shiftPressed) {
+                            this.actions.toggleLockMode();
+                        } else {
+                            this.actions.toggleFreezeMode();
+                        }
+
                         this.drawTimelineSelection();
                     }
                 }
@@ -346,18 +399,40 @@ export class LaunchpadMini {
                 return;
             }
 
-            if (this.state.isPlaying) {
+            if (this.state.transportState === "PLAY") {
                 this.actions.selectModulationTimeline();
                 this.drawTimelineSelection();
+                this.drawMotif();
+                this.drawPlayhead();
             } else {
-                console.log("NAV: NEXT released");
+                this.actions.nextStep();
+                this.drawMotif();
+                this.drawPlayhead();
             }
-
             return;
         }
 
-        if (controlName === "PLAY_STOP" && value > 0) {
-            this.actions.togglePlayPause();
+        if (controlName === "PLAY_STOP") {
+            if (value > 0) {
+                this.playStopLongPressTriggered = false;
+
+                this.playStopTimer = setTimeout(() => {
+                    this.playStopLongPressTriggered = true;
+                    this.actions.stop();
+                    this.drawTransport();
+                }, 300);
+
+                return;
+            }
+
+            clearTimeout(this.playStopTimer);
+            this.playStopTimer = null;
+
+            if (!this.playStopLongPressTriggered) {
+                this.actions.togglePlayPause();
+                this.drawTransport();
+            }
+
             return;
         }
 

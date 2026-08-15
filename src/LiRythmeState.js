@@ -16,7 +16,8 @@ Elias (OpenAI)
 
 export class LiRythmeState {
     constructor() {
-        this.isPlaying = false;
+        this.transportState = "STOP";
+        this.playheadPosition = 0;
 
         this.currentTimeline = "MOTIF";
 
@@ -24,5 +25,6 @@ export class LiRythmeState {
         this.modulationChainMode = false;
 
         this.freezeMode = false;
+        this.lockMode = false;
     }
 }

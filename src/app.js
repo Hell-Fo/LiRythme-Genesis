@@ -28,6 +28,8 @@ midiManager.listenToInput(
 );
 
 launchpad.drawMotif();
+launchpad.drawPlayhead();
 launchpad.drawInstruments();
 launchpad.drawAttributesTransformations();
 launchpad.drawTopControls();
+launchpad.drawTransport();

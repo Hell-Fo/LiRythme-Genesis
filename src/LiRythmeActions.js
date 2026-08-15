@@ -22,13 +22,29 @@ export class LiRythmeActions {
     }
 
     togglePlayPause() {
-        this.state.isPlaying = !this.state.isPlaying;
+        if (this.state.transportState === "PLAY") {
+            this.state.transportState = "PAUSE";
+        } else {
+            this.state.transportState = "PLAY";
+        }
 
         console.log(
             "TRANSPORT:",
-            this.state.isPlaying ? "PLAY" : "PAUSE"
+            this.state.transportState
         );
     }
+    stop() {
+        this.state.transportState = "STOP";
+        this.state.playheadPosition = 0;
+
+        console.log(
+            "TRANSPORT:",
+            this.state.transportState,
+            "POSITION:",
+            this.state.playheadPosition
+        );
+    }
+
     selectMotifTimeline() {
         this.state.currentTimeline = "MOTIF";
 
@@ -46,6 +62,35 @@ export class LiRythmeActions {
         console.log(
             "FREEZE:",
             this.state.freezeMode ? "ON" : "OFF"
+        );
+    }
+    toggleLockMode() {
+        this.state.lockMode = !this.state.lockMode;
+
+        console.log(
+            "LOCK:",
+            this.state.lockMode ? "ON" : "OFF"
+        );
+    }
+    previousStep() {
+        if (this.state.playheadPosition > 0) {
+            this.state.playheadPosition--;
+        }
+
+        console.log(
+            "PLAYHEAD:",
+            this.state.playheadPosition
+        );
+    }
+
+    nextStep() {
+        if (this.state.playheadPosition < 31) {
+            this.state.playheadPosition++;
+        }
+
+        console.log(
+            "PLAYHEAD:",
+            this.state.playheadPosition
         );
     }
 }
