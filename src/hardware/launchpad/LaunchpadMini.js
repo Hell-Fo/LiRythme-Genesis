@@ -38,6 +38,8 @@ export class LaunchpadMini {
         this.navigationCombo = false;
         this.playStopTimer = null;
         this.playStopLongPressTriggered = false;
+        this.previousRepeatTimer = null;
+        this.nextRepeatTimer = null;
     }
 
     setLed(note, value) {
@@ -316,6 +318,21 @@ export class LaunchpadMini {
         if (controlName === "PREVIOUS") {
             if (value > 0) {
                 this.previousPressed = true;
+                if (this.state.transportState === "STOP") {
+                    const stepDuration = this.state.getStepDurationMs();
+
+                    this.previousRepeatTimer = setTimeout(() => {
+                        this.actions.previousStep();
+                        this.drawMotif();
+                        this.drawPlayhead();
+
+                        this.previousRepeatTimer = setInterval(() => {
+                            this.actions.previousStep();
+                            this.drawMotif();
+                            this.drawPlayhead();
+                        }, stepDuration);
+                    }, stepDuration);
+                }
 
                 if (this.nextPressed) {
                     this.navigationCombo = true;
@@ -337,6 +354,9 @@ export class LaunchpadMini {
             // RELEASE [<<]
 
             this.previousPressed = false;
+            clearTimeout(this.previousRepeatTimer);
+            clearInterval(this.previousRepeatTimer);
+            this.previousRepeatTimer = null;
 
             if (this.navigationCombo) {
                 console.log("NAV: combo consumed");
@@ -366,6 +386,21 @@ export class LaunchpadMini {
         if (controlName === "NEXT") {
             if (value > 0) {
                 this.nextPressed = true;
+                if (this.state.transportState === "STOP") {
+                    const stepDuration = this.state.getStepDurationMs();
+
+                    this.nextRepeatTimer = setTimeout(() => {
+                        this.actions.nextStep();
+                        this.drawMotif();
+                        this.drawPlayhead();
+
+                        this.nextRepeatTimer = setInterval(() => {
+                            this.actions.nextStep();
+                            this.drawMotif();
+                            this.drawPlayhead();
+                        }, stepDuration);
+                    }, stepDuration);
+                }
 
                 if (this.previousPressed) {
                     this.navigationCombo = true;
@@ -387,6 +422,9 @@ export class LaunchpadMini {
             // RELEASE [>>]
 
             this.nextPressed = false;
+            clearTimeout(this.nextRepeatTimer);
+            clearInterval(this.nextRepeatTimer);
+            this.nextRepeatTimer = null;
 
             if (this.navigationCombo) {
                 console.log("NAV: combo consumed");

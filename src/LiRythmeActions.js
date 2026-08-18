@@ -73,9 +73,8 @@ export class LiRythmeActions {
         );
     }
     previousStep() {
-        if (this.state.playheadPosition > 0) {
-            this.state.playheadPosition--;
-        }
+        this.state.playheadPosition =
+            (this.state.playheadPosition + 31) % 32;
 
         console.log(
             "PLAYHEAD:",
@@ -84,9 +83,8 @@ export class LiRythmeActions {
     }
 
     nextStep() {
-        if (this.state.playheadPosition < 31) {
-            this.state.playheadPosition++;
-        }
+        this.state.playheadPosition =
+            (this.state.playheadPosition + 1) % 32;
 
         console.log(
             "PLAYHEAD:",

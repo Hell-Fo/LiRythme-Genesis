@@ -18,6 +18,8 @@ export class LiRythmeState {
     constructor() {
         this.transportState = "STOP";
         this.playheadPosition = 0;
+        this.tempo = 120;
+        this.stepDivision = 16;
 
         this.currentTimeline = "MOTIF";
 
@@ -26,5 +28,11 @@ export class LiRythmeState {
 
         this.freezeMode = false;
         this.lockMode = false;
+    }
+
+    getStepDurationMs() {
+        const beatDuration = 60000 / this.tempo;
+
+        return beatDuration * (4 / this.stepDivision);
     }
 }
