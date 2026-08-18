@@ -125,9 +125,15 @@ export class LaunchpadMini {
         const next = this.mapping.TOP_CONTROLS.NEXT;
 
         const isMotif = this.state.currentTimeline === "MOTIF";
+        const isPlaying =
+            this.state.transportState === "PLAY";
 
         // LOCK + FREEZE
-        if (this.state.lockMode && this.state.freezeMode) {
+        if (
+            isPlaying &&
+            this.state.lockMode &&
+            this.state.freezeMode
+        ) {
             this.setTopLed(
                 previous,
                 isMotif ? this.colors.RED : this.colors.DIM_GREEN
@@ -157,7 +163,10 @@ export class LaunchpadMini {
         }
 
         // FREEZE
-        if (this.state.freezeMode) {
+        if (
+            isPlaying &&
+            this.state.freezeMode
+        ) {
             this.setTopLed(
                 previous,
                 isMotif ? this.colors.GREEN : this.colors.DIM_GREEN
@@ -318,6 +327,34 @@ export class LaunchpadMini {
         if (controlName === "PREVIOUS") {
             if (value > 0) {
                 this.previousPressed = true;
+                if (this.state.transportState !== "PLAY") {
+
+                    // Shift + [<<] = Timeline MOTIF
+                    if (this.shiftPressed) {
+                        this.actions.selectMotifTimeline();
+                        this.drawTimelineSelection();
+                        this.drawMotif();
+                        this.drawPlayhead();
+                        return;
+                    }
+
+                    // [<<] = recule immédiatement
+                    this.actions.previousStep();
+                    this.drawMotif();
+                    this.drawPlayhead();
+
+                    const stepDuration = this.state.getStepDurationMs();
+
+                    this.previousRepeatTimer = setTimeout(() => {
+                        this.previousRepeatTimer = setInterval(() => {
+                            this.actions.previousStep();
+                            this.drawMotif();
+                            this.drawPlayhead();
+                        }, stepDuration);
+                    }, stepDuration);
+
+                    return;
+                }
                 if (this.state.transportState === "STOP") {
                     const stepDuration = this.state.getStepDurationMs();
 
@@ -374,10 +411,7 @@ export class LaunchpadMini {
                 this.drawTimelineSelection();
                 this.drawMotif();
                 this.drawPlayhead();
-            } else {
-                this.actions.previousStep();
-                this.drawMotif();
-                this.drawPlayhead();
+
             }
 
             return;
@@ -386,6 +420,34 @@ export class LaunchpadMini {
         if (controlName === "NEXT") {
             if (value > 0) {
                 this.nextPressed = true;
+                if (this.state.transportState !== "PLAY") {
+
+                    // Shift + [>>] = Timeline MODULATION
+                    if (this.shiftPressed) {
+                        this.actions.selectModulationTimeline();
+                        this.drawTimelineSelection();
+                        this.drawMotif();
+                        this.drawPlayhead();
+                        return;
+                    }
+
+                    // [>>] = avance immédiatement
+                    this.actions.nextStep();
+                    this.drawMotif();
+                    this.drawPlayhead();
+
+                    const stepDuration = this.state.getStepDurationMs();
+
+                    this.nextRepeatTimer = setTimeout(() => {
+                        this.nextRepeatTimer = setInterval(() => {
+                            this.actions.nextStep();
+                            this.drawMotif();
+                            this.drawPlayhead();
+                        }, stepDuration);
+                    }, stepDuration);
+
+                    return;
+                }
                 if (this.state.transportState === "STOP") {
                     const stepDuration = this.state.getStepDurationMs();
 
@@ -442,11 +504,8 @@ export class LaunchpadMini {
                 this.drawTimelineSelection();
                 this.drawMotif();
                 this.drawPlayhead();
-            } else {
-                this.actions.nextStep();
-                this.drawMotif();
-                this.drawPlayhead();
             }
+
             return;
         }
 
@@ -458,6 +517,7 @@ export class LaunchpadMini {
                     this.playStopLongPressTriggered = true;
                     this.actions.stop();
                     this.drawTransport();
+                    this.drawTimelineSelection();
                 }, 300);
 
                 return;
@@ -469,6 +529,7 @@ export class LaunchpadMini {
             if (!this.playStopLongPressTriggered) {
                 this.actions.togglePlayPause();
                 this.drawTransport();
+                this.drawTimelineSelection();
             }
 
             return;
