@@ -20,6 +20,8 @@ export class LiRythmeState {
         this.playheadPosition = 0;
         this.tempo = 120;
         this.stepDivision = 16;
+        this.clockTimer = null;
+        this.nextClockTime = 0;
 
         this.currentTimeline = "MOTIF";
 
@@ -28,6 +30,10 @@ export class LiRythmeState {
 
         this.freezeMode = false;
         this.lockMode = false;
+        
+        this.motif = {
+            kick: new Array(32).fill(false)
+        };
     }
 
     getStepDurationMs() {

@@ -21,6 +21,34 @@ const launchpad = new LaunchpadMini(
     state,
     actions
 );
+launchpad.enableDoubleBuffering();
+
+actions.setClockStepHandler(() => {
+    const step = state.playheadPosition;
+
+    if (state.motif.kick[step]) {
+        midiManager.send(
+            "Arturia DrumBrute Impact",
+            [0x99, 36, 100]
+        );
+
+        setTimeout(() => {
+            midiManager.send(
+                "Arturia DrumBrute Impact",
+                [0x99, 36, 0]
+            );
+        }, 50);
+    }
+
+    launchpad.drawMotif();
+    launchpad.drawPlayhead();
+    launchpad.swapBuffers();
+});
+
+actions.setClockBeatHandler(() => {
+    console.log("BEAT");
+    launchpad.pulseTransport();
+});
 
 midiManager.listenToInput(
     "Launchpad Mini",
@@ -33,3 +61,10 @@ launchpad.drawInstruments();
 launchpad.drawAttributesTransformations();
 launchpad.drawTopControls();
 launchpad.drawTransport();
+
+launchpad.swapBuffers();
+
+midiManager.send(
+    "Arturia DrumBrute Impact",
+    [0x99, 36, 100]
+);

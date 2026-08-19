@@ -40,6 +40,8 @@ export class LaunchpadMini {
         this.playStopLongPressTriggered = false;
         this.previousRepeatTimer = null;
         this.nextRepeatTimer = null;
+        this.displayBuffer = 1;
+        this.updateBuffer = 0;
     }
 
     setLed(note, value) {
@@ -54,6 +56,34 @@ export class LaunchpadMini {
             this.deviceName,
             [0xB0, controller, value]
         );
+    }
+    enableDoubleBuffering() {
+        this.midiManager.send(
+            this.deviceName,
+            [0xB0, 0, 49]
+        );
+
+        this.displayBuffer = 1;
+        this.updateBuffer = 0;
+    }
+    swapBuffers() {
+        if (this.displayBuffer === 1) {
+            this.midiManager.send(
+                this.deviceName,
+                [0xB0, 0, 52]
+            );
+
+            this.displayBuffer = 0;
+            this.updateBuffer = 1;
+        } else {
+            this.midiManager.send(
+                this.deviceName,
+                [0xB0, 0, 49]
+            );
+
+            this.displayBuffer = 1;
+            this.updateBuffer = 0;
+        }
     }
 
     testColors() {
@@ -73,11 +103,21 @@ export class LaunchpadMini {
     }
 
     drawMotif() {
-        const colorName = this.layout.MOTIF;
-        const colorValue = this.colors[colorName];
+        for (let i = 0; i < this.mapping.MOTIF.length; i++) {
+            const note = this.mapping.MOTIF[i];
 
-        for (const note of this.mapping.MOTIF) {
-            this.setLed(note, colorValue);
+            const isActive =
+                this.state.motif.kick[i];
+
+            const colorValue =
+                isActive
+                    ? this.colors.AMBER
+                    : 0;
+
+            this.setLed(
+                note,
+                colorValue
+            );
         }
     }
 
@@ -106,6 +146,24 @@ export class LaunchpadMini {
             );
         }
     }
+
+    pulseTransport() {
+        const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
+
+        this.setTopLed(
+            playStop,
+            this.colors.DIM_GREEN
+        );
+
+        setTimeout(() => {
+            if (this.state.transportState === "PLAY") {
+                this.setTopLed(
+                    playStop,
+                    this.colors.GREEN
+                );
+            }
+        }, 150);
+    }
     // temp timeline
     drawPlayhead() {
         const note = this.mapping.MOTIF[
@@ -130,7 +188,6 @@ export class LaunchpadMini {
 
         // LOCK + FREEZE
         if (
-            isPlaying &&
             this.state.lockMode &&
             this.state.freezeMode
         ) {
@@ -163,10 +220,7 @@ export class LaunchpadMini {
         }
 
         // FREEZE
-        if (
-            isPlaying &&
-            this.state.freezeMode
-        ) {
+        if (this.state.freezeMode) {
             this.setTopLed(
                 previous,
                 isMotif ? this.colors.GREEN : this.colors.DIM_GREEN
@@ -508,7 +562,19 @@ export class LaunchpadMini {
 
             return;
         }
+        if (
+            controlType === "MOTIF" &&
+            value > 0
+        ) {
+            this.actions.toggleKickStep(
+                controlPosition
+            );
+            this.drawMotif();
+            this.drawPlayhead();
+            this.swapBuffers();
 
+            return;
+        }
         if (controlName === "PLAY_STOP") {
             if (value > 0) {
                 this.playStopLongPressTriggered = false;
@@ -518,6 +584,9 @@ export class LaunchpadMini {
                     this.actions.stop();
                     this.drawTransport();
                     this.drawTimelineSelection();
+                    this.drawMotif();
+                    this.drawPlayhead();
+                    this.swapBuffers();
                 }, 300);
 
                 return;
