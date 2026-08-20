@@ -38,23 +38,30 @@ export class LaunchpadMini {
         this.navigationCombo = false;
         this.playStopTimer = null;
         this.playStopLongPressTriggered = false;
+        this.previousHoldTimer = null;
         this.previousRepeatTimer = null;
         this.nextRepeatTimer = null;
         this.displayBuffer = 1;
         this.updateBuffer = 0;
+        this.nextHoldTimer = null;
+        this.nextRepeatTimer = null;
     }
 
     setLed(note, value) {
+        const bufferedValue = value & 0x33;
+
         this.midiManager.send(
             this.deviceName,
-            [0x90, note, value]
+            [0x90, note, bufferedValue]
         );
     }
 
     setTopLed(controller, value) {
+        const bufferedValue = value & 0x33;
+
         this.midiManager.send(
             this.deviceName,
-            [0xB0, controller, value]
+            [0xB0, controller, bufferedValue]
         );
     }
     enableDoubleBuffering() {
@@ -103,16 +110,38 @@ export class LaunchpadMini {
     }
 
     drawMotif() {
+        const selectedInstrumentName =
+            this.state.instrumentMap[
+            this.state.selectedInstrument
+            ];
+
         for (let i = 0; i < this.mapping.MOTIF.length; i++) {
             const note = this.mapping.MOTIF[i];
 
-            const isActive =
-                this.state.motif.kick[i];
+            let hasAnyVoice = false;
+            let hasSelectedVoice = false;
 
-            const colorValue =
-                isActive
-                    ? this.colors.AMBER
-                    : 0;
+            for (const [instrumentName, steps] of Object.entries(
+                this.state.motif
+            )) {
+                if (steps[i]) {
+                    hasAnyVoice = true;
+
+                    if (
+                        instrumentName === selectedInstrumentName
+                    ) {
+                        hasSelectedVoice = true;
+                    }
+                }
+            }
+
+            let colorValue = 0;
+
+            if (hasSelectedVoice) {
+                colorValue = this.colors.YELLOW;
+            } else if (hasAnyVoice) {
+                colorValue = this.colors.DIM_AMBER;
+            }
 
             this.setLed(
                 note,
@@ -164,18 +193,36 @@ export class LaunchpadMini {
             }
         }, 150);
     }
-    // temp timeline
+    // timeline
     drawPlayhead() {
-        const note = this.mapping.MOTIF[
-            this.state.playheadPosition
-        ];
+        const step = this.state.playheadPosition;
 
-        this.setLed(
-            note,
-            this.state.currentTimeline === "MOTIF"
-                ? this.colors.GREEN
-                : this.colors.RED
-        );
+        const note = this.mapping.MOTIF[step];
+
+        const selectedInstrumentName =
+            this.state.instrumentMap[
+            this.state.selectedInstrument
+            ];
+
+        const hasSelectedVoice =
+            selectedInstrumentName &&
+            this.state.motif[selectedInstrumentName]?.[step];
+
+        if (this.state.currentTimeline === "MOTIF") {
+            this.setLed(
+                note,
+                hasSelectedVoice
+                    ? this.colors.GREEN
+                    : this.colors.DIM_GREEN
+            );
+        } else {
+            this.setLed(
+                note,
+                hasSelectedVoice
+                    ? this.colors.RED
+                    : this.colors.DIM_RED
+            );
+        }
     }
 
     drawTimelineSelection() {
@@ -247,11 +294,38 @@ export class LaunchpadMini {
     }
 
     drawInstruments() {
-        const colorName = this.layout.INSTRUMENTS;
-        const colorValue = this.colors[colorName];
+        for (let i = 0; i < this.mapping.INSTRUMENTS.length; i++) {
+            const note = this.mapping.INSTRUMENTS[i];
 
-        for (const note of this.mapping.INSTRUMENTS) {
-            this.setLed(note, colorValue);
+            const instrumentName =
+                this.state.instrumentMap[i];
+
+            const isSelected =
+                i === this.state.selectedInstrument;
+
+            const isPlayingNow =
+                instrumentName &&
+                this.state.motif[instrumentName]?.[
+                this.state.playheadPosition
+                ];
+
+            let colorValue =
+                this.colors[
+                this.layout.INSTRUMENTS
+                ];
+
+            if (isSelected) {
+                colorValue = this.colors.DIM_AMBER;
+            }
+
+            if (isPlayingNow) {
+                colorValue = this.colors.GREEN;
+            }
+
+            this.setLed(
+                note,
+                colorValue
+            );
         }
     }
 
@@ -389,6 +463,7 @@ export class LaunchpadMini {
                         this.drawTimelineSelection();
                         this.drawMotif();
                         this.drawPlayhead();
+                        this.swapBuffers();
                         return;
                     }
 
@@ -396,33 +471,22 @@ export class LaunchpadMini {
                     this.actions.previousStep();
                     this.drawMotif();
                     this.drawPlayhead();
+                    this.drawInstruments();
+                    this.swapBuffers();
 
                     const stepDuration = this.state.getStepDurationMs();
 
-                    this.previousRepeatTimer = setTimeout(() => {
+                    this.previousHoldTimer = setTimeout(() => {
                         this.previousRepeatTimer = setInterval(() => {
                             this.actions.previousStep();
                             this.drawMotif();
                             this.drawPlayhead();
+                            this.drawInstruments();
+                            this.swapBuffers();
                         }, stepDuration);
                     }, stepDuration);
 
                     return;
-                }
-                if (this.state.transportState === "STOP") {
-                    const stepDuration = this.state.getStepDurationMs();
-
-                    this.previousRepeatTimer = setTimeout(() => {
-                        this.actions.previousStep();
-                        this.drawMotif();
-                        this.drawPlayhead();
-
-                        this.previousRepeatTimer = setInterval(() => {
-                            this.actions.previousStep();
-                            this.drawMotif();
-                            this.drawPlayhead();
-                        }, stepDuration);
-                    }, stepDuration);
                 }
 
                 if (this.nextPressed) {
@@ -445,8 +509,10 @@ export class LaunchpadMini {
             // RELEASE [<<]
 
             this.previousPressed = false;
-            clearTimeout(this.previousRepeatTimer);
+            clearTimeout(this.previousHoldTimer);
             clearInterval(this.previousRepeatTimer);
+
+            this.previousHoldTimer = null;
             this.previousRepeatTimer = null;
 
             if (this.navigationCombo) {
@@ -482,6 +548,7 @@ export class LaunchpadMini {
                         this.drawTimelineSelection();
                         this.drawMotif();
                         this.drawPlayhead();
+                        this.swapBuffers();
                         return;
                     }
 
@@ -489,33 +556,22 @@ export class LaunchpadMini {
                     this.actions.nextStep();
                     this.drawMotif();
                     this.drawPlayhead();
+                    this.drawInstruments();
+                    this.swapBuffers();
 
                     const stepDuration = this.state.getStepDurationMs();
 
-                    this.nextRepeatTimer = setTimeout(() => {
+                    this.nextHoldTimer = setTimeout(() => {
                         this.nextRepeatTimer = setInterval(() => {
                             this.actions.nextStep();
                             this.drawMotif();
                             this.drawPlayhead();
+                            this.drawInstruments();
+                            this.swapBuffers();
                         }, stepDuration);
                     }, stepDuration);
 
                     return;
-                }
-                if (this.state.transportState === "STOP") {
-                    const stepDuration = this.state.getStepDurationMs();
-
-                    this.nextRepeatTimer = setTimeout(() => {
-                        this.actions.nextStep();
-                        this.drawMotif();
-                        this.drawPlayhead();
-
-                        this.nextRepeatTimer = setInterval(() => {
-                            this.actions.nextStep();
-                            this.drawMotif();
-                            this.drawPlayhead();
-                        }, stepDuration);
-                    }, stepDuration);
                 }
 
                 if (this.previousPressed) {
@@ -536,10 +592,12 @@ export class LaunchpadMini {
             }
 
             // RELEASE [>>]
-
             this.nextPressed = false;
-            clearTimeout(this.nextRepeatTimer);
+
+            clearTimeout(this.nextHoldTimer);
             clearInterval(this.nextRepeatTimer);
+
+            this.nextHoldTimer = null;
             this.nextRepeatTimer = null;
 
             if (this.navigationCombo) {
@@ -566,7 +624,7 @@ export class LaunchpadMini {
             controlType === "MOTIF" &&
             value > 0
         ) {
-            this.actions.toggleKickStep(
+            this.actions.toggleInstrumentStep(
                 controlPosition
             );
             this.drawMotif();
@@ -575,7 +633,27 @@ export class LaunchpadMini {
 
             return;
         }
-        if (controlName === "PLAY_STOP") {
+        if (
+            controlType === "INSTRUMENT" &&
+            value > 0
+        ) {
+            this.state.selectedInstrument =
+                this.state.selectedInstrument === controlPosition
+                    ? null
+                    : controlPosition;
+
+            console.log(
+                "INSTRUMENT:",
+                this.state.selectedInstrument
+            );
+
+            this.drawInstruments();
+            this.drawMotif();
+            this.drawPlayhead();
+            this.swapBuffers();
+
+            return;
+        } if (controlName === "PLAY_STOP") {
             if (value > 0) {
                 this.playStopLongPressTriggered = false;
 

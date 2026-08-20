@@ -30,9 +30,28 @@ export class LiRythmeState {
 
         this.freezeMode = false;
         this.lockMode = false;
-        
+
+        this.selectedInstrument = 12;
+        this.instrumentMap = {
+            8: "tomH",
+            9: "tomL",
+            10: "closedHat",
+            11: "openHat",
+            12: "kick",
+            13: "snare1",
+            14: "snare2",
+            15: "cymbal"
+        };
+
         this.motif = {
-            kick: new Array(32).fill(false)
+            tomH: new Array(32).fill(false),
+            tomL: new Array(32).fill(false),
+            closedHat: new Array(32).fill(false),
+            openHat: new Array(32).fill(false),
+            kick: new Array(32).fill(false),
+            snare1: new Array(32).fill(false),
+            snare2: new Array(32).fill(false),
+            cymbal: new Array(32).fill(false)
         };
     }
 

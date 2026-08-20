@@ -107,15 +107,35 @@ export class LiRythmeActions {
             "ms"
         );
     }
-    
-    toggleKickStep(stepIndex) {
-        this.state.motif.kick[stepIndex] =
-            !this.state.motif.kick[stepIndex];
+
+    toggleInstrumentStep(stepIndex) {
+        if (this.state.selectedInstrument === null) {
+            console.log("EDIT LOCKED: NO INSTRUMENT SELECTED");
+            return;
+        }
+        const instrument =
+            this.state.instrumentMap[
+            this.state.selectedInstrument
+            ];
+
+        if (!instrument) {
+            console.log(
+                "NO INSTRUMENT MAPPED:",
+                this.state.selectedInstrument
+            );
+            return;
+        }
+
+        this.state.motif[instrument][stepIndex] =
+            !this.state.motif[instrument][stepIndex];
 
         console.log(
-            "KICK STEP:",
+            instrument.toUpperCase(),
+            "STEP:",
             stepIndex,
-            this.state.motif.kick[stepIndex] ? "ON" : "OFF"
+            this.state.motif[instrument][stepIndex]
+                ? "ON"
+                : "OFF"
         );
     }
 

@@ -26,22 +26,44 @@ launchpad.enableDoubleBuffering();
 actions.setClockStepHandler(() => {
     const step = state.playheadPosition;
 
-    if (state.motif.kick[step]) {
+    const midiNotes = {
+        tomH: 39,
+        tomL: 40,
+        closedHat: 43,
+        openHat: 44,
+        kick: 36,
+        snare1: 37,
+        snare2: 38,
+        cymbal: 41
+    };
+
+    for (const [instrument, steps] of Object.entries(state.motif)) {
+        if (!steps[step]) {
+            continue;
+        }
+
+        const note = midiNotes[instrument];
+
+        if (note === undefined) {
+            continue;
+        }
+
         midiManager.send(
             "Arturia DrumBrute Impact",
-            [0x99, 36, 100]
+            [0x99, note, 100]
         );
 
         setTimeout(() => {
             midiManager.send(
                 "Arturia DrumBrute Impact",
-                [0x99, 36, 0]
+                [0x99, note, 0]
             );
         }, 50);
     }
 
     launchpad.drawMotif();
     launchpad.drawPlayhead();
+    launchpad.drawInstruments();
     launchpad.swapBuffers();
 });
 
