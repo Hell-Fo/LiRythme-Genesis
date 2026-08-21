@@ -141,9 +141,13 @@ export class LaunchpadMini {
                     instrumentName === selectedInstrumentName;
 
                 const isVisible =
-                    filter.size === 0 ||
-                    isInFilter ||
-                    isSelectedInstrument;
+                    this.state.filterSelectionMode
+                        ? isInFilter
+                        : (
+                            !this.state.filterMode ||
+                            isInFilter ||
+                            isSelectedInstrument
+                        );
 
                 if (!isVisible) {
                     continue;
@@ -325,17 +329,20 @@ export class LaunchpadMini {
         }
     }
     drawFilterStatus() {
-        const mute = this.mapping.TOP_CONTROLS.MUTE;
+        const solo = this.mapping.TOP_CONTROLS.SOLO;
 
-        if (this.state.filterMode) {
+        if (
+            this.state.filterSelectionMode ||
+            this.state.filterMode
+        ) {
             this.setTopLed(
-                mute,
+                solo,
                 this.colors.GREEN
             );
         } else {
             this.setTopLed(
-                mute,
-                this.colors.YELLOW
+                solo,
+                this.colors.AMBER
             );
         }
     }
@@ -743,42 +750,79 @@ export class LaunchpadMini {
 
             return;
         }
-        if (controlName === "MUTE") {
+        if (controlName === "SOLO") {
+            // PRESS SOLO
             if (value > 0) {
-                if (this.shiftPressed) {
-                    this.state.filterSelectionMode = true;
-                    this.state.filterSelectionChanged = false;
+                if (value > 0) {
+                    if (this.shiftPressed) {
 
-                    console.log("FILTER SELECT: ON");
+                        this.state.filterWasActive =
+                            this.state.filterMode;
 
+                        // On entre dans la sélection du filtre
+                        this.state.filterSelectionMode = true;
+                        this.state.filterSelectionChanged = false;
+
+                        // Si le filtre était OFF, il devient immédiatement ON
+                        if (!this.state.filterMode) {
+                            this.state.filterMode = true;
+
+                            // Nouveau filtre : aucune référence au départ
+                            this.state.visibleInstrumentFilter.clear();
+
+                            // Aucune voix en édition
+                            this.state.selectedInstrument = null;
+
+                            console.log("FILTER MODE: ON");
+                        }
+
+                        console.log("FILTER SELECT: ON");
+
+                        this.drawInstruments();
+                        this.drawMotif();
+                        this.drawPlayhead();
+                        this.drawFilterStatus();
+                        this.swapBuffers();
+
+                        return;
+                    }
+
+                    console.log("SOLO PRESS");
                     return;
                 }
 
-                console.log("MUTE PRESS");
-
+                console.log("SOLO PRESS");
                 return;
             }
-            // RELEASE MUTE
+
+            // RELEASE SOLO
             if (this.state.filterSelectionMode) {
                 this.state.filterSelectionMode = false;
 
-                // Aucun instrument touché pendant cette sélection :
-                // on vide le filtre et on quitte le mode
-                if (!this.state.filterSelectionChanged) {
+                if (this.state.filterSelectionChanged) {
+                    // Le filtre a été modifié :
+                    // il reste actif
+                    this.state.filterMode = true;
+
+                    console.log("FILTER MODE: ON");
+                } else if (this.state.filterWasActive) {
+                    // Le filtre était déjà actif
+                    // et aucune voix n'a été touchée :
+                    // Shift + Solo = sortie complète
                     this.state.visibleInstrumentFilter.clear();
                     this.state.filterMode = false;
+                    this.state.selectedInstrument = null;
 
                     console.log("FILTER MODE: OFF");
                 } else {
-                    // Au moins un instrument a été ajouté ou retiré
-                    this.state.filterMode =
-                        this.state.visibleInstrumentFilter.size > 0;
+                    // Le filtre venait juste d'être activé
+                    // et aucune voix n'a été touchée :
+                    // il reste actif, même vide
+                    this.state.filterMode = true;
 
-                    console.log(
-                        "FILTER MODE:",
-                        this.state.filterMode ? "ON" : "OFF"
-                    );
+                    console.log("FILTER MODE: ON");
                 }
+
                 this.drawInstruments();
                 this.drawMotif();
                 this.drawPlayhead();
@@ -788,7 +832,10 @@ export class LaunchpadMini {
                 return;
             }
 
-            console.log("MUTE RELEASE");
+            console.log("SOLO RELEASE");
+            return;
+
+            console.log("SOLO RELEASE");
             return;
         }
 
