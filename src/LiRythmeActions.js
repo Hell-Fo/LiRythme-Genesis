@@ -139,6 +139,21 @@ export class LiRythmeActions {
         );
     }
 
+    toggleInstrumentFilter(instrumentPosition) {
+        const filter = this.state.visibleInstrumentFilter;
+
+        if (filter.has(instrumentPosition)) {
+            filter.delete(instrumentPosition);
+        } else {
+            filter.add(instrumentPosition);
+        }
+
+        console.log(
+            "VISIBLE FILTER:",
+            [...filter]
+        );
+    }
+    
     stopClock() {
         if (this.state.clockTimer === null) {
             return;

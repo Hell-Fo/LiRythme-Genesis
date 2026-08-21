@@ -115,6 +115,9 @@ export class LaunchpadMini {
             this.state.selectedInstrument
             ];
 
+        const filter =
+            this.state.visibleInstrumentFilter;
+
         for (let i = 0; i < this.mapping.MOTIF.length; i++) {
             const note = this.mapping.MOTIF[i];
 
@@ -124,12 +127,32 @@ export class LaunchpadMini {
             for (const [instrumentName, steps] of Object.entries(
                 this.state.motif
             )) {
+                const instrumentPosition =
+                    Object.keys(this.state.instrumentMap)
+                        .find(
+                            key =>
+                                this.state.instrumentMap[key] === instrumentName
+                        );
+
+                const isInFilter =
+                    filter.has(Number(instrumentPosition));
+
+                const isSelectedInstrument =
+                    instrumentName === selectedInstrumentName;
+
+                const isVisible =
+                    filter.size === 0 ||
+                    isInFilter ||
+                    isSelectedInstrument;
+
+                if (!isVisible) {
+                    continue;
+                }
+
                 if (steps[i]) {
                     hasAnyVoice = true;
 
-                    if (
-                        instrumentName === selectedInstrumentName
-                    ) {
+                    if (isSelectedInstrument) {
                         hasSelectedVoice = true;
                     }
                 }
@@ -146,81 +169,6 @@ export class LaunchpadMini {
             this.setLed(
                 note,
                 colorValue
-            );
-        }
-    }
-
-    drawTopControls() {
-        for (const [name, controller] of Object.entries(
-            this.mapping.TOP_CONTROLS
-        )) {
-            const colorName = this.layout.TOP_CONTROLS[name];
-            const colorValue = this.colors[colorName];
-
-            this.setTopLed(controller, colorValue);
-        }
-    }
-    drawTransport() {
-        const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
-
-        if (this.state.transportState === "PLAY") {
-            this.setTopLed(
-                playStop,
-                this.colors.GREEN
-            );
-        } else {
-            this.setTopLed(
-                playStop,
-                this.colors.DIM_GREEN
-            );
-        }
-    }
-
-    pulseTransport() {
-        const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
-
-        this.setTopLed(
-            playStop,
-            this.colors.DIM_GREEN
-        );
-
-        setTimeout(() => {
-            if (this.state.transportState === "PLAY") {
-                this.setTopLed(
-                    playStop,
-                    this.colors.GREEN
-                );
-            }
-        }, 150);
-    }
-    // timeline
-    drawPlayhead() {
-        const step = this.state.playheadPosition;
-
-        const note = this.mapping.MOTIF[step];
-
-        const selectedInstrumentName =
-            this.state.instrumentMap[
-            this.state.selectedInstrument
-            ];
-
-        const hasSelectedVoice =
-            selectedInstrumentName &&
-            this.state.motif[selectedInstrumentName]?.[step];
-
-        if (this.state.currentTimeline === "MOTIF") {
-            this.setLed(
-                note,
-                hasSelectedVoice
-                    ? this.colors.GREEN
-                    : this.colors.DIM_GREEN
-            );
-        } else {
-            this.setLed(
-                note,
-                hasSelectedVoice
-                    ? this.colors.RED
-                    : this.colors.DIM_RED
             );
         }
     }
@@ -309,17 +257,23 @@ export class LaunchpadMini {
                 this.state.playheadPosition
                 ];
 
+            const isInFilter =
+                this.state.visibleInstrumentFilter.has(i);
+
             let colorValue =
                 this.colors[
                 this.layout.INSTRUMENTS
                 ];
 
-            if (isSelected) {
-                colorValue = this.colors.DIM_AMBER;
-            }
-
-            if (isPlayingNow) {
+            if (
+                this.state.filterSelectionMode &&
+                isInFilter
+            ) {
+                colorValue = this.colors.YELLOW;
+            } else if (isPlayingNow) {
                 colorValue = this.colors.GREEN;
+            } else if (isSelected) {
+                colorValue = this.colors.DIM_AMBER;
             }
 
             this.setLed(
@@ -344,7 +298,96 @@ export class LaunchpadMini {
             );
         }
     }
+    drawTopControls() {
+        for (const [name, controller] of Object.entries(
+            this.mapping.TOP_CONTROLS
+        )) {
+            const colorName = this.layout.TOP_CONTROLS[name];
+            const colorValue = this.colors[colorName];
 
+            this.setTopLed(controller, colorValue);
+        }
+    }
+
+    drawTransport() {
+        const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
+
+        if (this.state.transportState === "PLAY") {
+            this.setTopLed(
+                playStop,
+                this.colors.GREEN
+            );
+        } else {
+            this.setTopLed(
+                playStop,
+                this.colors.DIM_GREEN
+            );
+        }
+    }
+    drawFilterStatus() {
+        const mute = this.mapping.TOP_CONTROLS.MUTE;
+
+        if (this.state.filterMode) {
+            this.setTopLed(
+                mute,
+                this.colors.GREEN
+            );
+        } else {
+            this.setTopLed(
+                mute,
+                this.colors.YELLOW
+            );
+        }
+    }
+
+    pulseTransport() {
+        const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
+
+        this.setTopLed(
+            playStop,
+            this.colors.DIM_GREEN
+        );
+
+        setTimeout(() => {
+            if (this.state.transportState === "PLAY") {
+                this.setTopLed(
+                    playStop,
+                    this.colors.GREEN
+                );
+            }
+        }, 150);
+    }
+
+    drawPlayhead() {
+        const step = this.state.playheadPosition;
+
+        const note = this.mapping.MOTIF[step];
+
+        const selectedInstrumentName =
+            this.state.instrumentMap[
+            this.state.selectedInstrument
+            ];
+
+        const hasSelectedVoice =
+            selectedInstrumentName &&
+            this.state.motif[selectedInstrumentName]?.[step];
+
+        if (this.state.currentTimeline === "MOTIF") {
+            this.setLed(
+                note,
+                hasSelectedVoice
+                    ? this.colors.GREEN
+                    : this.colors.DIM_GREEN
+            );
+        } else {
+            this.setLed(
+                note,
+                hasSelectedVoice
+                    ? this.colors.RED
+                    : this.colors.DIM_RED
+            );
+        }
+    }
     getControlType(status, number) {
         if (status === 0xB0) {
             if (this.mapping.TOP_BUTTONS.includes(number)) {
@@ -637,6 +680,24 @@ export class LaunchpadMini {
             controlType === "INSTRUMENT" &&
             value > 0
         ) {
+            // Pendant Filter Selection :
+            // le pad ajoute / retire une voix du filtre
+            if (this.state.filterSelectionMode) {
+                this.actions.toggleInstrumentFilter(
+                    controlPosition
+                );
+
+                this.state.filterSelectionChanged = true;
+
+                this.drawMotif();
+                this.drawPlayhead();
+                this.drawInstruments();
+                this.swapBuffers();
+
+                return;
+            }
+
+            // Instrument seul = sélection / désélection pour l'édition
             this.state.selectedInstrument =
                 this.state.selectedInstrument === controlPosition
                     ? null
@@ -653,7 +714,8 @@ export class LaunchpadMini {
             this.swapBuffers();
 
             return;
-        } if (controlName === "PLAY_STOP") {
+        }
+        if (controlName === "PLAY_STOP") {
             if (value > 0) {
                 this.playStopLongPressTriggered = false;
 
@@ -679,6 +741,54 @@ export class LaunchpadMini {
                 this.drawTimelineSelection();
             }
 
+            return;
+        }
+        if (controlName === "MUTE") {
+            if (value > 0) {
+                if (this.shiftPressed) {
+                    this.state.filterSelectionMode = true;
+                    this.state.filterSelectionChanged = false;
+
+                    console.log("FILTER SELECT: ON");
+
+                    return;
+                }
+
+                console.log("MUTE PRESS");
+
+                return;
+            }
+            // RELEASE MUTE
+            if (this.state.filterSelectionMode) {
+                this.state.filterSelectionMode = false;
+
+                // Aucun instrument touché pendant cette sélection :
+                // on vide le filtre et on quitte le mode
+                if (!this.state.filterSelectionChanged) {
+                    this.state.visibleInstrumentFilter.clear();
+                    this.state.filterMode = false;
+
+                    console.log("FILTER MODE: OFF");
+                } else {
+                    // Au moins un instrument a été ajouté ou retiré
+                    this.state.filterMode =
+                        this.state.visibleInstrumentFilter.size > 0;
+
+                    console.log(
+                        "FILTER MODE:",
+                        this.state.filterMode ? "ON" : "OFF"
+                    );
+                }
+                this.drawInstruments();
+                this.drawMotif();
+                this.drawPlayhead();
+                this.drawFilterStatus();
+                this.swapBuffers();
+
+                return;
+            }
+
+            console.log("MUTE RELEASE");
             return;
         }
 

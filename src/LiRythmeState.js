@@ -32,6 +32,10 @@ export class LiRythmeState {
         this.lockMode = false;
 
         this.selectedInstrument = 12;
+        this.visibleInstrumentFilter = new Set();
+        this.filterMode = false;
+        this.filterSelectionMode = false;
+        this.filterSelectionChanged = false;
         this.instrumentMap = {
             8: "tomH",
             9: "tomL",
