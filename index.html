@@ -1,20 +1,30 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
     <meta charset="UTF-8">
     <title>LiRythme – Genesis</title>
 </head>
+
 <body>
 
     <h1>LiRythme – Genesis</h1>
 
-    <h2>MIDI Inputs</h2>
-    <select id="midi-inputs"></select>
+    <h2>MIDI Controller</h2>
+    <select id="midi-controller"></select>
 
-    <h2>MIDI Outputs</h2>
-    <select id="midi-outputs"></select>
+    <h2>MIDI Output</h2>
+    <select id="midi-output"></select>
+
+    <h2>Settings</h2>
+
+    <label>
+        <input type="checkbox" id="focus-startup">
+        Focus actif au démarrage
+    </label>
 
     <script type="module" src="./src/app.js"></script>
 
 </body>
+
 </html>

@@ -21,8 +21,11 @@ export class MidiManager {
         this.midiAccess = null;
         this.outputs = new Map();
 
-        this.inputSelector = document.getElementById("midi-inputs");
-        this.outputSelector = document.getElementById("midi-outputs");
+        this.controllerSelector =
+            document.getElementById("midi-controller");
+
+        this.outputSelector =
+            document.getElementById("midi-output");
     }
 
     async initialize() {
@@ -32,7 +35,7 @@ export class MidiManager {
     }
 
     updateDeviceLists() {
-        this.inputSelector.innerHTML = "";
+        this.controllerSelector.innerHTML = "";
         this.outputSelector.innerHTML = "";
         this.outputs.clear();
 
@@ -42,7 +45,7 @@ export class MidiManager {
             option.value = input.id;
             option.textContent = input.name;
 
-            this.inputSelector.appendChild(option);
+            this.controllerSelector.appendChild(option);
         }
 
         for (const output of this.midiAccess.outputs.values()) {
@@ -59,6 +62,22 @@ export class MidiManager {
 
     findOutput(name) {
         return this.outputs.get(name) ?? null;
+    }
+    findInput(name) {
+        for (const input of this.midiAccess.inputs.values()) {
+            if (input.name === name) {
+                return input;
+            }
+        }
+
+        return null;
+    }
+
+    findControllerPorts(name) {
+        return {
+            input: this.findInput(name),
+            output: this.findOutput(name)
+        };
     }
 
     send(outputName, message) {

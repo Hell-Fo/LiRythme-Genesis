@@ -20,9 +20,8 @@ export class LiRythmeState {
         this.playheadPosition = 0;
         this.tempo = 120;
         this.stepDivision = 16;
-        this.clockTimer = null;
-        this.nextClockTime = 0;
 
+        this.currentBook = "MOTIF";
         this.currentTimeline = "MOTIF";
 
         this.modulationActive = false;
@@ -34,9 +33,7 @@ export class LiRythmeState {
         this.selectedInstrument = 12;
         this.visibleInstrumentFilter = new Set();
         this.filterMode = false;
-        this.filterSelectionMode = false;
-        this.filterSelectionChanged = false;
-        this.filterWasActive = false;
+
         this.instrumentMap = {
             8: "tomH",
             9: "tomL",

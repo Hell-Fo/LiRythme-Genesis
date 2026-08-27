@@ -21,21 +21,25 @@ import { LaunchpadColors } from "./LaunchpadColors.js";
 import { GenesisLayout } from "./GenesisLayout.js";
 
 export class LaunchpadMini {
-    constructor(midiManager, state, actions) {
+    constructor(
+        midiManager,
+        state,
+        actions,
+        deviceName
+    ) {
         this.midiManager = midiManager;
         this.state = state;
         this.actions = actions;
-        this.deviceName = "Launchpad Mini";
+        this.deviceName = deviceName;
         this.mapping = LaunchpadMapping;
         this.colors = LaunchpadColors;
         this.layout = GenesisLayout;
-
-        this.currentBook = "MOTIF";
 
         this.shiftPressed = false;
         this.previousPressed = false;
         this.nextPressed = false;
         this.navigationCombo = false;
+
         this.playStopTimer = null;
         this.playStopLongPressTriggered = false;
         this.previousHoldTimer = null;
@@ -44,7 +48,11 @@ export class LaunchpadMini {
         this.displayBuffer = 1;
         this.updateBuffer = 0;
         this.nextHoldTimer = null;
-        this.nextRepeatTimer = null;
+
+        this.filterSelectionMode = false;
+        this.filterSelectionChanged = false;
+        this.filterWasActive = false;
+
     }
 
     setLed(note, value) {
@@ -141,7 +149,7 @@ export class LaunchpadMini {
                     instrumentName === selectedInstrumentName;
 
                 const isVisible =
-                    this.state.filterSelectionMode
+                    this.filterSelectionMode
                         ? isInFilter
                         : (
                             !this.state.filterMode ||
@@ -182,8 +190,6 @@ export class LaunchpadMini {
         const next = this.mapping.TOP_CONTROLS.NEXT;
 
         const isMotif = this.state.currentTimeline === "MOTIF";
-        const isPlaying =
-            this.state.transportState === "PLAY";
 
         // LOCK + FREEZE
         if (
@@ -270,7 +276,7 @@ export class LaunchpadMini {
                 ];
 
             if (
-                this.state.filterSelectionMode &&
+                this.filterSelectionMode &&
                 isInFilter
             ) {
                 colorValue = this.colors.YELLOW;
@@ -332,7 +338,7 @@ export class LaunchpadMini {
         const solo = this.mapping.TOP_CONTROLS.SOLO;
 
         if (
-            this.state.filterSelectionMode ||
+            this.filterSelectionMode ||
             this.state.filterMode
         ) {
             this.setTopLed(
@@ -350,9 +356,15 @@ export class LaunchpadMini {
     pulseTransport() {
         const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
 
+        const isFirstMotifStep =
+            this.state.currentTimeline === "MOTIF" &&
+            this.state.playheadPosition === 0;
+
         this.setTopLed(
             playStop,
-            this.colors.DIM_GREEN
+            isFirstMotifStep
+                ? this.colors.YELLOW
+                : this.colors.DIM_GREEN
         );
 
         setTimeout(() => {
@@ -362,7 +374,7 @@ export class LaunchpadMini {
                     this.colors.GREEN
                 );
             }
-        }, 150);
+        }, 300);
     }
 
     drawPlayhead() {
@@ -466,20 +478,19 @@ export class LaunchpadMini {
 
         return null;
     }
+    consumeNavigationCombo() {
+        if (!this.navigationCombo) {
+            return false;
+        }
 
-    nextBook() {
-        const books = [
-            "MOTIF",
-            "ATTRIBUTES_TRANSFORMATIONS",
-            "EXTENSIONS"
-        ];
+        console.log("NAV: combo consumed");
 
-        const currentIndex = books.indexOf(this.currentBook);
-        const nextIndex = (currentIndex + 1) % books.length;
+        if (!this.previousPressed && !this.nextPressed) {
+            this.navigationCombo = false;
+            console.log("NAV: combo reset");
+        }
 
-        this.currentBook = books[nextIndex];
-
-        console.log("BOOK:", this.currentBook);
+        return true;
     }
 
     handleMidiMessage(data) {
@@ -565,14 +576,7 @@ export class LaunchpadMini {
             this.previousHoldTimer = null;
             this.previousRepeatTimer = null;
 
-            if (this.navigationCombo) {
-                console.log("NAV: combo consumed");
-
-                if (!this.previousPressed && !this.nextPressed) {
-                    this.navigationCombo = false;
-                    console.log("NAV: combo reset");
-                }
-
+            if (this.consumeNavigationCombo()) {
                 return;
             }
 
@@ -650,14 +654,7 @@ export class LaunchpadMini {
             this.nextHoldTimer = null;
             this.nextRepeatTimer = null;
 
-            if (this.navigationCombo) {
-                console.log("NAV: combo consumed");
-
-                if (!this.previousPressed && !this.nextPressed) {
-                    this.navigationCombo = false;
-                    console.log("NAV: combo reset");
-                }
-
+            if (this.consumeNavigationCombo()) {
                 return;
             }
 
@@ -689,12 +686,12 @@ export class LaunchpadMini {
         ) {
             // Pendant Filter Selection :
             // le pad ajoute / retire une voix du filtre
-            if (this.state.filterSelectionMode) {
+            if (this.filterSelectionMode) {
                 this.actions.toggleInstrumentFilter(
                     controlPosition
                 );
 
-                this.state.filterSelectionChanged = true;
+                this.filterSelectionChanged = true;
 
                 this.drawMotif();
                 this.drawPlayhead();
@@ -705,10 +702,9 @@ export class LaunchpadMini {
             }
 
             // Instrument seul = sélection / désélection pour l'édition
-            this.state.selectedInstrument =
-                this.state.selectedInstrument === controlPosition
-                    ? null
-                    : controlPosition;
+            this.actions.toggleSelectedInstrument(
+                controlPosition
+            );
 
             console.log(
                 "INSTRUMENT:",
@@ -753,41 +749,27 @@ export class LaunchpadMini {
         if (controlName === "SOLO") {
             // PRESS SOLO
             if (value > 0) {
-                if (value > 0) {
-                    if (this.shiftPressed) {
+                if (this.shiftPressed) {
+                    this.filterWasActive =
+                        this.state.filterMode;
 
-                        this.state.filterWasActive =
-                            this.state.filterMode;
+                    // On entre dans la sélection du filtre
+                    this.filterSelectionMode = true;
+                    this.filterSelectionChanged = false;
 
-                        // On entre dans la sélection du filtre
-                        this.state.filterSelectionMode = true;
-                        this.state.filterSelectionChanged = false;
-
-                        // Si le filtre était OFF, il devient immédiatement ON
-                        if (!this.state.filterMode) {
-                            this.state.filterMode = true;
-
-                            // Nouveau filtre : aucune référence au départ
-                            this.state.visibleInstrumentFilter.clear();
-
-                            // Aucune voix en édition
-                            this.state.selectedInstrument = null;
-
-                            console.log("FILTER MODE: ON");
-                        }
-
-                        console.log("FILTER SELECT: ON");
-
-                        this.drawInstruments();
-                        this.drawMotif();
-                        this.drawPlayhead();
-                        this.drawFilterStatus();
-                        this.swapBuffers();
-
-                        return;
+                    // Si le filtre était OFF, il devient immédiatement ON
+                    if (!this.state.filterMode) {
+                        this.actions.enterFocusMode();
                     }
 
-                    console.log("SOLO PRESS");
+                    console.log("FILTER SELECT: ON");
+
+                    this.drawInstruments();
+                    this.drawMotif();
+                    this.drawPlayhead();
+                    this.drawFilterStatus();
+                    this.swapBuffers();
+
                     return;
                 }
 
@@ -796,31 +778,24 @@ export class LaunchpadMini {
             }
 
             // RELEASE SOLO
-            if (this.state.filterSelectionMode) {
-                this.state.filterSelectionMode = false;
+            if (this.filterSelectionMode) {
+                this.filterSelectionMode = false;
 
-                if (this.state.filterSelectionChanged) {
-                    // Le filtre a été modifié :
+                if (this.filterSelectionChanged) {
+                    // Focus a été modifié :
                     // il reste actif
-                    this.state.filterMode = true;
+                    this.actions.activateFocusMode();
 
-                    console.log("FILTER MODE: ON");
-                } else if (this.state.filterWasActive) {
-                    // Le filtre était déjà actif
-                    // et aucune voix n'a été touchée :
+                } else if (this.filterWasActive) {
+                    // Focus était déjà actif :
                     // Shift + Solo = sortie complète
-                    this.state.visibleInstrumentFilter.clear();
-                    this.state.filterMode = false;
-                    this.state.selectedInstrument = null;
+                    this.actions.exitFocusMode();
 
-                    console.log("FILTER MODE: OFF");
                 } else {
-                    // Le filtre venait juste d'être activé
+                    // Focus venait juste d'être activé
                     // et aucune voix n'a été touchée :
                     // il reste actif, même vide
-                    this.state.filterMode = true;
-
-                    console.log("FILTER MODE: ON");
+                    this.actions.activateFocusMode();
                 }
 
                 this.drawInstruments();
@@ -834,14 +809,11 @@ export class LaunchpadMini {
 
             console.log("SOLO RELEASE");
             return;
-
-            console.log("SOLO RELEASE");
-            return;
         }
 
         if (value > 0) {
             if (controlType === "VALUE" && controlPosition === 0) {
-                this.nextBook();
+                this.actions.nextBook();
                 return;
             }
 

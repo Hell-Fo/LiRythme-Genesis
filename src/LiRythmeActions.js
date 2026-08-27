@@ -17,16 +17,15 @@ Elias (OpenAI)
 */
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
-    constructor(state) {
+    constructor(state, clock) {
         this.state = state;
-        this.onClockStep = null;
-        this.onClockBeat = null;
+        this.clock = clock;
     }
     setClockStepHandler(handler) {
-        this.onClockStep = handler;
+        this.clock.setClockStepHandler(handler);
     }
     setClockBeatHandler(handler) {
-        this.onClockBeat = handler;
+        this.clock.setClockBeatHandler(handler);
     }
 
     togglePlayPause() {
@@ -58,54 +57,7 @@ export class LiRythmeActions {
         );
     }
     startClock() {
-        if (this.state.clockTimer !== null) {
-            return;
-        }
-
-        const stepDuration = this.state.getStepDurationMs();
-
-        this.state.nextClockTime =
-            performance.now() + stepDuration;
-
-        const tick = () => {
-            const now = performance.now();
-
-            while (now >= this.state.nextClockTime) {
-                this.nextStep();
-
-                if (this.onClockStep) {
-                    this.onClockStep();
-                }
-
-                const stepsPerBeat =
-                    this.state.stepDivision / 4;
-
-                if (
-                    this.state.playheadPosition % stepsPerBeat === 0 &&
-                    this.onClockBeat
-                ) {
-                    this.onClockBeat();
-                }
-
-                this.state.nextClockTime += stepDuration;
-            }
-
-            this.state.clockTimer = setTimeout(
-                tick,
-                10
-            );
-        };
-
-        this.state.clockTimer = setTimeout(
-            tick,
-            10
-        );
-
-        console.log(
-            "CLOCK: START",
-            stepDuration,
-            "ms"
-        );
+        this.clock.start(() => this.nextStep());
     }
 
     toggleInstrumentStep(stepIndex) {
@@ -138,6 +90,31 @@ export class LiRythmeActions {
                 : "OFF"
         );
     }
+    toggleSelectedInstrument(instrumentPosition) {
+        this.state.selectedInstrument =
+            this.state.selectedInstrument === instrumentPosition
+                ? null
+                : instrumentPosition;
+    }
+    enterFocusMode() {
+        this.state.filterMode = true;
+        this.state.visibleInstrumentFilter.clear();
+        this.state.selectedInstrument = null;
+
+        console.log("FILTER MODE: ON");
+    }
+    exitFocusMode() {
+        this.state.visibleInstrumentFilter.clear();
+        this.state.filterMode = false;
+        this.state.selectedInstrument = null;
+
+        console.log("FILTER MODE: OFF");
+    }
+    activateFocusMode() {
+        this.state.filterMode = true;
+
+        console.log("FILTER MODE: ON");
+    }
 
     toggleInstrumentFilter(instrumentPosition) {
         const filter = this.state.visibleInstrumentFilter;
@@ -153,16 +130,9 @@ export class LiRythmeActions {
             [...filter]
         );
     }
-    
+
     stopClock() {
-        if (this.state.clockTimer === null) {
-            return;
-        }
-
-        clearInterval(this.state.clockTimer);
-        this.state.clockTimer = null;
-
-        console.log("CLOCK: STOP");
+        this.clock.stop();
     }
 
     selectMotifTimeline() {
@@ -209,6 +179,27 @@ export class LiRythmeActions {
         console.log(
             "PLAYHEAD:",
             this.state.playheadPosition
+        );
+    }
+    nextBook() {
+        const books = [
+            "MOTIF",
+            "ATTRIBUTES_TRANSFORMATIONS",
+            "EXTENSIONS"
+        ];
+
+        const currentIndex =
+            books.indexOf(this.state.currentBook);
+
+        const nextIndex =
+            (currentIndex + 1) % books.length;
+
+        this.state.currentBook =
+            books[nextIndex];
+
+        console.log(
+            "BOOK:",
+            this.state.currentBook
         );
     }
 }
