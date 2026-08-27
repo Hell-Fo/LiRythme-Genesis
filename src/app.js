@@ -1,6 +1,8 @@
 import { LiRythmeState } from "./LiRythmeState.js";
 import { LiRythmeClock } from "./LiRythmeClock.js";
 import { MidiManager } from "./hardware/midi/MidiManager.js";
+import { MidiClockInput } from "./hardware/midi/MidiClockInput.js";
+import { DrumBruteImpactProfile } from "./hardware/midi/profiles/DrumBruteImpactProfile.js";
 import { LaunchpadMini } from "./hardware/launchpad/LaunchpadMini.js";
 import { LiRythmeActions } from "./LiRythmeActions.js";
 
@@ -81,6 +83,42 @@ console.log(
     "MIDI CONTROLLER:",
     controllerName
 );
+
+const drumBruteInput =
+    [...midiManager.midiAccess.inputs.values()]
+        .find(input =>
+            input.name
+                ?.toLowerCase()
+                .includes("drumbrute impact")
+        );
+
+if (drumBruteInput) {
+    const midiClockInput = new MidiClockInput(clock);
+    const drumBruteProfile =
+        new DrumBruteImpactProfile(
+            actions,
+            () => {
+                launchpad.drawMotif();
+                launchpad.drawPlayhead();
+                launchpad.swapBuffers();
+            }
+        );
+
+    clock.setSource("MIDI");
+
+    drumBruteInput.addEventListener(
+        "midimessage",
+        (event) => {
+            midiClockInput.handleMidiMessage(event.data);
+            drumBruteProfile.handleMidiMessage(event.data);
+        }
+    );
+
+    console.log(
+        "CLOCK SOURCE: MIDI",
+        drumBruteInput.name
+    );
+}
 
 
 // ============================================================

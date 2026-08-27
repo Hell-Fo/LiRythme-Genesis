@@ -48,6 +48,7 @@ export class LiRythmeActions {
         this.state.transportState = "STOP";
         this.state.lockMode = false;
         this.state.playheadPosition = 0;
+        this.clock.resetMidiPhase();
 
         console.log(
             "TRANSPORT:",
