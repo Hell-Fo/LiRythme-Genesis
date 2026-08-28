@@ -144,9 +144,7 @@ midiManager.listenToInput(
 // CLOCK STEP
 // ============================================================
 
-actions.setClockStepHandler(() => {
-    const step = state.playheadPosition;
-
+function triggerMotifStep(step) {
     const midiNotes = {
         tomH: 39,
         tomL: 40,
@@ -184,6 +182,12 @@ actions.setClockStepHandler(() => {
             );
         }, 50);
     }
+}
+
+actions.setStepPreviewHandler(triggerMotifStep);
+
+actions.setClockStepHandler(() => {
+    triggerMotifStep(state.playheadPosition);
 
     launchpad.drawMotif();
     launchpad.drawPlayhead();

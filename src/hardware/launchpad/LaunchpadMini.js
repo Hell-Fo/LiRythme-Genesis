@@ -529,7 +529,7 @@ export class LaunchpadMini {
                     }
 
                     // [<<] = recule immédiatement
-                    this.actions.previousStep();
+                    this.actions.previousStep({ preview: true });
                     this.drawMotif();
                     this.drawPlayhead();
                     this.drawInstruments();
@@ -539,7 +539,7 @@ export class LaunchpadMini {
 
                     this.previousHoldTimer = setTimeout(() => {
                         this.previousRepeatTimer = setInterval(() => {
-                            this.actions.previousStep();
+                            this.actions.previousStep({ preview: true });
                             this.drawMotif();
                             this.drawPlayhead();
                             this.drawInstruments();
@@ -607,7 +607,7 @@ export class LaunchpadMini {
                     }
 
                     // [>>] = avance immédiatement
-                    this.actions.nextStep();
+                    this.actions.nextStep({ preview: true });
                     this.drawMotif();
                     this.drawPlayhead();
                     this.drawInstruments();
@@ -617,7 +617,7 @@ export class LaunchpadMini {
 
                     this.nextHoldTimer = setTimeout(() => {
                         this.nextRepeatTimer = setInterval(() => {
-                            this.actions.nextStep();
+                            this.actions.nextStep({ preview: true });
                             this.drawMotif();
                             this.drawPlayhead();
                             this.drawInstruments();

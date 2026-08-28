@@ -20,12 +20,16 @@ export class LiRythmeActions {
     constructor(state, clock) {
         this.state = state;
         this.clock = clock;
+        this.onStepPreview = null;
     }
     setClockStepHandler(handler) {
         this.clock.setClockStepHandler(handler);
     }
     setClockBeatHandler(handler) {
         this.clock.setClockBeatHandler(handler);
+    }
+    setStepPreviewHandler(handler) {
+        this.onStepPreview = handler;
     }
 
     togglePlayPause() {
@@ -163,7 +167,7 @@ export class LiRythmeActions {
             this.state.lockMode ? "ON" : "OFF"
         );
     }
-    previousStep() {
+    previousStep({ preview = false } = {}) {
         this.state.playheadPosition =
             (this.state.playheadPosition + 31) % 32;
 
@@ -171,9 +175,20 @@ export class LiRythmeActions {
             "PLAYHEAD:",
             this.state.playheadPosition
         );
+
+        if (
+            preview &&
+            (
+                this.state.transportState === "STOP" ||
+                this.state.transportState === "PAUSE"
+            ) &&
+            this.onStepPreview
+        ) {
+            this.onStepPreview(this.state.playheadPosition);
+        }
     }
 
-    nextStep() {
+    nextStep({ preview = false } = {}) {
         this.state.playheadPosition =
             (this.state.playheadPosition + 1) % 32;
 
@@ -181,6 +196,17 @@ export class LiRythmeActions {
             "PLAYHEAD:",
             this.state.playheadPosition
         );
+
+        if (
+            preview &&
+            (
+                this.state.transportState === "STOP" ||
+                this.state.transportState === "PAUSE"
+            ) &&
+            this.onStepPreview
+        ) {
+            this.onStepPreview(this.state.playheadPosition);
+        }
     }
     nextBook() {
         const books = [
