@@ -157,30 +157,42 @@ console.log(
 const midiClockInputSelector =
     document.getElementById("midi-clock-input");
 
+const savedMidiClockInput =
+    localStorage.getItem("midiClockInput");
+
 const defaultClockInput =
-    [...midiManager.midiAccess.inputs.values()]
-        .find(input =>
-            input.name
-                ?.toLowerCase()
-                .includes("drumbrute impact")
-        );
-
-if (defaultClockInput) {
-    const defaultClockInputIndex =
-        [...midiClockInputSelector.options]
-            .findIndex(
-                option =>
-                    option.textContent === defaultClockInput.name
-            );
-
-    if (defaultClockInputIndex >= 0) {
-        midiClockInputSelector.selectedIndex =
-            defaultClockInputIndex;
-    }
-}
+    savedMidiClockInput === null
+        ? [...midiManager.midiAccess.inputs.values()]
+            .find(input =>
+                input.name
+                    ?.toLowerCase()
+                    .includes("drumbrute impact")
+            )
+        : null;
 
 const initialClockInputName =
-    defaultClockInput?.name ?? "INTERNAL";
+    savedMidiClockInput === "INTERNAL"
+        ? "INTERNAL"
+        : midiManager.findInput(savedMidiClockInput)?.name
+            ?? (
+                savedMidiClockInput === null
+                    ? defaultClockInput?.name ?? "INTERNAL"
+                    : "INTERNAL"
+            );
+
+const initialClockInputIndex =
+    [...midiClockInputSelector.options]
+        .findIndex(
+            option =>
+                initialClockInputName === "INTERNAL"
+                    ? option.value === "INTERNAL"
+                    : option.textContent === initialClockInputName
+        );
+
+if (initialClockInputIndex >= 0) {
+    midiClockInputSelector.selectedIndex =
+        initialClockInputIndex;
+}
 
 midiClockInputSelector.addEventListener(
     "change",
@@ -196,6 +208,11 @@ midiClockInputSelector.addEventListener(
                 : selectedOption?.textContent;
 
         if (selectedClockInput) {
+            localStorage.setItem(
+                "midiClockInput",
+                selectedClockInput
+            );
+
             switchMidiClockInput(selectedClockInput);
         }
     }
