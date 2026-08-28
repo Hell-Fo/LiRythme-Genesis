@@ -20,6 +20,8 @@ export class MidiManager {
     constructor() {
         this.midiAccess = null;
         this.outputs = new Map();
+        this.controllerInput = null;
+        this.controllerMessageListener = null;
 
         this.controllerSelector =
             document.getElementById("midi-controller");
@@ -91,17 +93,37 @@ export class MidiManager {
         output.send(message);
     }
 
-    listenToInput(inputName, callback) {
-        for (const input of this.midiAccess.inputs.values()) {
-            if (input.name === inputName) {
-                input.onmidimessage = (event) => {
-                    callback(event.data);
-                };
+    connectControllerInput(inputName, callback) {
+        const input = this.findInput(inputName);
 
-                return;
-            }
+        if (!input) {
+            return false;
         }
 
-        console.error("MIDI input not found:", inputName);
+        const listener = (event) => {
+            callback(event.data);
+        };
+
+        input.addEventListener("midimessage", listener);
+
+        this.controllerInput = input;
+        this.controllerMessageListener = listener;
+
+        return true;
+    }
+
+    disconnectControllerInput() {
+        if (
+            this.controllerInput &&
+            this.controllerMessageListener
+        ) {
+            this.controllerInput.removeEventListener(
+                "midimessage",
+                this.controllerMessageListener
+            );
+        }
+
+        this.controllerInput = null;
+        this.controllerMessageListener = null;
     }
 }

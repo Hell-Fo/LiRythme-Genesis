@@ -55,6 +55,33 @@ export class LaunchpadMini {
 
     }
 
+    setDeviceName(deviceName) {
+        this.deviceName = deviceName;
+    }
+
+    resetInputState() {
+        clearTimeout(this.playStopTimer);
+        clearTimeout(this.previousHoldTimer);
+        clearInterval(this.previousRepeatTimer);
+        clearTimeout(this.nextHoldTimer);
+        clearInterval(this.nextRepeatTimer);
+
+        this.playStopTimer = null;
+        this.previousHoldTimer = null;
+        this.previousRepeatTimer = null;
+        this.nextHoldTimer = null;
+        this.nextRepeatTimer = null;
+
+        this.playStopLongPressTriggered = false;
+        this.shiftPressed = false;
+        this.previousPressed = false;
+        this.nextPressed = false;
+        this.navigationCombo = false;
+        this.filterSelectionMode = false;
+        this.filterSelectionChanged = false;
+        this.filterWasActive = false;
+    }
+
     setLed(note, value) {
         const bufferedValue = value & 0x33;
 

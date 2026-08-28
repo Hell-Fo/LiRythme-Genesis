@@ -72,12 +72,82 @@ await midiManager.initialize();
 const controllerSelector =
     document.getElementById("midi-controller");
 
+const savedMidiController =
+    localStorage.getItem("midiController");
+
+const savedMidiControllerIndex =
+    [...controllerSelector.options]
+        .findIndex(
+            option =>
+                option.textContent === savedMidiController
+        );
+
+if (savedMidiControllerIndex >= 0) {
+    controllerSelector.selectedIndex =
+        savedMidiControllerIndex;
+} else if (controllerSelector.options.length > 0) {
+    controllerSelector.selectedIndex = 0;
+}
+
+controllerSelector.addEventListener(
+    "change",
+    () => {
+        const selectedController =
+            controllerSelector.options[
+                controllerSelector.selectedIndex
+            ]?.textContent;
+
+        if (selectedController) {
+            localStorage.setItem(
+                "midiController",
+                selectedController
+            );
+
+            switchMidiController(selectedController);
+        }
+    }
+);
+
 const controllerName =
     controllerSelector.options[
         controllerSelector.selectedIndex
     ]?.textContent;
 const midiOutputSelector =
     document.getElementById("midi-output");
+
+const savedMidiOutput =
+    localStorage.getItem("midiOutput");
+
+const savedMidiOutputIndex =
+    [...midiOutputSelector.options]
+        .findIndex(
+            option =>
+                option.textContent === savedMidiOutput
+        );
+
+if (savedMidiOutputIndex >= 0) {
+    midiOutputSelector.selectedIndex =
+        savedMidiOutputIndex;
+} else if (midiOutputSelector.options.length > 0) {
+    midiOutputSelector.selectedIndex = 0;
+}
+
+midiOutputSelector.addEventListener(
+    "change",
+    () => {
+        const selectedOutput =
+            midiOutputSelector.options[
+                midiOutputSelector.selectedIndex
+            ]?.textContent;
+
+        if (selectedOutput) {
+            localStorage.setItem(
+                "midiOutput",
+                selectedOutput
+            );
+        }
+    }
+);
 
 console.log(
     "MIDI CONTROLLER:",
@@ -132,12 +202,60 @@ const launchpad = new LaunchpadMini(
     controllerName
 );
 
-launchpad.enableDoubleBuffering();
+const handleControllerMessage =
+    (data) => launchpad.handleMidiMessage(data);
 
-midiManager.listenToInput(
-    controllerName,
-    (data) => launchpad.handleMidiMessage(data)
-);
+function redrawLaunchpad() {
+    launchpad.drawMotif();
+    launchpad.drawPlayhead();
+    launchpad.drawInstruments();
+    launchpad.drawAttributesTransformations();
+    launchpad.drawTopControls();
+    launchpad.drawTransport();
+    launchpad.drawFilterStatus();
+    launchpad.swapBuffers();
+}
+
+function switchMidiController(name) {
+    const ports = midiManager.findControllerPorts(name);
+
+    if (!ports.input || !ports.output) {
+        console.warn(
+            "MIDI controller unavailable:",
+            name
+        );
+
+        return false;
+    }
+
+    const previousDeviceName = launchpad.deviceName;
+
+    launchpad.resetInputState();
+    midiManager.disconnectControllerInput();
+    launchpad.setDeviceName(name);
+
+    const connected = midiManager.connectControllerInput(
+        name,
+        handleControllerMessage
+    );
+
+    if (!connected) {
+        launchpad.setDeviceName(previousDeviceName);
+        midiManager.connectControllerInput(
+            previousDeviceName,
+            handleControllerMessage
+        );
+
+        return false;
+    }
+
+    launchpad.enableDoubleBuffering();
+    redrawLaunchpad();
+
+    return true;
+}
+
+switchMidiController(controllerName);
 
 
 // ============================================================
@@ -204,20 +322,6 @@ actions.setClockBeatHandler(() => {
     console.log("BEAT");
     launchpad.pulseTransport();
 });
-
-
-// ============================================================
-// INITIAL DRAW
-// ============================================================
-
-launchpad.drawMotif();
-launchpad.drawPlayhead();
-launchpad.drawInstruments();
-launchpad.drawAttributesTransformations();
-launchpad.drawTopControls();
-launchpad.drawTransport();
-launchpad.drawFilterStatus();
-launchpad.swapBuffers();
 
 
 // ============================================================
