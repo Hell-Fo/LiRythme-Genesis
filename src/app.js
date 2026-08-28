@@ -295,8 +295,34 @@ const drumBruteProfile =
             launchpad.swapBuffers();
         }
     );
-
 let activeClockProfile = null;
+
+midiClockInput.onStart = () => {
+    if (activeClockProfile === drumBruteProfile) {
+        return;
+    }
+
+    actions.startPlayback({ origin: "MIDI_IN" });
+    redrawLaunchpad();
+};
+
+midiClockInput.onContinue = () => {
+    if (activeClockProfile === drumBruteProfile) {
+        return;
+    }
+
+    actions.continuePlayback({ origin: "MIDI_IN" });
+    redrawLaunchpad();
+};
+
+midiClockInput.onStop = () => {
+    if (activeClockProfile === drumBruteProfile) {
+        return;
+    }
+
+    actions.stop();
+    redrawLaunchpad();
+};
 
 const handleClockMessage = (data) => {
     midiClockInput.handleMidiMessage(data);

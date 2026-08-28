@@ -34,16 +34,59 @@ export class LiRythmeActions {
 
     togglePlayPause() {
         if (this.state.transportState === "PLAY") {
-            this.state.transportState = "PAUSE";
-            this.stopClock();
+            this.pausePlayback();
         } else {
-            this.state.transportState = "PLAY";
-            this.startClock();
+            this.continuePlayback();
         }
+    }
+
+    startPlayback({ origin = "LOCAL" } = {}) {
+        this.stopClock();
+
+        this.state.playheadPosition = 0;
+        this.clock.resetMidiPhase();
+        this.state.transportState = "PLAY";
+        this.startClock();
 
         console.log(
             "TRANSPORT:",
-            this.state.transportState
+            this.state.transportState,
+            "ORIGIN:",
+            origin,
+            "POSITION:",
+            this.state.playheadPosition
+        );
+    }
+
+    continuePlayback({ origin = "LOCAL" } = {}) {
+        if (this.state.transportState === "PLAY") {
+            return;
+        }
+
+        this.state.transportState = "PLAY";
+        this.startClock();
+
+        console.log(
+            "TRANSPORT:",
+            this.state.transportState,
+            "ORIGIN:",
+            origin
+        );
+    }
+
+    pausePlayback({ origin = "LOCAL" } = {}) {
+        if (this.state.transportState === "PAUSE") {
+            return;
+        }
+
+        this.state.transportState = "PAUSE";
+        this.stopClock();
+
+        console.log(
+            "TRANSPORT:",
+            this.state.transportState,
+            "ORIGIN:",
+            origin
         );
     }
     stop() {
