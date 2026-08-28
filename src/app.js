@@ -154,7 +154,10 @@ console.log(
     controllerName
 );
 
-const drumBruteInput =
+const midiClockInputSelector =
+    document.getElementById("midi-clock-input");
+
+const defaultClockInput =
     [...midiManager.midiAccess.inputs.values()]
         .find(input =>
             input.name
@@ -162,33 +165,41 @@ const drumBruteInput =
                 .includes("drumbrute impact")
         );
 
-if (drumBruteInput) {
-    const midiClockInput = new MidiClockInput(clock);
-    const drumBruteProfile =
-        new DrumBruteImpactProfile(
-            actions,
-            () => {
-                launchpad.drawMotif();
-                launchpad.drawPlayhead();
-                launchpad.swapBuffers();
-            }
-        );
+if (defaultClockInput) {
+    const defaultClockInputIndex =
+        [...midiClockInputSelector.options]
+            .findIndex(
+                option =>
+                    option.textContent === defaultClockInput.name
+            );
 
-    clock.setSource("MIDI");
-
-    drumBruteInput.addEventListener(
-        "midimessage",
-        (event) => {
-            midiClockInput.handleMidiMessage(event.data);
-            drumBruteProfile.handleMidiMessage(event.data);
-        }
-    );
-
-    console.log(
-        "CLOCK SOURCE: MIDI",
-        drumBruteInput.name
-    );
+    if (defaultClockInputIndex >= 0) {
+        midiClockInputSelector.selectedIndex =
+            defaultClockInputIndex;
+    }
 }
+
+const initialClockInputName =
+    defaultClockInput?.name ?? "INTERNAL";
+
+midiClockInputSelector.addEventListener(
+    "change",
+    () => {
+        const selectedOption =
+            midiClockInputSelector.options[
+                midiClockInputSelector.selectedIndex
+            ];
+
+        const selectedClockInput =
+            selectedOption?.value === "INTERNAL"
+                ? "INTERNAL"
+                : selectedOption?.textContent;
+
+        if (selectedClockInput) {
+            switchMidiClockInput(selectedClockInput);
+        }
+    }
+);
 
 
 // ============================================================
@@ -256,6 +267,91 @@ function switchMidiController(name) {
 }
 
 switchMidiController(controllerName);
+
+const midiClockInput = new MidiClockInput(clock);
+const drumBruteProfile =
+    new DrumBruteImpactProfile(
+        actions,
+        () => {
+            launchpad.drawMotif();
+            launchpad.drawPlayhead();
+            launchpad.swapBuffers();
+        }
+    );
+
+let activeClockProfile = null;
+
+const handleClockMessage = (data) => {
+    midiClockInput.handleMidiMessage(data);
+    activeClockProfile?.handleMidiMessage(data);
+};
+
+function switchMidiClockInput(name) {
+    if (name === "INTERNAL") {
+        midiManager.disconnectClockInput();
+        activeClockProfile = null;
+        clock.resetMidiPhase();
+        clock.setSource("INTERNAL");
+
+        if (state.transportState === "PLAY") {
+            actions.startClock();
+        }
+
+        console.log("CLOCK SOURCE: INTERNAL");
+
+        return true;
+    }
+
+    const input = midiManager.findInput(name);
+
+    if (!input) {
+        console.warn("MIDI Clock input unavailable:", name);
+        return false;
+    }
+
+    const previousSource = clock.source;
+    const previousInputName = midiManager.clockInput?.name;
+    const previousClockProfile = activeClockProfile;
+
+    midiManager.disconnectClockInput();
+    clock.resetMidiPhase();
+    clock.setSource("MIDI");
+
+    activeClockProfile =
+        name.toLowerCase().includes("drumbrute impact")
+            ? drumBruteProfile
+            : null;
+
+    const connected = midiManager.connectClockInput(
+        name,
+        handleClockMessage
+    );
+
+    if (!connected) {
+        activeClockProfile = previousClockProfile;
+        clock.setSource(previousSource);
+
+        if (previousInputName) {
+            midiManager.connectClockInput(
+                previousInputName,
+                handleClockMessage
+            );
+        } else if (
+            previousSource === "INTERNAL" &&
+            state.transportState === "PLAY"
+        ) {
+            actions.startClock();
+        }
+
+        return false;
+    }
+
+    console.log("CLOCK SOURCE: MIDI", name);
+
+    return true;
+}
+
+switchMidiClockInput(initialClockInputName);
 
 
 // ============================================================

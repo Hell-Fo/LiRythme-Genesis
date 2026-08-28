@@ -22,9 +22,14 @@ export class MidiManager {
         this.outputs = new Map();
         this.controllerInput = null;
         this.controllerMessageListener = null;
+        this.clockInput = null;
+        this.clockMessageListener = null;
 
         this.controllerSelector =
             document.getElementById("midi-controller");
+
+        this.clockInputSelector =
+            document.getElementById("midi-clock-input");
 
         this.outputSelector =
             document.getElementById("midi-output");
@@ -38,16 +43,40 @@ export class MidiManager {
 
     updateDeviceLists() {
         this.controllerSelector.innerHTML = "";
+        this.clockInputSelector.innerHTML = "";
         this.outputSelector.innerHTML = "";
         this.outputs.clear();
 
+        const internalClockOption =
+            document.createElement("option");
+
+        internalClockOption.value = "INTERNAL";
+        internalClockOption.textContent = "INTERNAL";
+
+        this.clockInputSelector.appendChild(
+            internalClockOption
+        );
+
         for (const input of this.midiAccess.inputs.values()) {
-            const option = document.createElement("option");
+            const controllerOption =
+                document.createElement("option");
 
-            option.value = input.id;
-            option.textContent = input.name;
+            controllerOption.value = input.id;
+            controllerOption.textContent = input.name;
 
-            this.controllerSelector.appendChild(option);
+            this.controllerSelector.appendChild(
+                controllerOption
+            );
+
+            const clockInputOption =
+                document.createElement("option");
+
+            clockInputOption.value = input.id;
+            clockInputOption.textContent = input.name;
+
+            this.clockInputSelector.appendChild(
+                clockInputOption
+            );
         }
 
         for (const output of this.midiAccess.outputs.values()) {
@@ -125,5 +154,39 @@ export class MidiManager {
 
         this.controllerInput = null;
         this.controllerMessageListener = null;
+    }
+
+    connectClockInput(inputName, callback) {
+        const input = this.findInput(inputName);
+
+        if (!input) {
+            return false;
+        }
+
+        const listener = (event) => {
+            callback(event.data);
+        };
+
+        input.addEventListener("midimessage", listener);
+
+        this.clockInput = input;
+        this.clockMessageListener = listener;
+
+        return true;
+    }
+
+    disconnectClockInput() {
+        if (
+            this.clockInput &&
+            this.clockMessageListener
+        ) {
+            this.clockInput.removeEventListener(
+                "midimessage",
+                this.clockMessageListener
+            );
+        }
+
+        this.clockInput = null;
+        this.clockMessageListener = null;
     }
 }
