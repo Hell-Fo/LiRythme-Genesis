@@ -12,6 +12,11 @@
   "type": "commonjs",
   "devDependencies": {
     "electron": "^43.2.0",
+    "node-gyp": "12.4.0",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@julusian/midi": "^3.8.1",
+    "node-addon-api": "6.1.0"
   }
 }

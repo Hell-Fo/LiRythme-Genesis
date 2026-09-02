@@ -21,6 +21,7 @@ export class LiRythmeActions {
         this.state = state;
         this.clock = clock;
         this.onStepPreview = null;
+        this.onTransportTransition = null;
     }
     setClockStepHandler(handler) {
         this.clock.setClockStepHandler(handler);
@@ -31,22 +32,28 @@ export class LiRythmeActions {
     setStepPreviewHandler(handler) {
         this.onStepPreview = handler;
     }
+    setTransportTransitionHandler(handler) {
+        this.onTransportTransition = handler;
+    }
 
-    togglePlayPause() {
+    togglePlayPause({ origin = "LOCAL" } = {}) {
         if (this.state.transportState === "PLAY") {
-            this.pausePlayback();
+            this.pausePlayback({ origin });
         } else {
-            this.continuePlayback();
+            this.continuePlayback({ origin });
         }
     }
 
     startPlayback({ origin = "LOCAL" } = {}) {
+        const previousState = this.state.transportState;
+
         this.stopClock();
 
         this.state.playheadPosition = 0;
         this.clock.resetMidiPhase();
         this.state.transportState = "PLAY";
         this.startClock();
+        this.notifyTransportTransition(previousState, origin);
 
         console.log(
             "TRANSPORT:",
@@ -63,8 +70,11 @@ export class LiRythmeActions {
             return;
         }
 
+        const previousState = this.state.transportState;
+
         this.state.transportState = "PLAY";
         this.startClock();
+        this.notifyTransportTransition(previousState, origin);
 
         console.log(
             "TRANSPORT:",
@@ -79,8 +89,11 @@ export class LiRythmeActions {
             return;
         }
 
+        const previousState = this.state.transportState;
+
         this.state.transportState = "PAUSE";
         this.stopClock();
+        this.notifyTransportTransition(previousState, origin);
 
         console.log(
             "TRANSPORT:",
@@ -89,13 +102,16 @@ export class LiRythmeActions {
             origin
         );
     }
-    stop() {
+    stop({ origin = "LOCAL" } = {}) {
+        const previousState = this.state.transportState;
+
         this.stopClock();
 
         this.state.transportState = "STOP";
         this.state.lockMode = false;
         this.state.playheadPosition = 0;
         this.clock.resetMidiPhase();
+        this.notifyTransportTransition(previousState, origin);
 
         console.log(
             "TRANSPORT:",
@@ -103,6 +119,20 @@ export class LiRythmeActions {
             "POSITION:",
             this.state.playheadPosition
         );
+    }
+    notifyTransportTransition(previousState, origin) {
+        if (
+            previousState === this.state.transportState ||
+            !this.onTransportTransition
+        ) {
+            return;
+        }
+
+        this.onTransportTransition({
+            from: previousState,
+            to: this.state.transportState,
+            origin
+        });
     }
     startClock() {
         this.clock.start(() => this.nextStep());

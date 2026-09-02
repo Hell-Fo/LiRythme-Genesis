@@ -12,12 +12,12 @@ export class DrumBruteImpactProfile {
         }
 
         if (controller === 54) {
-            this.actions.togglePlayPause();
+            this.actions.togglePlayPause({ origin: "MIDI_IN" });
             return;
         }
 
         if (controller === 51) {
-            this.actions.stop();
+            this.actions.stop({ origin: "MIDI_IN" });
             this.onStop?.();
         }
     }

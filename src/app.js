@@ -2,6 +2,7 @@ import { LiRythmeState } from "./LiRythmeState.js";
 import { LiRythmeClock } from "./LiRythmeClock.js";
 import { MidiManager } from "./hardware/midi/MidiManager.js";
 import { MidiClockInput } from "./hardware/midi/MidiClockInput.js";
+import { MidiClockOutput } from "./hardware/midi/MidiClockOutput.js";
 import { DrumBruteImpactProfile } from "./hardware/midi/profiles/DrumBruteImpactProfile.js";
 import { LaunchpadMini } from "./hardware/launchpad/LaunchpadMini.js";
 import { LiRythmeActions } from "./LiRythmeActions.js";
@@ -67,7 +68,19 @@ console.log(
 // MIDI
 // ============================================================
 
-await midiManager.initialize();
+const nativeMidiTestOutputName =
+    globalThis.liRythmeRuntime?.nativeMidiTestOutputName ?? null;
+
+await midiManager.initialize({
+    webMidiEnabled:
+        !nativeMidiTestOutputName,
+    nativeClockOutputName:
+        nativeMidiTestOutputName,
+    nativeBridge:
+        nativeMidiTestOutputName
+            ? globalThis.nativeMidi
+            : null
+});
 
 const controllerSelector =
     document.getElementById("midi-controller");
@@ -132,6 +145,17 @@ if (savedMidiOutputIndex >= 0) {
     midiOutputSelector.selectedIndex = 0;
 }
 
+const setMidiNotesOutputFromSelection = () => {
+    const selectedOutput =
+        midiOutputSelector.options[
+            midiOutputSelector.selectedIndex
+        ]?.textContent;
+
+    midiManager.setNotesOutput(selectedOutput ?? null);
+};
+
+setMidiNotesOutputFromSelection();
+
 midiOutputSelector.addEventListener(
     "change",
     () => {
@@ -146,8 +170,143 @@ midiOutputSelector.addEventListener(
                 selectedOutput
             );
         }
+
+        setMidiNotesOutputFromSelection();
     }
 );
+
+const midiClockOutputSelector =
+    document.getElementById("midi-clock-output");
+
+const midiClockOutput =
+    new MidiClockOutput(midiManager);
+
+const savedMidiClockOutput =
+    localStorage.getItem("midiClockOutput");
+
+const savedMidiClockOutputIndex =
+    [...midiClockOutputSelector.options]
+        .findIndex(
+            option =>
+                option.textContent === savedMidiClockOutput
+        );
+
+if (nativeMidiTestOutputName) {
+    midiClockOutputSelector.selectedIndex =
+        [...midiClockOutputSelector.options]
+            .findIndex(
+                option =>
+                    option.textContent === nativeMidiTestOutputName
+            );
+} else if (savedMidiClockOutputIndex >= 0) {
+    midiClockOutputSelector.selectedIndex =
+        savedMidiClockOutputIndex;
+} else {
+    midiClockOutputSelector.selectedIndex = 0;
+}
+
+const setMidiClockOutputFromSelection = () => {
+    const selectedOption =
+        midiClockOutputSelector.options[
+            midiClockOutputSelector.selectedIndex
+        ];
+
+    midiClockOutput.setOutput(
+        selectedOption?.value === "NONE"
+            ? "NONE"
+            : selectedOption?.textContent
+    );
+};
+
+const syncMidiClockOutput = ({ clear = false } = {}) => {
+    midiClockOutput.setSource(clock.source);
+
+    if (clock.source === "INTERNAL") {
+        midiClockOutput.startClock(
+            () => state.tempo,
+            () => clock.source === "INTERNAL"
+        );
+        return;
+    }
+
+    midiClockOutput.stopClock({ clear });
+};
+
+setMidiClockOutputFromSelection();
+
+midiClockOutputSelector.addEventListener(
+    "change",
+    () => {
+        const selectedOption =
+            midiClockOutputSelector.options[
+                midiClockOutputSelector.selectedIndex
+            ];
+
+        if (selectedOption) {
+            localStorage.setItem(
+                "midiClockOutput",
+                selectedOption.value === "NONE"
+                    ? "NONE"
+                    : selectedOption.textContent
+            );
+        }
+
+        setMidiClockOutputFromSelection();
+        syncMidiClockOutput();
+    }
+);
+
+actions.setTransportTransitionHandler(
+    ({ from, to, origin }) => {
+        if (
+            origin === "MIDI_IN" ||
+            clock.source !== "INTERNAL"
+        ) {
+            return;
+        }
+
+        if (from === "STOP" && to === "PLAY") {
+            midiClockOutput.sendStart();
+            return;
+        }
+
+        if (from === "PAUSE" && to === "PLAY") {
+            midiClockOutput.sendContinue();
+            return;
+        }
+
+        if (
+            (from === "PLAY" && to === "PAUSE") ||
+            (to === "STOP" && from !== "STOP")
+        ) {
+            midiClockOutput.sendStop();
+        }
+    }
+);
+
+if (nativeMidiTestOutputName) {
+    const controls = document.createElement("div");
+    const playButton = document.createElement("button");
+    const stopButton = document.createElement("button");
+
+    playButton.textContent = "PLAY";
+    stopButton.textContent = "STOP";
+
+    playButton.addEventListener(
+        "click",
+        () => midiClockOutput.sendStart()
+    );
+    stopButton.addEventListener(
+        "click",
+        () => midiClockOutput.sendStop()
+    );
+
+    controls.append(playButton, stopButton);
+    midiClockOutputSelector.insertAdjacentElement(
+        "afterend",
+        controls
+    );
+}
 
 console.log(
     "MIDI CONTROLLER:",
@@ -208,12 +367,19 @@ midiClockInputSelector.addEventListener(
                 : selectedOption?.textContent;
 
         if (selectedClockInput) {
+            const previousClockSource = clock.source;
+
             localStorage.setItem(
                 "midiClockInput",
                 selectedClockInput
             );
 
             switchMidiClockInput(selectedClockInput);
+            syncMidiClockOutput({
+                clear:
+                    previousClockSource === "INTERNAL" &&
+                    clock.source === "MIDI"
+            });
         }
     }
 );
@@ -320,7 +486,7 @@ midiClockInput.onStop = () => {
         return;
     }
 
-    actions.stop();
+    actions.stop({ origin: "MIDI_IN" });
     redrawLaunchpad();
 };
 
@@ -395,6 +561,7 @@ function switchMidiClockInput(name) {
 }
 
 switchMidiClockInput(initialClockInputName);
+syncMidiClockOutput();
 
 
 // ============================================================

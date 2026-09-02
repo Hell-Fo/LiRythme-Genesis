@@ -20,10 +20,16 @@ export class MidiManager {
     constructor() {
         this.midiAccess = null;
         this.outputs = new Map();
+        this.midiClockSendCounts = new Map();
         this.controllerInput = null;
         this.controllerMessageListener = null;
         this.clockInput = null;
         this.clockMessageListener = null;
+        this.backend = "WEB_MIDI";
+        this.nativeBridge = null;
+        this.controllerOutputName = null;
+        this.sharedClockOutputName = null;
+        this.removeNativeStatusListener = null;
 
         this.controllerSelector =
             document.getElementById("midi-controller");
@@ -31,19 +37,77 @@ export class MidiManager {
         this.clockInputSelector =
             document.getElementById("midi-clock-input");
 
+        this.clockOutputSelector =
+            document.getElementById("midi-clock-output");
+
         this.outputSelector =
             document.getElementById("midi-output");
     }
 
-    async initialize() {
-        this.midiAccess = await navigator.requestMIDIAccess();
+    async initialize({
+        webMidiEnabled = true,
+        nativeClockOutputName = null,
+        nativeBridge = null
+    } = {}) {
+        if (webMidiEnabled) {
+            this.backend = "WEB_MIDI";
+            this.midiAccess = await navigator.requestMIDIAccess();
+        } else if (nativeBridge) {
+            this.backend = "NATIVE_MIDI";
+            this.nativeBridge = nativeBridge;
+            this.sharedClockOutputName = nativeClockOutputName;
+            const ports = await nativeBridge.request({
+                type: "LIST_PORTS",
+                sharedClockOutputName: nativeClockOutputName
+            });
+
+            this.midiAccess = {
+                inputs: new Map(
+                    ports.inputs.map(port => [
+                        `native-input-${port.id}`,
+                        {
+                            id: `native-input-${port.id}`,
+                            name: port.name
+                        }
+                    ])
+                ),
+                outputs: new Map(
+                    ports.outputs
+                        .map(port => [
+                            `native-output-${port.id}`,
+                            {
+                                id: `native-output-${port.id}`,
+                                name: port.name
+                            }
+                        ])
+                )
+            };
+
+            this.removeNativeStatusListener =
+                nativeBridge.onStatus(
+                    message => this.handleNativeStatus(message)
+                );
+        } else {
+            this.midiAccess = {
+                inputs: new Map(),
+                outputs: new Map()
+            };
+        }
 
         this.updateDeviceLists();
+
+        if (nativeClockOutputName) {
+            const option = document.createElement("option");
+
+            option.textContent = nativeClockOutputName;
+            this.clockOutputSelector.appendChild(option);
+        }
     }
 
     updateDeviceLists() {
         this.controllerSelector.innerHTML = "";
         this.clockInputSelector.innerHTML = "";
+        this.clockOutputSelector.innerHTML = "";
         this.outputSelector.innerHTML = "";
         this.outputs.clear();
 
@@ -55,6 +119,16 @@ export class MidiManager {
 
         this.clockInputSelector.appendChild(
             internalClockOption
+        );
+
+        const noClockOutputOption =
+            document.createElement("option");
+
+        noClockOutputOption.value = "NONE";
+        noClockOutputOption.textContent = "NONE";
+
+        this.clockOutputSelector.appendChild(
+            noClockOutputOption
         );
 
         for (const input of this.midiAccess.inputs.values()) {
@@ -85,8 +159,15 @@ export class MidiManager {
             option.value = output.id;
             option.textContent = output.name;
 
+            const clockOutputOption = option.cloneNode(true);
+
             this.outputs.set(output.name, output);
 
+            if (this.backend !== "NATIVE_MIDI") {
+                this.clockOutputSelector.appendChild(
+                    clockOutputOption
+                );
+            }
             this.outputSelector.appendChild(option);
         }
     }
@@ -111,7 +192,7 @@ export class MidiManager {
         };
     }
 
-    send(outputName, message) {
+    send(outputName, message, timestamp) {
         const output = this.findOutput(outputName);
 
         if (!output) {
@@ -119,7 +200,85 @@ export class MidiManager {
             return;
         }
 
-        output.send(message);
+        if (this.backend === "NATIVE_MIDI") {
+            this.nativeBridge.send({
+                type: outputName === this.sharedClockOutputName
+                    ? "SEND_SHARED_MIDI"
+                    : outputName === this.controllerOutputName
+                        ? "SEND_CONTROLLER"
+                        : "SEND_NOTES",
+                name: outputName,
+                message: Array.from(message)
+            });
+            return;
+        }
+
+        if (timestamp === undefined) {
+            output.send(message);
+            return;
+        }
+
+        if (message.length === 1 && message[0] === 0xF8) {
+            const count =
+                this.midiClockSendCounts.get(output.id) ?? 0;
+
+            this.midiClockSendCounts.set(
+                output.id,
+                count + 1
+            );
+        }
+
+        output.send(message, timestamp);
+    }
+
+    getMidiClockSendSnapshot(outputName) {
+        const output = this.findOutput(outputName);
+
+        if (!output) {
+            return {
+                outputName,
+                outputId: null,
+                count: 0
+            };
+        }
+
+        return {
+            outputName: output.name,
+            outputId: output.id,
+            count:
+                this.midiClockSendCounts.get(output.id) ?? 0
+        };
+    }
+
+    setNotesOutput(outputName) {
+        if (this.backend !== "NATIVE_MIDI") {
+            return;
+        }
+
+        this.nativeBridge.send({
+            type: outputName === this.sharedClockOutputName
+                ? "SELECT_SHARED_NOTES_OUTPUT"
+                : "OPEN_NOTES_OUTPUT",
+            name: outputName
+        });
+    }
+
+    clearOutput(outputName) {
+        const output = this.findOutput(outputName);
+
+        if (!output || typeof output.clear !== "function") {
+            return;
+        }
+
+        try {
+            output.clear();
+        } catch (error) {
+            console.warn(
+                "Unable to clear pending MIDI output messages:",
+                outputName,
+                error
+            );
+        }
     }
 
     connectControllerInput(inputName, callback) {
@@ -127,6 +286,23 @@ export class MidiManager {
 
         if (!input) {
             return false;
+        }
+
+        if (this.backend === "NATIVE_MIDI") {
+            const output = this.findOutput(inputName);
+
+            if (!output) {
+                return false;
+            }
+
+            this.controllerInput = input;
+            this.controllerMessageListener = callback;
+            this.controllerOutputName = output.name;
+            this.nativeBridge.send({
+                type: "OPEN_CONTROLLER",
+                name: input.name
+            });
+            return true;
         }
 
         const listener = (event) => {
@@ -142,6 +318,16 @@ export class MidiManager {
     }
 
     disconnectControllerInput() {
+        if (this.backend === "NATIVE_MIDI") {
+            this.nativeBridge.send({
+                type: "CLOSE_CONTROLLER"
+            });
+            this.controllerInput = null;
+            this.controllerMessageListener = null;
+            this.controllerOutputName = null;
+            return;
+        }
+
         if (
             this.controllerInput &&
             this.controllerMessageListener
@@ -156,10 +342,32 @@ export class MidiManager {
         this.controllerMessageListener = null;
     }
 
+    handleNativeStatus(message) {
+        if (
+            message.type === "INPUT_MESSAGE" &&
+            message.role === "CONTROLLER" &&
+            message.name === this.controllerInput?.name
+        ) {
+            this.controllerMessageListener?.(message.message);
+            return;
+        }
+
+        if (message.type === "ERROR") {
+            console.error("Native MIDI error:", message);
+        }
+    }
+
     connectClockInput(inputName, callback) {
         const input = this.findInput(inputName);
 
         if (!input) {
+            return false;
+        }
+
+        if (this.backend === "NATIVE_MIDI") {
+            console.warn(
+                "Native MIDI Clock IN is not enabled in this test mode"
+            );
             return false;
         }
 
