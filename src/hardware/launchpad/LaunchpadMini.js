@@ -20,6 +20,13 @@ import { LaunchpadMapping } from "./LaunchpadMapping.js";
 import { LaunchpadColors } from "./LaunchpadColors.js";
 import { GenesisLayout } from "./GenesisLayout.js";
 
+const TEMPO_HOLD_DELAY_MS = 300;
+const TEMPO_MODERATE_THRESHOLD_MS = 1_500;
+const TEMPO_FAST_THRESHOLD_MS = 3_000;
+const TEMPO_INITIAL_REPEAT_MS = 120;
+const TEMPO_MODERATE_REPEAT_MS = 100;
+const TEMPO_FAST_REPEAT_MS = 80;
+
 export class LaunchpadMini {
     constructor(
         midiManager,
@@ -42,6 +49,14 @@ export class LaunchpadMini {
 
         this.playStopTimer = null;
         this.playStopLongPressTriggered = false;
+        this.playStopPressed = false;
+        this.tempoChordConsumed = false;
+        this.previousTempoMode = false;
+        this.nextTempoMode = false;
+        this.tempoDirection = null;
+        this.tempoRepeatTimer = null;
+        this.tempoRepeatGeneration = 0;
+        this.tempoGestureStartedAt = null;
         this.previousHoldTimer = null;
         this.previousRepeatTimer = null;
         this.nextRepeatTimer = null;
@@ -61,6 +76,7 @@ export class LaunchpadMini {
 
     resetInputState() {
         clearTimeout(this.playStopTimer);
+        this.stopTempoRepeat();
         clearTimeout(this.previousHoldTimer);
         clearInterval(this.previousRepeatTimer);
         clearTimeout(this.nextHoldTimer);
@@ -73,6 +89,10 @@ export class LaunchpadMini {
         this.nextRepeatTimer = null;
 
         this.playStopLongPressTriggered = false;
+        this.playStopPressed = false;
+        this.tempoChordConsumed = false;
+        this.previousTempoMode = false;
+        this.nextTempoMode = false;
         this.shiftPressed = false;
         this.previousPressed = false;
         this.nextPressed = false;
@@ -144,7 +164,7 @@ export class LaunchpadMini {
         }
     }
 
-    drawMotif() {
+    getMotifStepColor(step) {
         const selectedInstrumentName =
             this.state.instrumentMap[
             this.state.selectedInstrument
@@ -153,62 +173,68 @@ export class LaunchpadMini {
         const filter =
             this.state.visibleInstrumentFilter;
 
-        for (let i = 0; i < this.mapping.MOTIF.length; i++) {
-            const note = this.mapping.MOTIF[i];
+        let hasAnyVoice = false;
+        let hasSelectedVoice = false;
 
-            let hasAnyVoice = false;
-            let hasSelectedVoice = false;
+        for (const [instrumentName, steps] of Object.entries(
+            this.state.motif
+        )) {
+            const instrumentPosition =
+                Object.keys(this.state.instrumentMap)
+                    .find(
+                        key =>
+                            this.state.instrumentMap[key] === instrumentName
+                    );
 
-            for (const [instrumentName, steps] of Object.entries(
-                this.state.motif
-            )) {
-                const instrumentPosition =
-                    Object.keys(this.state.instrumentMap)
-                        .find(
-                            key =>
-                                this.state.instrumentMap[key] === instrumentName
-                        );
+            const isInFilter =
+                filter.has(Number(instrumentPosition));
 
-                const isInFilter =
-                    filter.has(Number(instrumentPosition));
+            const isSelectedInstrument =
+                instrumentName === selectedInstrumentName;
 
-                const isSelectedInstrument =
-                    instrumentName === selectedInstrumentName;
+            const isVisible =
+                this.filterSelectionMode
+                    ? isInFilter
+                    : (
+                        !this.state.filterMode ||
+                        isInFilter ||
+                        isSelectedInstrument
+                    );
 
-                const isVisible =
-                    this.filterSelectionMode
-                        ? isInFilter
-                        : (
-                            !this.state.filterMode ||
-                            isInFilter ||
-                            isSelectedInstrument
-                        );
-
-                if (!isVisible) {
-                    continue;
-                }
-
-                if (steps[i]) {
-                    hasAnyVoice = true;
-
-                    if (isSelectedInstrument) {
-                        hasSelectedVoice = true;
-                    }
-                }
+            if (!isVisible) {
+                continue;
             }
 
-            let colorValue = 0;
+            if (steps[step]) {
+                hasAnyVoice = true;
 
-            if (hasSelectedVoice) {
-                colorValue = this.colors.YELLOW;
-            } else if (hasAnyVoice) {
-                colorValue = this.colors.DIM_AMBER;
+                if (isSelectedInstrument) {
+                    hasSelectedVoice = true;
+                }
             }
+        }
 
-            this.setLed(
-                note,
-                colorValue
-            );
+        if (hasSelectedVoice) {
+            return this.colors.YELLOW;
+        }
+
+        if (hasAnyVoice) {
+            return this.colors.DIM_AMBER;
+        }
+
+        return 0;
+    }
+
+    drawMotifStep(step) {
+        this.setLed(
+            this.mapping.MOTIF[step],
+            this.getMotifStepColor(step)
+        );
+    }
+
+    drawMotif() {
+        for (let step = 0; step < this.mapping.MOTIF.length; step++) {
+            this.drawMotifStep(step);
         }
     }
 
@@ -404,9 +430,7 @@ export class LaunchpadMini {
         }, 300);
     }
 
-    drawPlayhead() {
-        const step = this.state.playheadPosition;
-
+    drawPlayhead(step = this.state.playheadPosition) {
         const note = this.mapping.MOTIF[step];
 
         const selectedInstrumentName =
@@ -434,6 +458,13 @@ export class LaunchpadMini {
             );
         }
     }
+
+    drawClockStep(previousStep, currentStep) {
+        this.drawMotifStep(previousStep);
+        this.drawPlayhead(currentStep);
+        this.swapBuffers();
+    }
+
     getControlType(status, number) {
         if (status === 0xB0) {
             if (this.mapping.TOP_BUTTONS.includes(number)) {
@@ -520,6 +551,118 @@ export class LaunchpadMini {
         return true;
     }
 
+    stopTempoRepeat(direction = null) {
+        if (
+            direction !== null &&
+            direction !== this.tempoDirection
+        ) {
+            return;
+        }
+
+        this.tempoRepeatGeneration += 1;
+        clearTimeout(this.tempoRepeatTimer);
+        this.tempoRepeatTimer = null;
+        this.tempoDirection = null;
+        this.tempoGestureStartedAt = null;
+    }
+
+    isTempoGestureActive(direction) {
+        return Boolean(
+            this.playStopPressed &&
+            this.actions.clock.source === "INTERNAL" &&
+            (
+                direction < 0
+                    ? this.previousPressed
+                    : this.nextPressed
+            )
+        );
+    }
+
+    scheduleTempoRepeat(generation, direction, delay) {
+        this.tempoRepeatTimer = setTimeout(() => {
+            if (
+                generation !== this.tempoRepeatGeneration ||
+                direction !== this.tempoDirection ||
+                !this.isTempoGestureActive(direction)
+            ) {
+                return;
+            }
+
+            const heldDuration =
+                performance.now() - this.tempoGestureStartedAt;
+            let tempoStep = 1;
+            let repeatDelay = TEMPO_INITIAL_REPEAT_MS;
+
+            if (heldDuration >= TEMPO_FAST_THRESHOLD_MS) {
+                tempoStep = 5;
+                repeatDelay = TEMPO_FAST_REPEAT_MS;
+            } else if (
+                heldDuration >= TEMPO_MODERATE_THRESHOLD_MS
+            ) {
+                tempoStep = 2;
+                repeatDelay = TEMPO_MODERATE_REPEAT_MS;
+            }
+
+            this.actions.adjustInternalTempo(
+                direction * tempoStep
+            );
+
+            if (
+                generation !== this.tempoRepeatGeneration ||
+                direction !== this.tempoDirection ||
+                !this.isTempoGestureActive(direction)
+            ) {
+                return;
+            }
+
+            this.scheduleTempoRepeat(
+                generation,
+                direction,
+                repeatDelay
+            );
+        }, delay);
+    }
+
+    startTempoAdjustment(direction) {
+        if (!this.isTempoGestureActive(direction)) {
+            return false;
+        }
+
+        clearTimeout(this.playStopTimer);
+        this.playStopTimer = null;
+        this.playStopLongPressTriggered = false;
+        this.tempoChordConsumed = true;
+
+        clearTimeout(this.previousHoldTimer);
+        clearInterval(this.previousRepeatTimer);
+        clearTimeout(this.nextHoldTimer);
+        clearInterval(this.nextRepeatTimer);
+        this.previousHoldTimer = null;
+        this.previousRepeatTimer = null;
+        this.nextHoldTimer = null;
+        this.nextRepeatTimer = null;
+
+        this.stopTempoRepeat();
+        this.tempoDirection = direction;
+        this.tempoGestureStartedAt = performance.now();
+        const generation = this.tempoRepeatGeneration;
+
+        if (direction < 0) {
+            this.previousTempoMode = true;
+        } else {
+            this.nextTempoMode = true;
+        }
+
+        this.actions.adjustInternalTempo(direction);
+        this.scheduleTempoRepeat(
+            generation,
+            direction,
+            TEMPO_HOLD_DELAY_MS
+        );
+
+        return true;
+    }
+
     handleMidiMessage(data) {
         const [status, number, value] = data;
 
@@ -543,6 +686,11 @@ export class LaunchpadMini {
         if (controlName === "PREVIOUS") {
             if (value > 0) {
                 this.previousPressed = true;
+
+                if (this.startTempoAdjustment(-1)) {
+                    return;
+                }
+
                 if (this.state.transportState !== "PLAY") {
 
                     // Shift + [<<] = Timeline MOTIF
@@ -597,6 +745,18 @@ export class LaunchpadMini {
             // RELEASE [<<]
 
             this.previousPressed = false;
+
+            if (this.previousTempoMode) {
+                this.previousTempoMode = false;
+                this.stopTempoRepeat(-1);
+
+                if (!this.playStopPressed && !this.nextTempoMode) {
+                    this.tempoChordConsumed = false;
+                }
+
+                return;
+            }
+
             clearTimeout(this.previousHoldTimer);
             clearInterval(this.previousRepeatTimer);
 
@@ -621,6 +781,11 @@ export class LaunchpadMini {
         if (controlName === "NEXT") {
             if (value > 0) {
                 this.nextPressed = true;
+
+                if (this.startTempoAdjustment(1)) {
+                    return;
+                }
+
                 if (this.state.transportState !== "PLAY") {
 
                     // Shift + [>>] = Timeline MODULATION
@@ -674,6 +839,17 @@ export class LaunchpadMini {
 
             // RELEASE [>>]
             this.nextPressed = false;
+
+            if (this.nextTempoMode) {
+                this.nextTempoMode = false;
+                this.stopTempoRepeat(1);
+
+                if (!this.playStopPressed && !this.previousTempoMode) {
+                    this.tempoChordConsumed = false;
+                }
+
+                return;
+            }
 
             clearTimeout(this.nextHoldTimer);
             clearInterval(this.nextRepeatTimer);
@@ -747,9 +923,33 @@ export class LaunchpadMini {
         }
         if (controlName === "PLAY_STOP") {
             if (value > 0) {
+                this.playStopPressed = true;
                 this.playStopLongPressTriggered = false;
+                this.tempoChordConsumed =
+                    this.previousTempoMode || this.nextTempoMode;
+
+                if (
+                    this.nextPressed &&
+                    this.startTempoAdjustment(1)
+                ) {
+                    return;
+                }
+
+                if (
+                    this.previousPressed &&
+                    this.startTempoAdjustment(-1)
+                ) {
+                    return;
+                }
 
                 this.playStopTimer = setTimeout(() => {
+                    if (
+                        !this.playStopPressed ||
+                        this.tempoChordConsumed
+                    ) {
+                        return;
+                    }
+
                     this.playStopLongPressTriggered = true;
                     this.actions.stop();
                     this.drawTransport();
@@ -762,8 +962,26 @@ export class LaunchpadMini {
                 return;
             }
 
+            const tempoChordConsumed =
+                this.tempoChordConsumed;
+
+            this.playStopPressed = false;
+            this.stopTempoRepeat();
             clearTimeout(this.playStopTimer);
             this.playStopTimer = null;
+
+            if (tempoChordConsumed) {
+                this.playStopLongPressTriggered = false;
+
+                if (
+                    !this.previousTempoMode &&
+                    !this.nextTempoMode
+                ) {
+                    this.tempoChordConsumed = false;
+                }
+
+                return;
+            }
 
             if (!this.playStopLongPressTriggered) {
                 this.actions.togglePlayPause();

@@ -181,6 +181,10 @@ const midiClockOutputSelector =
 const midiClockOutput =
     new MidiClockOutput(midiManager);
 
+midiClockOutput.setNativeStepHandler(
+    event => clock.receiveInternalClockStep(event)
+);
+
 const savedMidiClockOutput =
     localStorage.getItem("midiClockOutput");
 
@@ -220,6 +224,13 @@ const setMidiClockOutputFromSelection = () => {
 
 const syncMidiClockOutput = ({ clear = false } = {}) => {
     midiClockOutput.setSource(clock.source);
+    midiClockOutput.setStepTransport(
+        clock.source === "INTERNAL" &&
+            state.transportState === "PLAY"
+            ? "CONTINUE"
+            : "STOP",
+        clock.transportRevision
+    );
 
     if (clock.source === "INTERNAL") {
         midiClockOutput.startClock(
@@ -257,7 +268,7 @@ midiClockOutputSelector.addEventListener(
 );
 
 actions.setTransportTransitionHandler(
-    ({ from, to, origin }) => {
+    ({ from, to, origin, transportRevision }) => {
         if (
             origin === "MIDI_IN" ||
             clock.source !== "INTERNAL"
@@ -266,12 +277,12 @@ actions.setTransportTransitionHandler(
         }
 
         if (from === "STOP" && to === "PLAY") {
-            midiClockOutput.sendStart();
+            midiClockOutput.sendStart(transportRevision);
             return;
         }
 
         if (from === "PAUSE" && to === "PLAY") {
-            midiClockOutput.sendContinue();
+            midiClockOutput.sendContinue(transportRevision);
             return;
         }
 
@@ -279,7 +290,7 @@ actions.setTransportTransitionHandler(
             (from === "PLAY" && to === "PAUSE") ||
             (to === "STOP" && from !== "STOP")
         ) {
-            midiClockOutput.sendStop();
+            midiClockOutput.sendStop(transportRevision);
         }
     }
 );
@@ -613,10 +624,10 @@ actions.setStepPreviewHandler(triggerMotifStep);
 actions.setClockStepHandler(() => {
     triggerMotifStep(state.playheadPosition);
 
-    launchpad.drawMotif();
-    launchpad.drawPlayhead();
-    launchpad.drawInstruments();
-    launchpad.swapBuffers();
+    const currentStep = state.playheadPosition;
+    const previousStep = (currentStep + 31) % 32;
+
+    launchpad.drawClockStep(previousStep, currentStep);
 });
 
 

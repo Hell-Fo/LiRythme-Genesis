@@ -36,6 +36,24 @@ export class LiRythmeActions {
         this.onTransportTransition = handler;
     }
 
+    adjustInternalTempo(delta) {
+        if (this.clock.source !== "INTERNAL") {
+            return false;
+        }
+
+        const previousTempo = this.state.tempo;
+        const nextTempo = this.state.setTempo(
+            previousTempo + Number(delta)
+        );
+        const changed = nextTempo !== previousTempo;
+
+        if (changed) {
+            console.log("TEMPO:", nextTempo, "BPM");
+        }
+
+        return changed;
+    }
+
     togglePlayPause({ origin = "LOCAL" } = {}) {
         if (this.state.transportState === "PLAY") {
             this.pausePlayback({ origin });
@@ -121,17 +139,22 @@ export class LiRythmeActions {
         );
     }
     notifyTransportTransition(previousState, origin) {
-        if (
-            previousState === this.state.transportState ||
-            !this.onTransportTransition
-        ) {
+        if (previousState === this.state.transportState) {
+            return;
+        }
+
+        const transportRevision =
+            this.clock.advanceTransportRevision();
+
+        if (!this.onTransportTransition) {
             return;
         }
 
         this.onTransportTransition({
             from: previousState,
             to: this.state.transportState,
-            origin
+            origin,
+            transportRevision
         });
     }
     startClock() {

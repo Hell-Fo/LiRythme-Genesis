@@ -21,6 +21,9 @@ export class LiRythmeClock {
         this.advanceStep = null;
         this.onClockStep = null;
         this.onClockBeat = null;
+        this.useNativeInternalSteps = true;
+        this.transportRevision = 0;
+        this.lastAcceptedNativeStepSequence = null;
     }
 
     setSource(source) {
@@ -48,6 +51,10 @@ export class LiRythmeClock {
         this.advanceStep = advanceStep;
 
         if (this.source === "MIDI") {
+            return;
+        }
+
+        if (this.useNativeInternalSteps) {
             return;
         }
 
@@ -129,6 +136,44 @@ export class LiRythmeClock {
 
     resetMidiPhase() {
         this.midiPulseCount = 0;
+    }
+
+    advanceTransportRevision() {
+        this.transportRevision += 1;
+        return this.transportRevision;
+    }
+
+    receiveInternalClockStep(event) {
+        if (this.source !== "INTERNAL") {
+            return { accepted: false, reason: "SOURCE" };
+        }
+
+        if (this.state.transportState !== "PLAY") {
+            return { accepted: false, reason: "TRANSPORT" };
+        }
+
+        if (
+            !Number.isSafeInteger(event?.transportRevision) ||
+            event.transportRevision !== this.transportRevision
+        ) {
+            return { accepted: false, reason: "REVISION" };
+        }
+
+        if (
+            !Number.isSafeInteger(event?.sequence) ||
+            (
+                this.lastAcceptedNativeStepSequence !== null &&
+                event.sequence <=
+                    this.lastAcceptedNativeStepSequence
+            )
+        ) {
+            return { accepted: false, reason: "SEQUENCE" };
+        }
+
+        this.lastAcceptedNativeStepSequence = event.sequence;
+        this.advanceStepPipeline();
+
+        return { accepted: true, reason: null };
     }
 
     advanceStepPipeline() {

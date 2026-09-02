@@ -18,6 +18,8 @@ export class LiRythmeState {
     constructor() {
         this.transportState = "STOP";
         this.playheadPosition = 0;
+        this.minimumTempo = 20;
+        this.maximumTempo = 300;
         this.tempo = 120;
         this.stepDivision = 16;
 
@@ -61,5 +63,20 @@ export class LiRythmeState {
         const beatDuration = 60000 / this.tempo;
 
         return beatDuration * (4 / this.stepDivision);
+    }
+
+    setTempo(tempo) {
+        const nextTempo = Number(tempo);
+
+        if (!Number.isFinite(nextTempo)) {
+            return this.tempo;
+        }
+
+        this.tempo = Math.min(
+            this.maximumTempo,
+            Math.max(this.minimumTempo, nextTempo)
+        );
+
+        return this.tempo;
     }
 }

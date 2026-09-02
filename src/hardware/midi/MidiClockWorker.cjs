@@ -35,6 +35,8 @@ const MIDI_START = 0xFA;
 const MIDI_CONTINUE = 0xFB;
 const MIDI_STOP = 0xFC;
 const PPQN = 24;
+const DEFAULT_STEP_DIVISION = 16;
+const PULSES_PER_WHOLE_NOTE = PPQN * 4;
 const NS_PER_MS = 1_000_000n;
 const FINE_WAIT_NS = 1_000_000n;
 const MAX_COARSE_SLEEP_MS = 2;
@@ -55,6 +57,11 @@ let diagnostic = null;
 let pendingNoteOffMessages = [];
 let pendingMidiMessages = [];
 let idleMidiFlushScheduled = false;
+let logicalPulseSequence = 0;
+let nativeStepSequence = 0;
+let nativeStepPhase = 0;
+let stepTransportRunning = false;
+let transportRevision = 0;
 
 function post(message) {
     parentPort.postMessage(message);
@@ -81,7 +88,6 @@ function canRun() {
     return Boolean(
         enabled &&
         source === "INTERNAL" &&
-        output &&
         !shuttingDown
     );
 }
@@ -101,6 +107,12 @@ function startDiagnostic() {
         pendingMidiPeak: getPendingMidiCount(),
         midiMessagesSent: 0,
         midiMessagesDropped: 0,
+        stepDivision: DEFAULT_STEP_DIVISION,
+        pulsesPerStep:
+            PULSES_PER_WHOLE_NOTE / DEFAULT_STEP_DIVISION,
+        stepPhase: 0,
+        logicalPulses: 0,
+        nativeStepsGenerated: 0,
         reported: false
     };
 }
@@ -161,8 +173,57 @@ function reportDiagnostic({ force = false } = {}) {
             Number(diagnostic.maximumLatenessNs) / 1_000_000,
         pendingMidiPeak: diagnostic.pendingMidiPeak,
         midiMessagesSent: diagnostic.midiMessagesSent,
-        midiMessagesDropped: diagnostic.midiMessagesDropped
+        midiMessagesDropped: diagnostic.midiMessagesDropped,
+        stepDivision: diagnostic.stepDivision,
+        pulsesPerStep: diagnostic.pulsesPerStep,
+        logicalPulses: diagnostic.logicalPulses,
+        nativeStepsGenerated: diagnostic.nativeStepsGenerated
     });
+}
+
+function recordDiagnosticPulse(deadlineNs) {
+    if (!diagnostic) {
+        return;
+    }
+
+    logicalPulseSequence += 1;
+    diagnostic.logicalPulses += 1;
+    diagnostic.stepPhase += diagnostic.stepDivision;
+
+    if (diagnostic.stepPhase >= PULSES_PER_WHOLE_NOTE) {
+        diagnostic.stepPhase -= PULSES_PER_WHOLE_NOTE;
+        diagnostic.nativeStepsGenerated += 1;
+    }
+
+    if (!stepTransportRunning) {
+        return;
+    }
+
+    nativeStepPhase += DEFAULT_STEP_DIVISION;
+
+    if (nativeStepPhase >= PULSES_PER_WHOLE_NOTE) {
+        nativeStepPhase -= PULSES_PER_WHOLE_NOTE;
+        nativeStepSequence += 1;
+
+        post({
+            type: "STEP",
+            sequence: nativeStepSequence,
+            logicalPulse: logicalPulseSequence,
+            stepDivision: DEFAULT_STEP_DIVISION,
+            transportRevision,
+            deadlineNs: deadlineNs.toString()
+        });
+    }
+}
+
+function setStepTransport(status, revision) {
+    if (Number.isSafeInteger(revision) && revision >= 0) {
+        transportRevision = revision;
+    }
+
+    stepTransportRunning =
+        status === "START" || status === "CONTINUE";
+    nativeStepPhase = 0;
 }
 
 function getPendingMidiCount() {
@@ -348,9 +409,8 @@ function stopClock({ report = true } = {}) {
     }
 }
 
-function closeOutput() {
+function closePhysicalOutput() {
     dropPendingMidiMessages();
-    stopClock();
 
     if (!output) {
         return;
@@ -381,7 +441,7 @@ function setDestination(name) {
         return;
     }
 
-    closeOutput();
+    closePhysicalOutput();
     destinationName = name || null;
 
     if (!destinationName) {
@@ -492,7 +552,20 @@ function handleCommand(command) {
             break;
 
         case "TRANSPORT":
+            setStepTransport(
+                command.status,
+                command.transportRevision
+            );
             sendTransport(command.status);
+            break;
+
+        case "SET_STEP_TRANSPORT":
+            if (source === "INTERNAL") {
+                setStepTransport(
+                    command.status,
+                    command.transportRevision
+                );
+            }
             break;
 
         case "SEND_MIDI":
@@ -501,7 +574,8 @@ function handleCommand(command) {
 
         case "SHUTDOWN":
             shuttingDown = true;
-            closeOutput();
+            closePhysicalOutput();
+            stopClock();
             post({ type: "SHUTDOWN_ACK" });
             break;
     }
@@ -659,9 +733,12 @@ function runClockLoop() {
 
         const latenessNs = callTimeNs - nextPulseTimeNs;
 
-        output.sendMessage([MIDI_CLOCK]);
+        if (output) {
+            output.sendMessage([MIDI_CLOCK]);
+            recordNativeCall(callTimeNs, latenessNs);
+        }
 
-        recordNativeCall(callTimeNs, latenessNs);
+        recordDiagnosticPulse(nextPulseTimeNs);
 
         nextPulseTimeNs += pulseIntervalNs;
         sendOneMidiMessageAfterClockPulse();

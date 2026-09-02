@@ -6,6 +6,15 @@ export class MidiClockOutput {
         this.currentTempo = null;
         this.clockEnabled = false;
         this.tempoMonitor = null;
+        this.nativeStepsReceived = 0;
+        this.lastNativeStepSequence = null;
+        this.lostNativeSteps = 0;
+        this.outOfOrderNativeSteps = 0;
+        this.nativeStepsAccepted = 0;
+        this.nativeStepsRejected = 0;
+        this.nativeStepRejectionReasons = {};
+        this.nativeStepDiagnosticTimer = null;
+        this.nativeStepHandler = null;
         this.nativeBridge =
             globalThis.midiClockOutputNative ?? null;
 
@@ -44,30 +53,43 @@ export class MidiClockOutput {
         });
     }
 
-    sendStart() {
-        this.sendTransport("START");
+    sendStart(transportRevision) {
+        this.sendTransport("START", transportRevision);
     }
 
-    sendContinue() {
-        this.sendTransport("CONTINUE");
+    sendContinue(transportRevision) {
+        this.sendTransport("CONTINUE", transportRevision);
     }
 
-    sendStop() {
-        this.sendTransport("STOP");
+    sendStop(transportRevision) {
+        this.sendTransport("STOP", transportRevision);
     }
 
-    sendTransport(status) {
+    sendTransport(status, transportRevision) {
         this.sendCommand({
             type: "TRANSPORT",
-            status
+            status,
+            transportRevision
         });
+    }
+
+    setStepTransport(status, transportRevision) {
+        this.sendCommand({
+            type: "SET_STEP_TRANSPORT",
+            status,
+            transportRevision
+        });
+    }
+
+    setNativeStepHandler(handler) {
+        this.nativeStepHandler = handler;
     }
 
     startClock(getTempo, shouldRun) {
         this.getTempo = getTempo;
         this.shouldRun = shouldRun;
 
-        if (!this.outputName || !this.shouldRun?.()) {
+        if (!this.shouldRun?.()) {
             return;
         }
 
@@ -157,6 +179,11 @@ export class MidiClockOutput {
     }
 
     handleStatus(message) {
+        if (message.type === "STEP") {
+            this.recordNativeStep(message);
+            return;
+        }
+
         if (message.type === "DIAGNOSTIC") {
             console.log(
                 "NATIVE MIDI CLOCK OUT DIAGNOSTIC COPY:",
@@ -175,5 +202,73 @@ export class MidiClockOutput {
         }
 
         console.log("Native MIDI Clock OUT:", message);
+    }
+
+    recordNativeStep(message) {
+        const sequence = Number(message.sequence);
+
+        this.nativeStepsReceived += 1;
+
+        if (Number.isInteger(sequence)) {
+            if (
+                this.lastNativeStepSequence !== null &&
+                sequence > this.lastNativeStepSequence + 1
+            ) {
+                this.lostNativeSteps +=
+                    sequence - this.lastNativeStepSequence - 1;
+            } else if (
+                this.lastNativeStepSequence !== null &&
+                sequence <= this.lastNativeStepSequence
+            ) {
+                this.outOfOrderNativeSteps += 1;
+            }
+
+            if (
+                this.lastNativeStepSequence === null ||
+                sequence > this.lastNativeStepSequence
+            ) {
+                this.lastNativeStepSequence = sequence;
+            }
+        }
+
+        const result = this.nativeStepHandler?.(message) ?? {
+            accepted: false,
+            reason: "NO_HANDLER"
+        };
+
+        if (result.accepted) {
+            this.nativeStepsAccepted += 1;
+        } else {
+            const reason = result.reason ?? "UNKNOWN";
+
+            this.nativeStepsRejected += 1;
+            this.nativeStepRejectionReasons[reason] =
+                (this.nativeStepRejectionReasons[reason] ?? 0) + 1;
+        }
+
+        if (this.nativeStepDiagnosticTimer === null) {
+            this.nativeStepDiagnosticTimer = setInterval(
+                () => this.reportNativeStepDiagnostic(),
+                10_000
+            );
+        }
+    }
+
+    reportNativeStepDiagnostic() {
+        console.log(
+            "NATIVE STEP OBSERVATION:",
+            JSON.stringify({
+                nativeStepsReceived: this.nativeStepsReceived,
+                nativeStepsAccepted: this.nativeStepsAccepted,
+                nativeStepsRejected: this.nativeStepsRejected,
+                lastNativeStepSequence:
+                    this.lastNativeStepSequence,
+                lostNativeSteps: this.lostNativeSteps,
+                outOfOrderNativeSteps:
+                    this.outOfOrderNativeSteps,
+                rejectionReasons:
+                    this.nativeStepRejectionReasons
+            })
+        );
     }
 }
