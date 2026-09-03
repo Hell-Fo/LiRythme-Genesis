@@ -1,5 +1,6 @@
 export class MidiClockOutput {
-    constructor() {
+    constructor(midiManager) {
+        this.midiManager = midiManager;
         this.outputName = null;
         this.getTempo = null;
         this.shouldRun = null;
@@ -40,10 +41,15 @@ export class MidiClockOutput {
         }
 
         this.outputName = nextOutputName;
-        this.sendCommand({
-            type: "SET_DESTINATION",
-            name: this.outputName
-        });
+
+        if (this.midiManager?.backend === "NATIVE_MIDI") {
+            this.midiManager.setClockOutput(this.outputName);
+        } else {
+            this.sendCommand({
+                type: "SET_DESTINATION",
+                name: this.outputName
+            });
+        }
     }
 
     setSource(source) {

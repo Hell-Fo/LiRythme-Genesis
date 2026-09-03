@@ -74,8 +74,6 @@ const nativeMidiTestOutputName =
 await midiManager.initialize({
     webMidiEnabled:
         !nativeMidiTestOutputName,
-    nativeClockOutputName:
-        nativeMidiTestOutputName,
     nativeBridge:
         nativeMidiTestOutputName
             ? globalThis.nativeMidi
@@ -195,14 +193,7 @@ const savedMidiClockOutputIndex =
                 option.textContent === savedMidiClockOutput
         );
 
-if (nativeMidiTestOutputName) {
-    midiClockOutputSelector.selectedIndex =
-        [...midiClockOutputSelector.options]
-            .findIndex(
-                option =>
-                    option.textContent === nativeMidiTestOutputName
-            );
-} else if (savedMidiClockOutputIndex >= 0) {
+if (savedMidiClockOutputIndex >= 0) {
     midiClockOutputSelector.selectedIndex =
         savedMidiClockOutputIndex;
 } else {

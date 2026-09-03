@@ -7,9 +7,11 @@ class NativeMidiBridge {
         this.controllerInputName = null;
         this.controllerOutput = null;
         this.controllerOutputName = null;
+        this.clockInput = null;
+        this.clockInputName = null;
         this.notesOutput = null;
         this.notesOutputName = null;
-        this.sharedClockOutputName = null;
+        this.workerOutputName = null;
     }
 
     listPorts() {
@@ -51,7 +53,7 @@ class NativeMidiBridge {
     }
 
     openController(name) {
-        if (name === this.sharedClockOutputName) {
+        if (name === this.workerOutputName) {
             throw new Error(
                 `Native MIDI output is owned by the Clock worker: ${name}`
             );
@@ -119,6 +121,57 @@ class NativeMidiBridge {
         this.controllerOutputName = null;
     }
 
+    openClockInput(name) {
+        if (
+            name === this.clockInputName &&
+            this.clockInput
+        ) {
+            return;
+        }
+
+        this.closeClockInput();
+
+        if (!name) {
+            return;
+        }
+
+        const input = new midi.Input();
+        const inputIndex = this.findPortIndex(input, name);
+
+        if (inputIndex < 0) {
+            input.closePort();
+            throw new Error(
+                `Native MIDI Clock input not found: ${name}`
+            );
+        }
+
+        try {
+            input.ignoreTypes(false, false, false);
+            input.on("message", (_deltaTime, message) => {
+                this.postMessage({
+                    target: "NATIVE_MIDI",
+                    type: "INPUT_MESSAGE",
+                    role: "CLOCK",
+                    name,
+                    message
+                });
+            });
+            input.openPort(inputIndex);
+        } catch (error) {
+            input.closePort();
+            throw error;
+        }
+
+        this.clockInput = input;
+        this.clockInputName = name;
+    }
+
+    closeClockInput() {
+        this.clockInput?.closePort();
+        this.clockInput = null;
+        this.clockInputName = null;
+    }
+
     sendController(name, message) {
         if (name !== this.controllerOutputName) {
             this.openController(name);
@@ -133,7 +186,7 @@ class NativeMidiBridge {
     }
 
     openNotesOutput(name) {
-        if (name === this.sharedClockOutputName) {
+        if (name === this.workerOutputName) {
             throw new Error(
                 `Native MIDI output is owned by the Clock worker: ${name}`
             );
@@ -170,9 +223,8 @@ class NativeMidiBridge {
         this.notesOutputName = name;
     }
 
-    selectSharedNotesOutput(name) {
-        this.closeNotesOutput();
-        this.sharedClockOutputName = name || null;
+    setWorkerOutputName(name) {
+        this.workerOutputName = name || null;
     }
 
     closeNotesOutput() {
@@ -183,14 +235,13 @@ class NativeMidiBridge {
 
     close() {
         this.closeController();
+        this.closeClockInput();
         this.closeNotesOutput();
     }
 
     handleCommand(command) {
         switch (command?.type) {
             case "LIST_PORTS":
-                this.sharedClockOutputName =
-                    command.sharedClockOutputName || null;
                 return this.listPorts();
 
             case "OPEN_CONTROLLER":
@@ -199,6 +250,14 @@ class NativeMidiBridge {
 
             case "CLOSE_CONTROLLER":
                 this.closeController();
+                return { closed: true };
+
+            case "OPEN_CLOCK_INPUT":
+                this.openClockInput(command.name);
+                return { opened: true, name: command.name };
+
+            case "CLOSE_CLOCK_INPUT":
+                this.closeClockInput();
                 return { closed: true };
 
             case "OPEN_NOTES_OUTPUT":

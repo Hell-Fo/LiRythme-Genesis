@@ -28,7 +28,8 @@ export class MidiManager {
         this.backend = "WEB_MIDI";
         this.nativeBridge = null;
         this.controllerOutputName = null;
-        this.sharedClockOutputName = null;
+        this.clockOutputName = null;
+        this.notesOutputName = null;
         this.removeNativeStatusListener = null;
 
         this.controllerSelector =
@@ -46,7 +47,6 @@ export class MidiManager {
 
     async initialize({
         webMidiEnabled = true,
-        nativeClockOutputName = null,
         nativeBridge = null
     } = {}) {
         if (webMidiEnabled) {
@@ -55,10 +55,8 @@ export class MidiManager {
         } else if (nativeBridge) {
             this.backend = "NATIVE_MIDI";
             this.nativeBridge = nativeBridge;
-            this.sharedClockOutputName = nativeClockOutputName;
             const ports = await nativeBridge.request({
-                type: "LIST_PORTS",
-                sharedClockOutputName: nativeClockOutputName
+                type: "LIST_PORTS"
             });
 
             this.midiAccess = {
@@ -96,12 +94,6 @@ export class MidiManager {
 
         this.updateDeviceLists();
 
-        if (nativeClockOutputName) {
-            const option = document.createElement("option");
-
-            option.textContent = nativeClockOutputName;
-            this.clockOutputSelector.appendChild(option);
-        }
     }
 
     updateDeviceLists() {
@@ -163,11 +155,9 @@ export class MidiManager {
 
             this.outputs.set(output.name, output);
 
-            if (this.backend !== "NATIVE_MIDI") {
-                this.clockOutputSelector.appendChild(
-                    clockOutputOption
-                );
-            }
+            this.clockOutputSelector.appendChild(
+                clockOutputOption
+            );
             this.outputSelector.appendChild(option);
         }
     }
@@ -202,9 +192,7 @@ export class MidiManager {
 
         if (this.backend === "NATIVE_MIDI") {
             this.nativeBridge.send({
-                type: outputName === this.sharedClockOutputName
-                    ? "SEND_SHARED_MIDI"
-                    : outputName === this.controllerOutputName
+                type: outputName === this.controllerOutputName
                         ? "SEND_CONTROLLER"
                         : "SEND_NOTES",
                 name: outputName,
@@ -255,11 +243,24 @@ export class MidiManager {
             return;
         }
 
+        this.notesOutputName = outputName || null;
+        this.syncOutputRouting();
+    }
+
+    setClockOutput(outputName) {
+        if (this.backend !== "NATIVE_MIDI") {
+            return;
+        }
+
+        this.clockOutputName = outputName || null;
+        this.syncOutputRouting();
+    }
+
+    syncOutputRouting() {
         this.nativeBridge.send({
-            type: outputName === this.sharedClockOutputName
-                ? "SELECT_SHARED_NOTES_OUTPUT"
-                : "OPEN_NOTES_OUTPUT",
-            name: outputName
+            type: "SET_OUTPUT_ROUTING",
+            clockOutputName: this.clockOutputName,
+            notesOutputName: this.notesOutputName
         });
     }
 
@@ -355,6 +356,15 @@ export class MidiManager {
         if (message.type === "ERROR") {
             console.error("Native MIDI error:", message);
         }
+
+        if (
+            message.type === "INPUT_MESSAGE" &&
+            message.role === "CLOCK" &&
+            message.name === this.clockInput?.name &&
+            this.clockMessageListener
+        ) {
+            this.clockMessageListener(message.message);
+        }
     }
 
     connectClockInput(inputName, callback) {
@@ -365,10 +375,13 @@ export class MidiManager {
         }
 
         if (this.backend === "NATIVE_MIDI") {
-            console.warn(
-                "Native MIDI Clock IN is not enabled in this test mode"
-            );
-            return false;
+            this.clockInput = input;
+            this.clockMessageListener = callback;
+            this.nativeBridge.send({
+                type: "OPEN_CLOCK_INPUT",
+                name: input.name
+            });
+            return true;
         }
 
         const listener = (event) => {
@@ -384,6 +397,15 @@ export class MidiManager {
     }
 
     disconnectClockInput() {
+        if (this.backend === "NATIVE_MIDI") {
+            this.clockInput = null;
+            this.clockMessageListener = null;
+            this.nativeBridge.send({
+                type: "CLOSE_CLOCK_INPUT"
+            });
+            return;
+        }
+
         if (
             this.clockInput &&
             this.clockMessageListener

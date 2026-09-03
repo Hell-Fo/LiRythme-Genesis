@@ -46,6 +46,7 @@ const DIAGNOSTIC_DURATION_NS = 10_000_000_000n;
 
 let destinationName = null;
 let output = null;
+let clockOutputSelected = false;
 let tempo = 120;
 let source = "INTERNAL";
 let enabled = false;
@@ -498,7 +499,7 @@ function setDestination(name) {
 }
 
 function sendTransport(status) {
-    if (!output) {
+    if (!clockOutputSelected || !output) {
         return;
     }
 
@@ -518,6 +519,10 @@ function handleCommand(command) {
     switch (command?.type) {
         case "SET_DESTINATION":
             setDestination(command.name);
+            break;
+
+        case "SET_CLOCK_OUTPUT_SELECTED":
+            clockOutputSelected = Boolean(command.selected);
             break;
 
         case "SET_TEMPO": {
@@ -733,7 +738,7 @@ function runClockLoop() {
 
         const latenessNs = callTimeNs - nextPulseTimeNs;
 
-        if (output) {
+        if (clockOutputSelected && output) {
             output.sendMessage([MIDI_CLOCK]);
             recordNativeCall(callTimeNs, latenessNs);
         }
