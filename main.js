@@ -42,9 +42,6 @@ const {
     utilityProcess
 } = require("electron");
 const path = require("node:path");
-const nativeMidiTestArgument = process.argv.find(
-    argument => argument.startsWith("--native-midi-test=")
-);
 
 let mainWindow;
 let midiClockUtility;
@@ -215,10 +212,7 @@ function createWindow() {
 
         webPreferences: {
             backgroundThrottling: false,
-            preload: path.join(__dirname, "preload.js"),
-            additionalArguments: nativeMidiTestArgument
-                ? [nativeMidiTestArgument]
-                : []
+            preload: path.join(__dirname, "preload.js")
         }
     });
 
@@ -234,10 +228,7 @@ ipcMain.on("midi-clock-command", (event, command) => {
 });
 
 ipcMain.on("native-midi-command", (event, command) => {
-    if (
-        !nativeMidiTestArgument ||
-        event.sender !== mainWindow?.webContents
-    ) {
+    if (event.sender !== mainWindow?.webContents) {
         return;
     }
 
@@ -245,10 +236,7 @@ ipcMain.on("native-midi-command", (event, command) => {
 });
 
 ipcMain.handle("native-midi-request", (event, command) => {
-    if (
-        !nativeMidiTestArgument ||
-        event.sender !== mainWindow?.webContents
-    ) {
+    if (event.sender !== mainWindow?.webContents) {
         throw new Error("Unauthorized native MIDI request");
     }
 

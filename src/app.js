@@ -68,16 +68,9 @@ console.log(
 // MIDI
 // ============================================================
 
-const nativeMidiTestOutputName =
-    globalThis.liRythmeRuntime?.nativeMidiTestOutputName ?? null;
-
 await midiManager.initialize({
-    webMidiEnabled:
-        !nativeMidiTestOutputName,
-    nativeBridge:
-        nativeMidiTestOutputName
-            ? globalThis.nativeMidi
-            : null
+    webMidiEnabled: false,
+    nativeBridge: globalThis.nativeMidi
 });
 
 const controllerSelector =
@@ -285,30 +278,6 @@ actions.setTransportTransitionHandler(
         }
     }
 );
-
-if (nativeMidiTestOutputName) {
-    const controls = document.createElement("div");
-    const playButton = document.createElement("button");
-    const stopButton = document.createElement("button");
-
-    playButton.textContent = "PLAY";
-    stopButton.textContent = "STOP";
-
-    playButton.addEventListener(
-        "click",
-        () => midiClockOutput.sendStart()
-    );
-    stopButton.addEventListener(
-        "click",
-        () => midiClockOutput.sendStop()
-    );
-
-    controls.append(playButton, stopButton);
-    midiClockOutputSelector.insertAdjacentElement(
-        "afterend",
-        controls
-    );
-}
 
 console.log(
     "MIDI CONTROLLER:",

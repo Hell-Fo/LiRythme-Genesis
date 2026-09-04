@@ -515,6 +515,27 @@ function sendTransport(status) {
     }
 }
 
+function sendRealtimeThru(status) {
+    if (
+        source !== "MIDI" ||
+        !clockOutputSelected ||
+        !output
+    ) {
+        return;
+    }
+
+    if (
+        status !== MIDI_CLOCK &&
+        status !== MIDI_START &&
+        status !== MIDI_CONTINUE &&
+        status !== MIDI_STOP
+    ) {
+        return;
+    }
+
+    output.sendMessage([status]);
+}
+
 function handleCommand(command) {
     switch (command?.type) {
         case "SET_DESTINATION":
@@ -562,6 +583,10 @@ function handleCommand(command) {
                 command.transportRevision
             );
             sendTransport(command.status);
+            break;
+
+        case "MIDI_REALTIME_THRU":
+            sendRealtimeThru(command.status);
             break;
 
         case "SET_STEP_TRANSPORT":

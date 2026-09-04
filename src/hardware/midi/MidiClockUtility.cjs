@@ -12,7 +12,7 @@ function serializeError(error) {
 }
 
 const nativeMidiBridge = new NativeMidiBridge(
-    message => process.parentPort.postMessage(message)
+    handleNativeMidiMessage
 );
 
 const clockWorker = new Worker(
@@ -26,6 +26,34 @@ let pendingWorkerDestinationName = null;
 let workerDestinationChangePending = false;
 const pendingNotesMessages = [];
 const MAX_PENDING_NOTES_MESSAGES = 256;
+
+function handleNativeMidiMessage(message) {
+    process.parentPort.postMessage(message);
+
+    if (
+        message.type !== "INPUT_MESSAGE" ||
+        message.role !== "CLOCK" ||
+        message.name === clockDestinationName
+    ) {
+        return;
+    }
+
+    const status = message.message?.[0];
+
+    if (
+        status !== 0xF8 &&
+        status !== 0xFA &&
+        status !== 0xFB &&
+        status !== 0xFC
+    ) {
+        return;
+    }
+
+    clockWorker.postMessage({
+        type: "MIDI_REALTIME_THRU",
+        status
+    });
+}
 
 function getDesiredWorkerDestination() {
     return clockDestinationName || notesDestinationName || null;
