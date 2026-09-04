@@ -498,7 +498,7 @@ function setDestination(name) {
     }
 }
 
-function sendTransport(status) {
+function sendTransport(status, companionMessage = null) {
     if (!clockOutputSelected || !output) {
         return;
     }
@@ -512,6 +512,10 @@ function sendTransport(status) {
 
     if (message !== undefined) {
         output.sendMessage([message]);
+
+        if (Array.isArray(companionMessage)) {
+            output.sendMessage(companionMessage);
+        }
     }
 }
 
@@ -582,7 +586,10 @@ function handleCommand(command) {
                 command.status,
                 command.transportRevision
             );
-            sendTransport(command.status);
+            sendTransport(
+                command.status,
+                command.companionMessage
+            );
             break;
 
         case "MIDI_REALTIME_THRU":

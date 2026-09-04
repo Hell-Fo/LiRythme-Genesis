@@ -59,23 +59,40 @@ export class MidiClockOutput {
         });
     }
 
-    sendStart(transportRevision) {
-        this.sendTransport("START", transportRevision);
+    sendStart(transportRevision, companionMessage = null) {
+        this.sendTransport(
+            "START",
+            transportRevision,
+            companionMessage
+        );
     }
 
-    sendContinue(transportRevision) {
-        this.sendTransport("CONTINUE", transportRevision);
+    sendContinue(transportRevision, companionMessage = null) {
+        this.sendTransport(
+            "CONTINUE",
+            transportRevision,
+            companionMessage
+        );
     }
 
-    sendStop(transportRevision) {
-        this.sendTransport("STOP", transportRevision);
+    sendStop(transportRevision, companionMessage = null) {
+        this.sendTransport(
+            "STOP",
+            transportRevision,
+            companionMessage
+        );
     }
 
-    sendTransport(status, transportRevision) {
+    sendTransport(
+        status,
+        transportRevision,
+        companionMessage = null
+    ) {
         this.sendCommand({
             type: "TRANSPORT",
             status,
-            transportRevision
+            transportRevision,
+            companionMessage
         });
     }
 

@@ -21,4 +21,20 @@ export class DrumBruteImpactProfile {
             this.onStop?.();
         }
     }
+
+    getTransportOutputMessage(from, to) {
+        if (to === "PLAY") {
+            return [0xF0, 0x7F, 0x7F, 0x06, 0x02, 0xF7];
+        }
+
+        if (from === "PLAY" && to === "PAUSE") {
+            return [0xF0, 0x7F, 0x7F, 0x06, 0x09, 0xF7];
+        }
+
+        if (to === "STOP" && from !== "STOP") {
+            return [0xF0, 0x7F, 0x7F, 0x06, 0x01, 0xF7];
+        }
+
+        return null;
+    }
 }

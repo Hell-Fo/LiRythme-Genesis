@@ -171,6 +171,9 @@ const midiClockOutputSelector =
 
 const midiClockOutput =
     new MidiClockOutput(midiManager);
+const drumBruteClockOutputProfile =
+    new DrumBruteImpactProfile(actions);
+let activeClockOutputProfile = null;
 
 midiClockOutput.setNativeStepHandler(
     event => clock.receiveInternalClockStep(event)
@@ -199,11 +202,17 @@ const setMidiClockOutputFromSelection = () => {
             midiClockOutputSelector.selectedIndex
         ];
 
-    midiClockOutput.setOutput(
+    const outputName =
         selectedOption?.value === "NONE"
             ? "NONE"
-            : selectedOption?.textContent
-    );
+            : selectedOption?.textContent;
+
+    activeClockOutputProfile =
+        outputName?.toLowerCase().includes("drumbrute impact")
+            ? drumBruteClockOutputProfile
+            : null;
+
+    midiClockOutput.setOutput(outputName);
 };
 
 const syncMidiClockOutput = ({ clear = false } = {}) => {
@@ -260,13 +269,23 @@ actions.setTransportTransitionHandler(
             return;
         }
 
+        const companionMessage =
+            activeClockOutputProfile
+                ?.getTransportOutputMessage(from, to) ?? null;
+
         if (from === "STOP" && to === "PLAY") {
-            midiClockOutput.sendStart(transportRevision);
+            midiClockOutput.sendStart(
+                transportRevision,
+                companionMessage
+            );
             return;
         }
 
         if (from === "PAUSE" && to === "PLAY") {
-            midiClockOutput.sendContinue(transportRevision);
+            midiClockOutput.sendContinue(
+                transportRevision,
+                companionMessage
+            );
             return;
         }
 
@@ -274,7 +293,10 @@ actions.setTransportTransitionHandler(
             (from === "PLAY" && to === "PAUSE") ||
             (to === "STOP" && from !== "STOP")
         ) {
-            midiClockOutput.sendStop(transportRevision);
+            midiClockOutput.sendStop(
+                transportRevision,
+                companionMessage
+            );
         }
     }
 );
