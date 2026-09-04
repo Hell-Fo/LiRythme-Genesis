@@ -26,6 +26,7 @@ const TEMPO_FAST_THRESHOLD_MS = 3_000;
 const TEMPO_INITIAL_REPEAT_MS = 120;
 const TEMPO_MODERATE_REPEAT_MS = 100;
 const TEMPO_FAST_REPEAT_MS = 80;
+const TRANSPORT_PULSE_MS = 80;
 
 export class LaunchpadMini {
     constructor(
@@ -48,6 +49,9 @@ export class LaunchpadMini {
         this.navigationCombo = false;
 
         this.playStopTimer = null;
+        this.transportPulseTimer = null;
+        this.transportPulseGeneration = 0;
+        this.transportPulseRevision = null;
         this.playStopLongPressTriggered = false;
         this.playStopPressed = false;
         this.tempoChordConsumed = false;
@@ -75,6 +79,7 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.cancelTransportPulse();
         clearTimeout(this.playStopTimer);
         this.stopTempoRepeat();
         clearTimeout(this.previousHoldTimer);
@@ -378,13 +383,15 @@ export class LaunchpadMini {
         if (this.state.transportState === "PLAY") {
             this.setTopLed(
                 playStop,
-                this.colors.GREEN
+                this.transportPulseTimer !== null &&
+                    this.transportPulseRevision ===
+                        this.actions.clock.transportRevision
+                    ? this.colors.DIM_GREEN
+                    : this.colors.GREEN
             );
         } else {
-            this.setTopLed(
-                playStop,
-                this.colors.DIM_GREEN
-            );
+            this.cancelTransportPulse();
+            this.setTransportPulseLed(this.colors.DIM_GREEN);
         }
     }
     drawFilterStatus() {
@@ -406,28 +413,50 @@ export class LaunchpadMini {
         }
     }
 
-    pulseTransport() {
-        const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
+    cancelTransportPulse() {
+        clearTimeout(this.transportPulseTimer);
+        this.transportPulseTimer = null;
+        this.transportPulseRevision = null;
+        this.transportPulseGeneration += 1;
+    }
 
-        const isFirstMotifStep =
-            this.state.currentTimeline === "MOTIF" &&
-            this.state.playheadPosition === 0;
-
-        this.setTopLed(
-            playStop,
-            isFirstMotifStep
-                ? this.colors.YELLOW
-                : this.colors.DIM_GREEN
+    setTransportPulseLed(color) {
+        // Copy only PLAY/STOP to both buffers without swapping the surface.
+        this.midiManager.send(
+            this.deviceName,
+            [0xB0, this.mapping.TOP_CONTROLS.PLAY_STOP, (color & 0x33) | 0x04]
         );
+    }
 
-        setTimeout(() => {
-            if (this.state.transportState === "PLAY") {
-                this.setTopLed(
-                    playStop,
-                    this.colors.GREEN
-                );
+    pulseTransport() {
+        this.cancelTransportPulse();
+
+        if (this.state.transportState !== "PLAY") {
+            return;
+        }
+
+        const generation = this.transportPulseGeneration;
+        const revision = this.actions.clock.transportRevision;
+        this.transportPulseRevision = revision;
+        this.setTransportPulseLed(this.colors.DIM_GREEN);
+
+        this.transportPulseTimer = setTimeout(() => {
+            if (generation !== this.transportPulseGeneration) {
+                return;
             }
-        }, 300);
+
+            this.transportPulseTimer = null;
+            this.transportPulseRevision = null;
+
+            if (
+                this.state.transportState !== "PLAY" ||
+                revision !== this.actions.clock.transportRevision
+            ) {
+                return;
+            }
+
+            this.setTransportPulseLed(this.colors.GREEN);
+        }, TRANSPORT_PULSE_MS);
     }
 
     drawPlayhead(step = this.state.playheadPosition) {

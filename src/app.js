@@ -262,6 +262,10 @@ midiClockOutputSelector.addEventListener(
 
 actions.setTransportTransitionHandler(
     ({ from, to, origin, transportRevision }) => {
+        if (to === "PAUSE" || to === "STOP") {
+            launchpad.drawTransport();
+        }
+
         if (
             origin === "MIDI_IN" ||
             clock.source !== "INTERNAL"
