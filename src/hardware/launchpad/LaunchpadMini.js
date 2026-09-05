@@ -27,6 +27,8 @@ const TEMPO_INITIAL_REPEAT_MS = 120;
 const TEMPO_MODERATE_REPEAT_MS = 100;
 const TEMPO_FAST_REPEAT_MS = 80;
 const TRANSPORT_PULSE_MS = 80;
+const KICK_PULSE_MS = 80;
+const KICK_INSTRUMENT_POSITION = 12;
 
 export class LaunchpadMini {
     constructor(
@@ -52,6 +54,8 @@ export class LaunchpadMini {
         this.transportPulseTimer = null;
         this.transportPulseGeneration = 0;
         this.transportPulseRevision = null;
+        this.kickPulseTimer = null;
+        this.kickPulseGeneration = 0;
         this.playStopLongPressTriggered = false;
         this.playStopPressed = false;
         this.tempoChordConsumed = false;
@@ -79,6 +83,7 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.cancelKickPulse();
         this.cancelTransportPulse();
         clearTimeout(this.playStopTimer);
         this.stopTempoRepeat();
@@ -309,46 +314,93 @@ export class LaunchpadMini {
         );
     }
 
+    getInstrumentColor(i) {
+        const instrumentName =
+            this.state.instrumentMap[i];
+
+        const isSelected =
+            i === this.state.selectedInstrument;
+
+        const isPlayingNow =
+            instrumentName &&
+            this.state.motif[instrumentName]?.[
+            this.state.playheadPosition
+            ];
+
+        const isInFilter =
+            this.state.visibleInstrumentFilter.has(i);
+
+        let colorValue =
+            this.colors[
+            this.layout.INSTRUMENTS
+            ];
+
+        if (
+            this.filterSelectionMode &&
+            isInFilter
+        ) {
+            colorValue = this.colors.YELLOW;
+        } else if (isPlayingNow) {
+            colorValue = this.colors.GREEN;
+        } else if (isSelected) {
+            colorValue = this.colors.DIM_AMBER;
+        }
+
+        return colorValue;
+    }
+
     drawInstruments() {
         for (let i = 0; i < this.mapping.INSTRUMENTS.length; i++) {
             const note = this.mapping.INSTRUMENTS[i];
-
-            const instrumentName =
-                this.state.instrumentMap[i];
-
-            const isSelected =
-                i === this.state.selectedInstrument;
-
-            const isPlayingNow =
-                instrumentName &&
-                this.state.motif[instrumentName]?.[
-                this.state.playheadPosition
-                ];
-
-            const isInFilter =
-                this.state.visibleInstrumentFilter.has(i);
-
-            let colorValue =
-                this.colors[
-                this.layout.INSTRUMENTS
-                ];
-
-            if (
-                this.filterSelectionMode &&
-                isInFilter
-            ) {
-                colorValue = this.colors.YELLOW;
-            } else if (isPlayingNow) {
-                colorValue = this.colors.GREEN;
-            } else if (isSelected) {
-                colorValue = this.colors.DIM_AMBER;
-            }
+            const colorValue =
+                i === KICK_INSTRUMENT_POSITION && this.kickPulseTimer !== null
+                    ? this.colors.AMBER
+                    : this.getInstrumentColor(i);
 
             this.setLed(
                 note,
                 colorValue
             );
         }
+    }
+
+    setKickLed(color) {
+        try {
+            this.midiManager.send(
+                this.deviceName,
+                [0x90, this.mapping.INSTRUMENTS[KICK_INSTRUMENT_POSITION],
+                    (color & 0x33) | 0x04]
+            );
+        } catch (error) {
+            console.error("Kick LED feedback failed:", error);
+        }
+    }
+
+    cancelKickPulse(restore = false) {
+        const wasActive = this.kickPulseTimer !== null;
+        clearTimeout(this.kickPulseTimer);
+        this.kickPulseTimer = null;
+        this.kickPulseGeneration += 1;
+
+        if (restore && wasActive) {
+            this.setKickLed(this.getInstrumentColor(KICK_INSTRUMENT_POSITION));
+        }
+    }
+
+    pulseKick() {
+        this.cancelKickPulse();
+        const generation = this.kickPulseGeneration;
+
+        this.kickPulseTimer = setTimeout(() => {
+            if (generation !== this.kickPulseGeneration) {
+                return;
+            }
+
+            this.kickPulseTimer = null;
+            this.setKickLed(this.getInstrumentColor(KICK_INSTRUMENT_POSITION));
+        }, KICK_PULSE_MS);
+
+        this.setKickLed(this.colors.AMBER);
     }
 
     drawAttributesTransformations() {

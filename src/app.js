@@ -263,6 +263,11 @@ midiClockOutputSelector.addEventListener(
 actions.setTransportTransitionHandler(
     ({ from, to, origin, transportRevision }) => {
         if (to === "PAUSE" || to === "STOP") {
+            try {
+                launchpad.cancelKickPulse(true);
+            } catch (error) {
+                console.error("Kick LED cleanup failed:", error);
+            }
             launchpad.drawTransport();
         }
 
@@ -566,6 +571,7 @@ syncMidiClockOutput();
 // ============================================================
 
 function triggerMotifStep(step) {
+    let kickTriggered = false;
     const midiNotes = {
         tomH: 39,
         tomL: 40,
@@ -602,6 +608,19 @@ function triggerMotifStep(step) {
                 [0x99, note, 0]
             );
         }, 50);
+
+        if (instrument === "kick") {
+            kickTriggered = midiManager.findOutput(midiOutputName) !== null;
+        }
+    }
+
+    // Run visual feedback only after all musical sends and note-off scheduling.
+    if (kickTriggered) {
+        try {
+            launchpad.pulseKick();
+        } catch (error) {
+            console.error("Kick LED feedback failed:", error);
+        }
     }
 }
 
