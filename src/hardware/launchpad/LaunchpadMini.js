@@ -27,8 +27,9 @@ const TEMPO_INITIAL_REPEAT_MS = 120;
 const TEMPO_MODERATE_REPEAT_MS = 100;
 const TEMPO_FAST_REPEAT_MS = 80;
 const TRANSPORT_PULSE_MS = 80;
-const KICK_PULSE_MS = 80;
-const KICK_INSTRUMENT_POSITION = 12;
+const INSTRUMENT_PULSE_MS = 80;
+// All eight current voices use MIDI DRUM outputs; the event color follows that type.
+const MIDI_DRUM_EVENT_COLOR = LaunchpadColors.AMBER;
 
 export class LaunchpadMini {
     constructor(
@@ -54,8 +55,7 @@ export class LaunchpadMini {
         this.transportPulseTimer = null;
         this.transportPulseGeneration = 0;
         this.transportPulseRevision = null;
-        this.kickPulseTimer = null;
-        this.kickPulseGeneration = 0;
+        this.instrumentPulses = new Map();
         this.playStopLongPressTriggered = false;
         this.playStopPressed = false;
         this.tempoChordConsumed = false;
@@ -83,7 +83,7 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
-        this.cancelKickPulse();
+        this.cancelInstrumentPulses();
         this.cancelTransportPulse();
         clearTimeout(this.playStopTimer);
         this.stopTempoRepeat();
@@ -315,17 +315,8 @@ export class LaunchpadMini {
     }
 
     getInstrumentColor(i) {
-        const instrumentName =
-            this.state.instrumentMap[i];
-
         const isSelected =
             i === this.state.selectedInstrument;
-
-        const isPlayingNow =
-            instrumentName &&
-            this.state.motif[instrumentName]?.[
-            this.state.playheadPosition
-            ];
 
         const isInFilter =
             this.state.visibleInstrumentFilter.has(i);
@@ -340,10 +331,8 @@ export class LaunchpadMini {
             isInFilter
         ) {
             colorValue = this.colors.YELLOW;
-        } else if (isPlayingNow) {
-            colorValue = this.colors.GREEN;
         } else if (isSelected) {
-            colorValue = this.colors.DIM_AMBER;
+            colorValue = this.colors.GREEN;
         }
 
         return colorValue;
@@ -353,8 +342,8 @@ export class LaunchpadMini {
         for (let i = 0; i < this.mapping.INSTRUMENTS.length; i++) {
             const note = this.mapping.INSTRUMENTS[i];
             const colorValue =
-                i === KICK_INSTRUMENT_POSITION && this.kickPulseTimer !== null
-                    ? this.colors.AMBER
+                this.instrumentPulses.get(i)?.timer != null
+                    ? MIDI_DRUM_EVENT_COLOR
                     : this.getInstrumentColor(i);
 
             this.setLed(
@@ -364,43 +353,66 @@ export class LaunchpadMini {
         }
     }
 
-    setKickLed(color) {
+    setInstrumentEventLed(position, color) {
         try {
             this.midiManager.send(
                 this.deviceName,
-                [0x90, this.mapping.INSTRUMENTS[KICK_INSTRUMENT_POSITION],
+                [0x90, this.mapping.INSTRUMENTS[position],
                     (color & 0x33) | 0x04]
             );
         } catch (error) {
-            console.error("Kick LED feedback failed:", error);
+            console.error("Instrument LED feedback failed:", error);
         }
     }
 
-    cancelKickPulse(restore = false) {
-        const wasActive = this.kickPulseTimer !== null;
-        clearTimeout(this.kickPulseTimer);
-        this.kickPulseTimer = null;
-        this.kickPulseGeneration += 1;
+    cancelInstrumentPulse(position, restore = false) {
+        const pulse = this.instrumentPulses.get(position);
+        if (!pulse) {
+            return;
+        }
+
+        const wasActive = pulse.timer !== null;
+        clearTimeout(pulse.timer);
+        pulse.timer = null;
+        pulse.generation += 1;
 
         if (restore && wasActive) {
-            this.setKickLed(this.getInstrumentColor(KICK_INSTRUMENT_POSITION));
+            this.setInstrumentEventLed(position, this.getInstrumentColor(position));
         }
     }
 
-    pulseKick() {
-        this.cancelKickPulse();
-        const generation = this.kickPulseGeneration;
+    cancelInstrumentPulses(restore = false) {
+        for (const position of this.instrumentPulses.keys()) {
+            this.cancelInstrumentPulse(position, restore);
+        }
+    }
 
-        this.kickPulseTimer = setTimeout(() => {
-            if (generation !== this.kickPulseGeneration) {
+    pulseInstrument(instrumentName) {
+        const position = this.mapping.INSTRUMENTS.findIndex((_, i) =>
+            i >= 8 && i <= 15 &&
+            this.state.instrumentMap[i] === instrumentName
+        );
+        if (position === -1) {
+            return;
+        }
+
+        if (!this.instrumentPulses.has(position)) {
+            this.instrumentPulses.set(position, { timer: null, generation: 0 });
+        }
+        this.cancelInstrumentPulse(position);
+        const pulse = this.instrumentPulses.get(position);
+        const generation = pulse.generation;
+
+        pulse.timer = setTimeout(() => {
+            if (generation !== pulse.generation) {
                 return;
             }
 
-            this.kickPulseTimer = null;
-            this.setKickLed(this.getInstrumentColor(KICK_INSTRUMENT_POSITION));
-        }, KICK_PULSE_MS);
+            pulse.timer = null;
+            this.setInstrumentEventLed(position, this.getInstrumentColor(position));
+        }, INSTRUMENT_PULSE_MS);
 
-        this.setKickLed(this.colors.AMBER);
+        this.setInstrumentEventLed(position, MIDI_DRUM_EVENT_COLOR);
     }
 
     drawAttributesTransformations() {

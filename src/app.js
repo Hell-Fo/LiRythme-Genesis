@@ -264,9 +264,9 @@ actions.setTransportTransitionHandler(
     ({ from, to, origin, transportRevision }) => {
         if (to === "PAUSE" || to === "STOP") {
             try {
-                launchpad.cancelKickPulse(true);
+                launchpad.cancelInstrumentPulses(true);
             } catch (error) {
-                console.error("Kick LED cleanup failed:", error);
+                console.error("Instrument LED cleanup failed:", error);
             }
             launchpad.drawTransport();
         }
@@ -571,7 +571,7 @@ syncMidiClockOutput();
 // ============================================================
 
 function triggerMotifStep(step) {
-    let kickTriggered = false;
+    const triggeredInstruments = [];
     const midiNotes = {
         tomH: 39,
         tomL: 40,
@@ -609,17 +609,17 @@ function triggerMotifStep(step) {
             );
         }, 50);
 
-        if (instrument === "kick") {
-            kickTriggered = midiManager.findOutput(midiOutputName) !== null;
+        if (midiManager.findOutput(midiOutputName) !== null) {
+            triggeredInstruments.push(instrument);
         }
     }
 
     // Run visual feedback only after all musical sends and note-off scheduling.
-    if (kickTriggered) {
+    for (const instrument of triggeredInstruments) {
         try {
-            launchpad.pulseKick();
+            launchpad.pulseInstrument(instrument);
         } catch (error) {
-            console.error("Kick LED feedback failed:", error);
+            console.error("Instrument LED feedback failed:", error);
         }
     }
 }
