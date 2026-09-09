@@ -175,10 +175,7 @@ export class LaunchpadMini {
     }
 
     getMotifStepColor(step) {
-        const selectedInstrumentName =
-            this.state.instrumentMap[
-            this.state.selectedInstrument
-            ];
+        const selectedVoiceId = this.state.selectedInstrument;
 
         const filter =
             this.state.visibleInstrumentFilter;
@@ -186,21 +183,9 @@ export class LaunchpadMini {
         let hasAnyVoice = false;
         let hasSelectedVoice = false;
 
-        for (const [instrumentName, steps] of Object.entries(
-            this.state.motif
-        )) {
-            const instrumentPosition =
-                Object.keys(this.state.instrumentMap)
-                    .find(
-                        key =>
-                            this.state.instrumentMap[key] === instrumentName
-                    );
-
-            const isInFilter =
-                filter.has(Number(instrumentPosition));
-
-            const isSelectedInstrument =
-                instrumentName === selectedInstrumentName;
+        for (const [voiceId, steps] of this.state.motif.entries()) {
+            const isInFilter = filter.has(voiceId);
+            const isSelectedInstrument = voiceId === selectedVoiceId;
 
             const isVisible =
                 this.filterSelectionMode
@@ -387,12 +372,9 @@ export class LaunchpadMini {
         }
     }
 
-    pulseInstrument(instrumentName) {
-        const position = this.mapping.INSTRUMENTS.findIndex((_, i) =>
-            i >= 8 && i <= 15 &&
-            this.state.instrumentMap[i] === instrumentName
-        );
-        if (position === -1) {
+    pulseInstrument(position) {
+        if (!Number.isInteger(position) || position < 0 || position >= 16 ||
+            this.state.padConfiguration.voices[position]?.type !== "MIDI DRUM") {
             return;
         }
 
@@ -526,14 +508,11 @@ export class LaunchpadMini {
     drawPlayhead(step = this.state.playheadPosition) {
         const note = this.mapping.MOTIF[step];
 
-        const selectedInstrumentName =
-            this.state.instrumentMap[
-            this.state.selectedInstrument
-            ];
+        const selectedVoiceId = this.state.selectedInstrument;
 
         const hasSelectedVoice =
-            selectedInstrumentName &&
-            this.state.motif[selectedInstrumentName]?.[step];
+            selectedVoiceId !== null &&
+            this.state.motif[selectedVoiceId]?.[step];
 
         if (this.state.currentTimeline === "MOTIF") {
             this.setLed(

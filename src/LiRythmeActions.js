@@ -166,27 +166,17 @@ export class LiRythmeActions {
             console.log("EDIT LOCKED: NO INSTRUMENT SELECTED");
             return;
         }
-        const instrument =
-            this.state.instrumentMap[
-            this.state.selectedInstrument
-            ];
+        const voiceId = this.state.selectedInstrument;
+        if (!Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return;
 
-        if (!instrument) {
-            console.log(
-                "NO INSTRUMENT MAPPED:",
-                this.state.selectedInstrument
-            );
-            return;
-        }
-
-        this.state.motif[instrument][stepIndex] =
-            !this.state.motif[instrument][stepIndex];
+        this.state.motif[voiceId][stepIndex] =
+            !this.state.motif[voiceId][stepIndex];
 
         console.log(
-            instrument.toUpperCase(),
+            "VOICE " + (voiceId + 1),
             "STEP:",
             stepIndex,
-            this.state.motif[instrument][stepIndex]
+            this.state.motif[voiceId][stepIndex]
                 ? "ON"
                 : "OFF"
         );

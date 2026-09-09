@@ -6,6 +6,7 @@ import { MidiClockOutput } from "./hardware/midi/MidiClockOutput.js";
 import { DrumBruteImpactProfile } from "./hardware/midi/profiles/DrumBruteImpactProfile.js";
 import { LaunchpadMini } from "./hardware/launchpad/LaunchpadMini.js";
 import { LiRythmeActions } from "./LiRythmeActions.js";
+import { initializeSettingsUI } from "./SettingsUI.js";
 
 
 // ============================================================
@@ -55,6 +56,7 @@ if (state.filterMode) {
 }
 
 const actions = new LiRythmeActions(state, clock);
+const settingsUI = initializeSettingsUI({ state, clock, actions });
 
 console.log(
     "ACTIONS:",
@@ -565,6 +567,35 @@ function switchMidiClockInput(name) {
 switchMidiClockInput(initialClockInputName);
 syncMidiClockOutput();
 
+// Presence only: compare saved choices, never the selectors' fallback values.
+function updateSoundCheck() {
+    const checks = [
+        ["controller", "midiController", null, name => {
+            const ports = midiManager.findControllerPorts(name);
+            return Boolean(ports.input && ports.output);
+        }],
+        ["clock-input", "midiClockInput", "INTERNAL", name => Boolean(midiManager.findInput(name))],
+        ["clock-output", "midiClockOutput", "NONE", name => Boolean(midiManager.findOutput(name))],
+        ["output", "midiOutput", null, name => Boolean(midiManager.findOutput(name))]
+    ];
+    settingsUI.updateSoundCheck(checks.map(([id, key, special, isAvailable]) => {
+        const name = localStorage.getItem(key);
+        const status = !name || !name.trim()
+            ? "unconfigured"
+            : name === special
+                ? "special"
+                : isAvailable(name) ? "available" : "missing";
+        return { id, name, status };
+    }));
+}
+
+// Registered after existing handlers, which save the user's explicit choices.
+for (const selector of [controllerSelector, midiClockInputSelector,
+    midiClockOutputSelector, midiOutputSelector]) {
+    selector.addEventListener("change", updateSoundCheck);
+}
+updateSoundCheck();
+
 
 // ============================================================
 // CLOCK STEP
@@ -572,52 +603,44 @@ syncMidiClockOutput();
 
 function triggerMotifStep(step) {
     const triggeredInstruments = [];
-    const midiNotes = {
-        tomH: 39,
-        tomL: 40,
-        closedHat: 43,
-        openHat: 44,
-        kick: 36,
-        snare1: 37,
-        snare2: 38,
-        cymbal: 41
-    };
-
-    for (const [instrument, steps] of Object.entries(state.motif)) {
+    for (const [voiceId, steps] of state.motif.entries()) {
         if (!steps[step]) {
             continue;
         }
 
-        const note = midiNotes[instrument];
-
-        if (note === undefined) {
+        const voice = state.padConfiguration.voices[voiceId];
+        if (voice?.type !== "MIDI DRUM" || voice.output?.mode !== "DEFAULT" ||
+            !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
+            !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127) {
             continue;
         }
+        const note = voice.note;
+        const status = 0x90 | (voice.channel - 1);
         const midiOutputName =
             midiOutputSelector.options[
                 midiOutputSelector.selectedIndex
             ]?.textContent;
         midiManager.send(
             midiOutputName,
-            [0x99, note, 100]
+            [status, note, 100]
         );
 
         setTimeout(() => {
             midiManager.send(
                 midiOutputName,
-                [0x99, note, 0]
+                [status, note, 0]
             );
         }, 50);
 
         if (midiManager.findOutput(midiOutputName) !== null) {
-            triggeredInstruments.push(instrument);
+            triggeredInstruments.push(voiceId);
         }
     }
 
     // Run visual feedback only after all musical sends and note-off scheduling.
-    for (const instrument of triggeredInstruments) {
+    for (const voiceId of triggeredInstruments) {
         try {
-            launchpad.pulseInstrument(instrument);
+            launchpad.pulseInstrument(voiceId);
         } catch (error) {
             console.error("Instrument LED feedback failed:", error);
         }

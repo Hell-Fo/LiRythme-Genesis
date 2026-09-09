@@ -1,36 +1,120 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="fr">
-
 <head>
     <meta charset="UTF-8">
-    <title>LiRythme – Genesis</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LiRythme — Genesis</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0 auto; padding: 24px; max-width: 1100px; font: 16px/1.5 system-ui, sans-serif; color: #20252b; background: #f6f7f8; }
+        h1 { margin-top: 0; } h2 { margin: 0 0 12px; font-size: 1.2rem; }
+        h3 { font-size: 1rem; } p { margin: 8px 0; }
+        nav { display: flex; gap: 8px; margin-bottom: 20px; }
+        button, input, select { font: inherit; }
+        button, select, input[type=number] { padding: 8px; border: 1px solid #929ba5; border-radius: 4px; }
+        button { background: white; cursor: pointer; }
+        button[aria-pressed=true] { background: #dce9f5; border-color: #245a89; }
+        button:disabled { cursor: default; }
+        :focus-visible { outline: 3px solid #245a89; outline-offset: 2px; }
+        .sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 16px; }
+        .panel, aside { padding: 18px; border: 1px solid #c9cfd5; background: white; border-radius: 6px; }
+        .wide { grid-column: 1 / -1; }
+        .field { display: grid; gap: 4px; margin: 12px 0; }
+        .slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+        .muted { color: #59636e; font-size: .9rem; }
+        dl { display: grid; grid-template-columns: minmax(100px, 1fr) 2fr; gap: 8px; }
+        dd { margin: 0; overflow-wrap: anywhere; }
+        aside { margin-top: 20px; }
+        [hidden] { display: none !important; }
+    </style>
 </head>
-
 <body>
-
-    <h1>LiRythme – Genesis</h1>
-
-    <h2>MIDI Controller</h2>
-    <select id="midi-controller"></select>
-
-    <h2>MIDI Clock IN</h2>
-    <select id="midi-clock-input"></select>
-
-    <h2>MIDI Clock OUT</h2>
-    <select id="midi-clock-output"></select>
-
-    <h2>MIDI Output</h2>
-    <select id="midi-output"></select>
-
-    <h2>Settings</h2>
-
-    <label>
-        <input type="checkbox" id="focus-startup">
-        Focus actif au démarrage
-    </label>
-
+    <h1>LiRythme — Genesis</h1>
+    <nav aria-label="Pages principales">
+        <button id="show-settings" type="button" aria-pressed="true" aria-controls="settings-page">SETTINGS (S)</button>
+        <button id="show-play" type="button" aria-pressed="false" aria-controls="play-page">PLAY (P)</button>
+        <button id="toggle-help" type="button" aria-pressed="true" aria-controls="help-panel">Help (H)</button>
+    </nav>
+    <main>
+        <section id="settings-page" aria-labelledby="settings-title">
+            <h2 id="settings-title">SETTINGS</h2>
+            <div class="sections">
+                <section class="panel wide" aria-labelledby="soundcheck-title">
+                    <h2 id="soundcheck-title">SOUNDCHECK</h2>
+                    <p id="soundcheck-summary" role="status">Inventaire MIDI en cours…</p>
+                    <dl>
+                        <dt>Controller</dt><dd id="soundcheck-controller">En attente</dd>
+                        <dt>Clock IN</dt><dd id="soundcheck-clock-input">En attente</dd>
+                        <dt>Clock OUT</dt><dd id="soundcheck-clock-output">En attente</dd>
+                        <dt>Default MIDI Output</dt><dd id="soundcheck-output">En attente</dd>
+                    </dl>
+                    <p class="muted">Présence selon l’inventaire initial. Un appareil allumé ensuite peut nécessiter un redémarrage pour être redécouvert. P reste toujours accessible.</p>
+                </section>
+                <section class="panel wide" aria-labelledby="projects-title">
+                    <h2 id="projects-title">PROJECT</h2>
+                    <p class="muted">Non implémenté — Load, Save et Rename seront définis ultérieurement.</p>
+                    <div id="project-slots" class="slots" aria-label="16 emplacements Project"></div>
+                </section>
+                <section class="panel" aria-labelledby="midi-title">
+                    <h2 id="midi-title">MIDI</h2>
+                    <label class="field" for="midi-controller">Controller<select id="midi-controller"></select></label>
+                    <label class="field" for="midi-clock-input">Clock IN<select id="midi-clock-input"></select></label>
+                    <label class="field" for="midi-clock-output">Clock OUT<select id="midi-clock-output"></select></label>
+                    <label class="field" for="midi-output">Default MIDI Output<select id="midi-output"></select></label>
+                </section>
+                <section class="panel" aria-labelledby="tempo-title">
+                    <h2 id="tempo-title">TEMPO</h2>
+                    <label class="field" for="settings-tempo">Tempo interne (BPM)<input id="settings-tempo" type="number" min="20" max="300" step="1" disabled aria-describedby="tempo-status"></label>
+                    <p id="tempo-status" class="muted"></p>
+                </section>
+                <section class="panel" aria-labelledby="audio-title">
+                    <h2 id="audio-title">AUDIO</h2>
+                    <p class="muted">Non implémenté.</p>
+                    <label class="field">Audio Device<select disabled><option>Non disponible</option></select></label>
+                    <label class="field">Audio Output<select disabled><option>Non disponible</option></select></label>
+                </section>
+                <section class="panel" aria-labelledby="key-title">
+                    <h2 id="key-title">KEY GROUP</h2>
+                    <p class="muted">Non implémenté.</p>
+                    <label class="field">Root<select disabled><option>Non disponible</option></select></label>
+                    <label class="field">Scale<select disabled><option>Non disponible</option></select></label>
+                </section>
+                <section class="panel wide" aria-labelledby="voices-title">
+                    <h2 id="voices-title">VOICES</h2>
+                    <div id="voice-slots" class="slots" aria-label="16 Voices"></div>
+                    <section aria-labelledby="voice-editor-title">
+                        <h3 id="voice-editor-title">VOICE 01</h3>
+                        <p class="muted">Configuration actuelle en lecture seule. Renommage, changement de type et routage par Voice non implémentés.</p>
+                        <dl>
+                            <dt>Name</dt><dd id="voice-name"></dd>
+                            <dt>Type actuel</dt><dd id="voice-type"></dd>
+                            <dt>Output</dt><dd id="voice-output"></dd>
+                            <dt>Channel</dt><dd id="voice-channel"></dd>
+                            <dt>Note</dt><dd id="voice-note"></dd>
+                        </dl>
+                    </section>
+                </section>
+                <section class="panel wide" aria-labelledby="interface-title">
+                    <h2 id="interface-title">INTERFACE</h2>
+                    <label class="field">Theme<select disabled><option>Non implémenté</option></select></label>
+                    <h3>ON STARTUP</h3>
+                    <p class="muted">Ces préférences s’appliquent au prochain démarrage.</p>
+                    <label><input type="checkbox" id="help-startup"> Help</label>
+                    <label><input type="checkbox" id="focus-startup"> Focus</label>
+                </section>
+            </div>
+        </section>
+        <section id="play-page" class="panel" hidden aria-labelledby="play-title">
+            <h2 id="play-title">PLAY</h2>
+            <p>Page provisoire. S : SETTINGS · P : PLAY · H : Help.</p>
+        </section>
+    </main>
+    <aside id="help-panel" aria-labelledby="help-title">
+        <h2 id="help-title">HELP</h2>
+        <p id="help-content"></p>
+        <p>S : SETTINGS · P : page PLAY (sans commande transport) · H : afficher/masquer cette aide pour la session.</p>
+        <p class="muted">Les raccourcis sont suspendus pendant la saisie et dans les sélecteurs.</p>
+    </aside>
     <script type="module" src="./src/app.js"></script>
-
 </body>
-
 </html>
