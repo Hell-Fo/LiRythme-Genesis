@@ -1,3 +1,5 @@
+import { activateConfiguration, serializeConfiguration } from "./PadConfigurationFile.mjs";
+
 // UI state is intentionally independent of the musical selection and transport.
 export function initializeSettingsUI({ state, clock, actions }) {
     const get = id => document.getElementById(id);
@@ -11,6 +13,35 @@ export function initializeSettingsUI({ state, clock, actions }) {
     let manualNavigation = false;
     let initialSoundCheckApplied = false;
     let selectedVoice = 0;
+    let currentFile = "";
+    let currentToken;
+    let fileBusy = false;
+    const fileButtons = [get("pads-load"), get("pads-save"), get("pads-save-as")];
+    async function fileOperation(action) {
+        if (fileBusy) return;
+        fileBusy = true;
+        fileButtons.forEach(button => { button.disabled = true; });
+        setText("pads-status", "Opération en cours…");
+        try {
+            const api = window.padConfigurationFiles;
+            const result = action === "load" ? await api.load()
+                : action === "save" ? await api.save(serializeConfiguration(state.padConfiguration), currentToken)
+                    : await api.saveAs(serializeConfiguration(state.padConfiguration));
+            if (result.error) throw new Error(result.error);
+            if (result.canceled) { setText("pads-status", "Opération annulée."); return; }
+            if (action === "load") activateConfiguration(state, result.text);
+            currentFile = result.file;
+            currentToken = result.token;
+            setText("pads-status", action === "load" ? "Configuration chargée." : "Configuration sauvegardée.");
+            refresh();
+        } catch (error) {
+            setText("pads-status", error.message);
+        } finally {
+            fileBusy = false;
+            fileButtons.forEach(button => { button.disabled = false; });
+        }
+    }
+    fileButtons.forEach((button, index) => button.addEventListener("click", () => fileOperation(["load", "save", "saveAs"][index])));
     let helpVisible = localStorage.getItem("helpStartup") !== "false";
     helpStartup.checked = helpVisible;
 
@@ -117,6 +148,8 @@ export function initializeSettingsUI({ state, clock, actions }) {
         if (settingsPage.hidden) return;
         renderTempo();
         renderVoice();
+        setText("pads-name", state.padConfiguration.name);
+        setText("pads-file", currentFile || "Aucun fichier associé");
     }
     // Display observation only; never schedules steps or sends MIDI.
     const refreshTimer = setInterval(refresh, 250);

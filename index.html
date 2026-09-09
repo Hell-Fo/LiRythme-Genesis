@@ -79,12 +79,21 @@
                     <label class="field">Root<select disabled><option>Non disponible</option></select></label>
                     <label class="field">Scale<select disabled><option>Non disponible</option></select></label>
                 </section>
+                <section class="panel wide" aria-labelledby="pads-title">
+                    <h2 id="pads-title">PAD CONFIGURATION</h2>
+                    <p id="pads-name"></p>
+                    <button id="pads-load" type="button">LOAD</button>
+                    <button id="pads-save" type="button">SAVE</button>
+                    <button id="pads-save-as" type="button">SAVE AS</button>
+                    <p>Current File: <span id="pads-file" style="overflow-wrap:anywhere"></span></p>
+                    <p id="pads-status" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere"></p>
+                </section>
                 <section class="panel wide" aria-labelledby="voices-title">
                     <h2 id="voices-title">VOICES</h2>
                     <div id="voice-slots" class="slots" aria-label="16 Voices"></div>
                     <section aria-labelledby="voice-editor-title">
                         <h3 id="voice-editor-title">VOICE 01</h3>
-                        <p class="muted">Configuration actuelle en lecture seule. Renommage, changement de type et routage par Voice non implémentés.</p>
+                        <p class="muted">Configuration actuelle en lecture seule. Modifiez le fichier JSON dans votre éditeur, puis utilisez LOAD.</p>
                         <dl>
                             <dt>Name</dt><dd id="voice-name"></dd>
                             <dt>Type actuel</dt><dd id="voice-type"></dd>

@@ -4,7 +4,8 @@
   "description": "",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test scripts/test-pad-configuration.mjs"
   },
   "keywords": [],
   "author": "",

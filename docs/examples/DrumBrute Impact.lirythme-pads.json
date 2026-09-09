@@ -1,0 +1,111 @@
+{
+  "format": "LiRythme Pad Configuration",
+  "version": 1,
+  "name": "DrumBrute Impact",
+  "voices": {
+    "VOICE 01": {
+      "name": "",
+      "type": "NONE"
+    },
+    "VOICE 02": {
+      "name": "",
+      "type": "NONE"
+    },
+    "VOICE 03": {
+      "name": "",
+      "type": "NONE"
+    },
+    "VOICE 04": {
+      "name": "",
+      "type": "NONE"
+    },
+    "VOICE 05": {
+      "name": "",
+      "type": "NONE"
+    },
+    "VOICE 06": {
+      "name": "",
+      "type": "NONE"
+    },
+    "VOICE 07": {
+      "name": "",
+      "type": "NONE"
+    },
+    "VOICE 08": {
+      "name": "",
+      "type": "NONE"
+    },
+    "VOICE 09": {
+      "name": "Tom High",
+      "type": "MIDI DRUM",
+      "output": {
+        "mode": "DEFAULT"
+      },
+      "channel": 10,
+      "note": 39
+    },
+    "VOICE 10": {
+      "name": "Tom Low",
+      "type": "MIDI DRUM",
+      "output": {
+        "mode": "DEFAULT"
+      },
+      "channel": 10,
+      "note": 40
+    },
+    "VOICE 11": {
+      "name": "Closed Hat",
+      "type": "MIDI DRUM",
+      "output": {
+        "mode": "DEFAULT"
+      },
+      "channel": 10,
+      "note": 43
+    },
+    "VOICE 12": {
+      "name": "Open Hat",
+      "type": "MIDI DRUM",
+      "output": {
+        "mode": "DEFAULT"
+      },
+      "channel": 10,
+      "note": 44
+    },
+    "VOICE 13": {
+      "name": "Kick",
+      "type": "MIDI DRUM",
+      "output": {
+        "mode": "DEFAULT"
+      },
+      "channel": 10,
+      "note": 36
+    },
+    "VOICE 14": {
+      "name": "Snare 1",
+      "type": "MIDI DRUM",
+      "output": {
+        "mode": "DEFAULT"
+      },
+      "channel": 10,
+      "note": 37
+    },
+    "VOICE 15": {
+      "name": "Snare 2",
+      "type": "MIDI DRUM",
+      "output": {
+        "mode": "DEFAULT"
+      },
+      "channel": 10,
+      "note": 38
+    },
+    "VOICE 16": {
+      "name": "Cymbal",
+      "type": "MIDI DRUM",
+      "output": {
+        "mode": "DEFAULT"
+      },
+      "channel": 10,
+      "note": 41
+    }
+  }
+}

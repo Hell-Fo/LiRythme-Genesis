@@ -1,4 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
+contextBridge.exposeInMainWorld("padConfigurationFiles", {
+    load: () => ipcRenderer.invoke("pad-configuration-file", { action: "load" }),
+    save: (text, token) => ipcRenderer.invoke("pad-configuration-file", { action: "save", text, token }),
+    saveAs: text => ipcRenderer.invoke("pad-configuration-file", { action: "saveAs", text })
+});
 
 contextBridge.exposeInMainWorld(
     "midiClockOutputNative",
