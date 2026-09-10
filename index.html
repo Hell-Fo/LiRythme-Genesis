@@ -11,7 +11,7 @@
         h3 { font-size: 1rem; } p { margin: 8px 0; }
         nav { display: flex; gap: 8px; margin-bottom: 20px; }
         button, input, select { font: inherit; }
-        button, select, input[type=number] { padding: 8px; border: 1px solid #929ba5; border-radius: 4px; }
+        button, select, input[type=number], input[type=text] { padding: 8px; border: 1px solid #929ba5; border-radius: 4px; }
         button { background: white; cursor: pointer; }
         button[aria-pressed=true] { background: #dce9f5; border-color: #245a89; }
         button:disabled { cursor: default; }
@@ -81,11 +81,25 @@
                 </section>
                 <section class="panel wide" aria-labelledby="pads-title">
                     <h2 id="pads-title">PAD CONFIGURATION</h2>
-                    <p id="pads-name"></p>
-                    <button id="pads-load" type="button">LOAD</button>
-                    <button id="pads-save" type="button">SAVE</button>
-                    <button id="pads-save-as" type="button">SAVE AS</button>
-                    <p>Current File: <span id="pads-file" style="overflow-wrap:anywhere"></span></p>
+                    <label class="field">Configuration active<select id="pads-library" aria-label="Pad Configuration active"></select></label>
+                    <button id="pads-edit" type="button">EDIT</button>
+                    <button id="pads-new" type="button">NEW</button>
+                    <button id="pads-save" type="button" hidden>SAVE</button>
+                    <span id="pads-dirty" role="status"></span>
+                    <details>
+                        <summary aria-label="Autres opérations Pad Configuration">⋯</summary>
+                        <button id="pads-duplicate" type="button">DUPLICATE</button>
+                        <button id="pads-import" type="button">IMPORT…</button>
+                        <button id="pads-refresh" type="button">Actualiser la bibliothèque</button>
+                        <button id="pads-revert" type="button">Recharger la version sauvegardée</button>
+                        <p>Dossier : <span id="pads-directory" style="overflow-wrap:anywhere"></span></p>
+                        <p>Fichier actif : <span id="pads-file" style="overflow-wrap:anywhere"></span></p>
+                    </details>
+                    <div id="pads-naming" hidden>
+                        <label class="field">Nom du nouveau preset<input id="pads-new-name" maxlength="120" autocomplete="off"></label>
+                        <button id="pads-create" type="button">Créer</button>
+                        <button id="pads-cancel" type="button">Annuler</button>
+                    </div>
                     <p id="pads-status" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere"></p>
                 </section>
                 <section class="panel wide" aria-labelledby="voices-title">
@@ -93,14 +107,16 @@
                     <div id="voice-slots" class="slots" aria-label="16 Voices"></div>
                     <section aria-labelledby="voice-editor-title">
                         <h3 id="voice-editor-title">VOICE 01</h3>
-                        <p class="muted">Configuration actuelle en lecture seule. Modifiez le fichier JSON dans votre éditeur, puis utilisez LOAD.</p>
-                        <dl>
-                            <dt>Name</dt><dd id="voice-name"></dd>
-                            <dt>Type actuel</dt><dd id="voice-type"></dd>
-                            <dt>Output</dt><dd id="voice-output"></dd>
-                            <dt>Channel</dt><dd id="voice-channel"></dd>
-                            <dt>Note</dt><dd id="voice-note"></dd>
-                        </dl>
+                        <p id="voice-editor-status" class="muted"></p>
+                        <label class="field">NAME<input id="voice-name" type="text" autocomplete="off" aria-describedby="voice-error"></label>
+                        <label class="field">TYPE<select id="voice-type" aria-describedby="voice-error"><option>NONE</option><option>MIDI DRUM</option></select></label>
+                        <div id="voice-midi-fields" hidden>
+                            <label class="field">OUTPUT<select id="voice-output" disabled><option>DEFAULT</option></select></label>
+                            <p id="voice-output-status" class="muted"></p>
+                            <label class="field">CHANNEL<input id="voice-channel" type="number" min="1" max="16" step="1" required aria-describedby="voice-error"></label>
+                            <label class="field">NOTE<input id="voice-note" type="number" min="0" max="127" step="1" required aria-describedby="voice-error"></label>
+                        </div>
+                        <p id="voice-error" role="alert" style="white-space:pre-wrap"></p>
                     </section>
                 </section>
                 <section class="panel wide" aria-labelledby="interface-title">

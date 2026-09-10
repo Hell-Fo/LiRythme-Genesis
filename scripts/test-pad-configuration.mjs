@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseConfiguration, serializeConfiguration, activateConfiguration, voiceKey, voiceId } from "../src/PadConfigurationFile.mjs";
 import storage from "../src/PadConfigurationStorage.cjs";
+import { PadConfigurationPreferences } from "../src/PadConfigurationPreferences.cjs";
 
 // Renderer .js files are browser ESM inside a CommonJS Electron package.
 const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
@@ -14,6 +15,56 @@ const stateSource = await fs.readFile(new URL("../src/LiRythmeState.js", import.
 const { LiRythmeState } = await import(moduleURL(stateSource.replace('"./PadConfiguration.js"', JSON.stringify(padURL))));
 
 const original = () => new PadConfiguration();
+
+test("all 16 slots: parse, physical pad selection, Motif editing and MIDI Note On/Off", async () => {
+    const loadBrowser = async (file, replacements = {}) => {
+        let source = await fs.readFile(new URL(file, import.meta.url), "utf8");
+        for (const [relative, replacement] of Object.entries(replacements)) source = source.replace(JSON.stringify(relative), JSON.stringify(replacement));
+        return moduleURL(source);
+    };
+    const { LiRythmeActions } = await import(await loadBrowser("../src/LiRythmeActions.js"));
+    const replacements = {};
+    for (const file of ["LaunchpadMapping.js", "LaunchpadColors.js", "GenesisLayout.js"]) {
+        replacements[`./${file}`] = await loadBrowser(`../src/hardware/launchpad/${file}`);
+    }
+    const { LaunchpadMini } = await import(await loadBrowser("../src/hardware/launchpad/LaunchpadMini.js", replacements));
+    const state = new LiRythmeState();
+    const config = original();
+    config.voices = config.voices.map((voice, id) => ({ id, name: `Slot ${id + 1}`, type: "MIDI DRUM", output: { mode: "DEFAULT" }, channel: id + 1, note: id + 36 }));
+    config.voices[3] = { ...config.voices[3], name: "FM Drum", channel: 10, note: 45 };
+    config.voices[6] = { ...config.voices[6], name: "Cow Bell", channel: 10, note: 42 };
+    activateConfiguration(state, serializeConfiguration(config));
+    const actions = new LiRythmeActions(state, {});
+    const controller = new LaunchpadMini({ send() {} }, state, actions, "Launchpad");
+    // Keep the real input decoder/actions, isolate hardware display transmissions.
+    for (const method of ["drawInstruments", "drawMotif", "drawPlayhead", "swapBuffers"]) controller[method] = () => {};
+    state.selectedInstrument = null;
+    for (let id = 0; id < 16; id++) {
+        const pad = controller.mapping.INSTRUMENTS[id];
+        assert.equal(controller.getControlType(0x90, pad), "INSTRUMENT");
+        assert.equal(controller.getControlPosition("INSTRUMENT", pad), id);
+        controller.handleMidiMessage([0x90, pad, 127]);
+        assert.equal(state.selectedInstrument, id);
+        controller.handleMidiMessage([0x90, controller.mapping.MOTIF[id], 127]);
+        assert.equal(state.motif[id][id], true);
+    }
+    assert.equal(controller.mapping.INSTRUMENTS[3], 67);
+    assert.equal(controller.mapping.INSTRUMENTS[6], 82);
+    const source = await fs.readFile(new URL("../src/app.js", import.meta.url), "utf8");
+    const triggerSource = source.slice(source.indexOf("function triggerMotifStep(step) {"), source.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    const messages = [], pending = [], pulses = [];
+    const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${triggerSource}; return triggerMotifStep;`)(
+        state, { options: [{ textContent: "Default machine" }], selectedIndex: 0 },
+        { send: (output, message) => messages.push([output, message]), findOutput: () => 0 },
+        { pulseInstrument: id => pulses.push(id) }, callback => pending.push(callback)
+    );
+    for (let id = 0; id < 16; id++) {
+        trigger(id); pending.shift()();
+        const v = config.voices[id];
+        assert.deepEqual(messages.slice(-2), [["Default machine", [0x90 | (v.channel - 1), v.note, 100]], ["Default machine", [0x90 | (v.channel - 1), v.note, 0]]]);
+    }
+    assert.deepEqual(pulses, Array.from({ length: 16 }, (_, id) => id));
+});
 const document = () => JSON.parse(serializeConfiguration(original()));
 const parseDoc = doc => parseConfiguration(JSON.stringify(doc));
 
@@ -108,64 +159,146 @@ test("invalid LOAD is atomic; valid STOP/PAUSE LOAD preserves all other state", 
         }
     }
 });
-test("Settings file association changes only after success; cancellation and PLAY keep previous file", async () => {
+test("Settings library association, restore, cancellation, invalid input, PLAY and save failures", async () => {
     const elements = new Map();
     const element = () => ({ textContent: "", hidden: false, children: [], options: [], selectedIndex: 0,
-        listeners: {}, setAttribute() {}, addEventListener(name, fn) { this.listeners[name] = fn; },
+        listeners: {}, setAttribute() {}, focus() {}, scrollIntoView() {},
+        replaceChildren() { this.children = []; },
+        addEventListener(name, fn) { this.listeners[name] = fn; },
         appendChild(child) { this.children.push(child); } });
     const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
-    let result;
+    const restored = original(); restored.voices[12].note = 60;
+    restored.voices[3] = { id: 3, name: "FM Drum", type: "MIDI DRUM", output: { mode: "DEFAULT" }, channel: 10, note: 45 };
+    restored.voices[6] = { id: 6, name: "Cow Bell", type: "MIDI DRUM", output: { mode: "DEFAULT" }, channel: 10, note: 42 };
+    let result = { text: serializeConfiguration(restored), file: "restored.json", token: "restored" };
     let savedToken;
+    let failRestore = false;
+    const activated = [];
     const globals = { document: globalThis.document, window: globalThis.window, localStorage: globalThis.localStorage };
     let cleanup;
     globalThis.document = { getElementById: get, createElement: element, addEventListener() {} };
     globalThis.localStorage = { getItem: () => null };
     globalThis.window = {
+        confirm: () => true,
         addEventListener: (name, fn) => { if (name === "pagehide") cleanup = fn; },
         padConfigurationFiles: {
-            load: async () => result,
+            restore: async () => failRestore ? { error: "Library unavailable" } : result,
+            list: async () => ({ entries: [], directory: "library" }),
+            select: async () => result,
+            activated: async token => { activated.push(token); return {}; },
+            import: async () => result,
             save: async (_text, token) => { savedToken = token; return result; },
-            saveAs: async () => result
+            duplicate: async () => result
         }
     };
     try {
+        const librarySource = await fs.readFile(new URL("../src/PadLibraryUI.js", import.meta.url), "utf8");
+        const libraryURL = moduleURL(librarySource.replace('"./PadLibrarySession.mjs"', JSON.stringify(new URL("../src/PadLibrarySession.mjs", import.meta.url).href)));
         const source = await fs.readFile(new URL("../src/SettingsUI.js", import.meta.url), "utf8");
-        const { initializeSettingsUI } = await import(moduleURL(source.replace('"./PadConfigurationFile.mjs"', JSON.stringify(new URL("../src/PadConfigurationFile.mjs", import.meta.url).href))));
-        const state = new LiRythmeState();
-        initializeSettingsUI({ state, clock: { source: "INTERNAL" }, actions: {} });
+        const { initializeSettingsUI } = await import(moduleURL(source.replace('"./PadLibraryUI.js"', JSON.stringify(libraryURL)).replace('"./PadVoiceEditor.mjs"', JSON.stringify(new URL("../src/PadVoiceEditor.mjs", import.meta.url).href))));
+        const state = new LiRythmeState(); state.motif[12][5] = true;
+        const before = structuredClone(state.motif);
+        const ui = initializeSettingsUI({ state, clock: { source: "INTERNAL" }, actions: {} });
+        await ui.ready;
+        assert.equal(state.padConfiguration.voices[12].note, 60);
+        assert.equal(get("pads-library").value, "restored");
+        assert.equal(get("voice-slots").children[3].textContent, "FM Drum");
+        assert.equal(get("voice-slots").children[6].textContent, "Cow Bell");
+        assert.equal(get("voice-slots").children[2].textContent, "03");
+        get("voice-slots").children[3].listeners.click();
+        assert.equal(get("voice-note").value, "45");
+        get("voice-slots").children[6].listeners.click();
+        assert.equal(get("voice-note").value, "42");
+        assert.equal(state.selectedInstrument, 12); // SETTINGS inspection does not select a musical pad.
+        assert.deepEqual(state.motif, before);
         const click = id => get(id).listeners.click();
+        const choose = async token => { get("pads-library").value = token; await get("pads-library").listeners.change(); };
         result = { text: serializeConfiguration(original()), file: "original.json", token: "original" };
-        await click("pads-load");
+        await choose("original");
+        assert.equal(get("voice-slots").children[3].textContent, "04");
+        assert.equal(get("voice-slots").children[6].textContent, "07");
         assert.equal(get("pads-file").textContent, "original.json");
         const active = state.padConfiguration;
         result = { text: "invalid", file: "bad.json", token: "bad" };
-        await click("pads-load");
+        await choose("bad");
         assert.equal(state.padConfiguration, active);
         assert.match(get("pads-status").textContent, /JSON invalide/);
+        assert.equal(get("pads-library").value, "original");
         state.transportState = "PLAY";
-        result = { text: serializeConfiguration(original()), file: "other.json", token: "other" };
-        await click("pads-load");
-        assert.match(get("pads-status").textContent, /activation refusée/);
+        await choose("other");
+        assert.match(get("pads-status").textContent, /PLAY/);
         assert.equal(state.padConfiguration, active);
-        result = { error: "Écriture refusée" };
+        result = { error: "Write refused" };
         await click("pads-save");
         assert.equal(savedToken, "original");
         assert.equal(get("pads-file").textContent, "original.json");
+        state.transportState = "STOP";
         result = { canceled: true };
-        await click("pads-save-as");
-        assert.equal(get("pads-file").textContent, "original.json");
-        result = { file: "copy.json", token: "copy" };
-        await click("pads-save-as");
+        await click("pads-import");
+        assert.equal(get("pads-library").value, "original");
+        state.padConfiguration.voices[12].note = 61;
+        result = { text: serializeConfiguration(state.padConfiguration), file: "copy.json", token: "copy" };
+        await click("pads-duplicate");
+        await click("pads-create");
         await click("pads-save");
         assert.equal(savedToken, "copy");
-        assert.equal(get("pads-file").textContent, "copy.json");
-        assert.equal(get("pads-load").disabled, false);
+        assert.equal(get("pads-library").value, "copy");
+        assert.equal(get("pads-import").disabled, false);
+        assert.deepEqual(activated, ["restored", "original", "copy", "copy"]);
+        cleanup(); failRestore = true;
+        get("voice-slots").replaceChildren();
+        get("project-slots").replaceChildren();
+        const fallback = new LiRythmeState(); const compatibility = fallback.padConfiguration;
+        const fallbackUI = initializeSettingsUI({ state: fallback, clock: { source: "INTERNAL" }, actions: {} });
+        await fallbackUI.ready;
+        assert.equal(fallback.padConfiguration, compatibility);
+        assert.match(get("pads-status").textContent, /Library unavailable/);
+        assert.equal(get("pads-library").value, "");
     } finally {
         cleanup?.();
         for (const [key, value] of Object.entries(globals)) {
             if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
         }
     }
+});
+test("preferences survive restart, directory fallback and strict restoration failures", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lirythme-preferences-"));
+    try {
+        const userData = path.join(directory, "userData");
+        const selected = path.join(directory, "selected");
+        await fs.mkdir(selected);
+        const preferences = new PadConfigurationPreferences(userData, directory);
+        assert.equal(await preferences.load(), undefined);
+        assert.equal(await preferences.dialogDirectory(), directory);
+        assert.deepEqual(await preferences.restore(), { empty: true });
+        const file = path.join(selected, "pads.lirythme-pads.json");
+        const text = serializeConfiguration(original());
+        await storage.writeConfiguration(file, "\uFEFF" + text);
+        assert.equal(await preferences.update({ lastDirectory: selected, lastActiveFile: file }), undefined);
+        const restarted = new PadConfigurationPreferences(userData, directory);
+        await restarted.load();
+        assert.equal(await restarted.dialogDirectory(), selected);
+        assert.equal((await restarted.restore()).file, file);
+        assert.deepEqual(parseConfiguration((await restarted.restore()).text), { ...original() });
+        for (const bad of ["{", text.replace('"note": 36', '"note": 128'), text.replace('"VOICE 12": {', '"VOICE 12": {}, "VOICE 12": {')]) {
+            await fs.writeFile(file, bad);
+            const result = await restarted.restore();
+            assert.match(result.warning, /compatibilité conservée/);
+            assert.equal(result.text, undefined);
+        }
+        await fs.unlink(file);
+        assert.match((await restarted.restore()).warning, /compatibilité conservée/);
+        await fs.rmdir(selected);
+        assert.equal(await restarted.dialogDirectory(), directory);
+        await fs.writeFile(selected, "not a directory");
+        assert.equal(await restarted.dialogDirectory(), directory);
+        await fs.writeFile(preferences.file, "invalid preferences");
+        const corrupt = new PadConfigurationPreferences(userData, directory);
+        assert.match(await corrupt.load(), /illisibles/);
+        assert.deepEqual(await corrupt.restore(), { empty: true });
+        const unwritable = new PadConfigurationPreferences(selected, directory);
+        assert.match(await unwritable.update({ lastActiveFile: file }), /non sauvegardée/);
+    } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 test("UTF-8 file Save/Load, replacement, failed write and temp cleanup", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lirythme-pads-"));

@@ -1,4 +1,5 @@
-import { activateConfiguration, serializeConfiguration } from "./PadConfigurationFile.mjs";
+import { initializePadLibraryUI } from "./PadLibraryUI.js";
+import { editPadVoice } from "./PadVoiceEditor.mjs";
 
 // UI state is intentionally independent of the musical selection and transport.
 export function initializeSettingsUI({ state, clock, actions }) {
@@ -13,35 +14,10 @@ export function initializeSettingsUI({ state, clock, actions }) {
     let manualNavigation = false;
     let initialSoundCheckApplied = false;
     let selectedVoice = 0;
-    let currentFile = "";
-    let currentToken;
-    let fileBusy = false;
-    const fileButtons = [get("pads-load"), get("pads-save"), get("pads-save-as")];
-    async function fileOperation(action) {
-        if (fileBusy) return;
-        fileBusy = true;
-        fileButtons.forEach(button => { button.disabled = true; });
-        setText("pads-status", "Opération en cours…");
-        try {
-            const api = window.padConfigurationFiles;
-            const result = action === "load" ? await api.load()
-                : action === "save" ? await api.save(serializeConfiguration(state.padConfiguration), currentToken)
-                    : await api.saveAs(serializeConfiguration(state.padConfiguration));
-            if (result.error) throw new Error(result.error);
-            if (result.canceled) { setText("pads-status", "Opération annulée."); return; }
-            if (action === "load") activateConfiguration(state, result.text);
-            currentFile = result.file;
-            currentToken = result.token;
-            setText("pads-status", action === "load" ? "Configuration chargée." : "Configuration sauvegardée.");
-            refresh();
-        } catch (error) {
-            setText("pads-status", error.message);
-        } finally {
-            fileBusy = false;
-            fileButtons.forEach(button => { button.disabled = false; });
-        }
-    }
-    fileButtons.forEach((button, index) => button.addEventListener("click", () => fileOperation(["load", "save", "saveAs"][index])));
+    const libraryUI = initializePadLibraryUI({ state, onActivated: () => {
+        setText("voice-error", "");
+        renderVoice(true);
+    }, onBusyChanged: () => renderVoice() });
     let helpVisible = localStorage.getItem("helpStartup") !== "false";
     helpStartup.checked = helpVisible;
 
@@ -98,14 +74,15 @@ export function initializeSettingsUI({ state, clock, actions }) {
 
         const voice = document.createElement("button");
         voice.type = "button";
-        voice.textContent = `VOICE ${String(i + 1).padStart(2, "0")}`;
+        voice.textContent = state.padConfiguration.voices[i].name || String(i + 1).padStart(2, "0");
         voice.setAttribute("aria-pressed", String(i === selectedVoice));
         voice.addEventListener("click", () => {
             selectedVoice = i;
             for (const [index, button] of [...get("voice-slots").children].entries()) {
                 button.setAttribute("aria-pressed", String(index === selectedVoice));
             }
-            renderVoice();
+            setText("voice-error", "");
+            renderVoice(true);
         });
         get("voice-slots").appendChild(voice);
     }
@@ -113,15 +90,46 @@ export function initializeSettingsUI({ state, clock, actions }) {
     function setText(id, value) {
         if (get(id).textContent !== value) get(id).textContent = value;
     }
-    function renderVoice() {
+    function renderVoice(force = false) {
+        for (const [id, button] of [...get("voice-slots").children].entries()) {
+            const slot = state.padConfiguration.voices[id];
+            const label = slot.name || String(id + 1).padStart(2, "0");
+            if (button.textContent !== label) button.textContent = label;
+        }
         const voice = state.padConfiguration.voices[selectedVoice];
         setText("voice-editor-title", `VOICE ${String(selectedVoice + 1).padStart(2, "0")}`);
-        setText("voice-name", voice.name || "—");
-        setText("voice-type", voice.type);
+        const locked = libraryUI.busy || !libraryUI.hasActivePreset || !["STOP", "PAUSE"].includes(state.transportState);
+        for (const field of ["name", "type", "channel", "note"]) {
+            const input = get(`voice-${field}`);
+            input.disabled = locked;
+            if (force || locked || document.activeElement !== input) input.value = String(voice[field] ?? "");
+        }
+        get("voice-midi-fields").hidden = voice.type !== "MIDI DRUM";
         const destination = output.options[output.selectedIndex]?.textContent;
-        setText("voice-output", voice.type === "MIDI DRUM" ? `Default MIDI Output : ${destination || "aucune sortie disponible"}` : "—");
-        setText("voice-channel", voice.type === "MIDI DRUM" ? String(voice.channel) : "—");
-        setText("voice-note", voice.type === "MIDI DRUM" ? String(voice.note) : "—");
+        setText("voice-output-status", `Default MIDI Output : ${destination || "aucune sortie disponible"}`);
+        setText("voice-editor-status", state.transportState === "PLAY"
+            ? "Édition verrouillée pendant PLAY. Passez en STOP ou PAUSE."
+            : libraryUI.busy ? "Opération de bibliothèque en cours…"
+                : !libraryUI.hasActivePreset ? "Chargez ou créez un preset pour activer l’éditeur."
+                    : "Les changements sont actifs en mémoire. SAVE les sauvegarde dans le preset.");
+    }
+
+    function applyVoiceEdit(field) {
+        const input = get(`voice-${field}`);
+        let rejected = false;
+        try {
+            if (libraryUI.busy || !libraryUI.hasActivePreset) throw new Error("Édition indisponible pendant une opération de bibliothèque ou sans preset actif.");
+            const value = ["channel", "note"].includes(field) ? input.valueAsNumber : input.value;
+            editPadVoice(state, selectedVoice, field, value);
+            setText("voice-error", "");
+        } catch (error) { rejected = true; setText("voice-error", error.message); }
+        renderVoice(rejected || field !== "name");
+        libraryUI.refresh();
+    }
+    get("voice-name").addEventListener("input", () => applyVoiceEdit("name"));
+    get("voice-name").addEventListener("blur", () => renderVoice(true));
+    for (const field of ["type", "channel", "note"]) {
+        get(`voice-${field}`).addEventListener("change", () => applyVoiceEdit(field));
     }
 
     tempo.min = String(state.minimumTempo);
@@ -148,8 +156,7 @@ export function initializeSettingsUI({ state, clock, actions }) {
         if (settingsPage.hidden) return;
         renderTempo();
         renderVoice();
-        setText("pads-name", state.padConfiguration.name);
-        setText("pads-file", currentFile || "Aucun fichier associé");
+        libraryUI.refresh();
     }
     // Display observation only; never schedules steps or sends MIDI.
     const refreshTimer = setInterval(refresh, 250);
@@ -157,6 +164,7 @@ export function initializeSettingsUI({ state, clock, actions }) {
     showPage("SETTINGS");
 
     return {
+        ready: libraryUI.ready,
         updateSoundCheck(rows) {
             const complete = rows.every(row =>
                 row.status === "available" || row.status === "special"

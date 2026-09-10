@@ -57,6 +57,8 @@ if (state.filterMode) {
 
 const actions = new LiRythmeActions(state, clock);
 const settingsUI = initializeSettingsUI({ state, clock, actions });
+// Restore before connecting transport/controller input handlers.
+await settingsUI.ready;
 
 console.log(
     "ACTIONS:",

@@ -1,8 +1,14 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("padConfigurationFiles", {
-    load: () => ipcRenderer.invoke("pad-configuration-file", { action: "load" }),
-    save: (text, token) => ipcRenderer.invoke("pad-configuration-file", { action: "save", text, token }),
-    saveAs: text => ipcRenderer.invoke("pad-configuration-file", { action: "saveAs", text })
+    confirmDiscard: reason => ipcRenderer.invoke("pad-configuration-file", { action: "confirmDiscard", reason }),
+    restore: () => ipcRenderer.invoke("pad-configuration-file", { action: "restore" }),
+    list: () => ipcRenderer.invoke("pad-configuration-file", { action: "list" }),
+    select: token => ipcRenderer.invoke("pad-configuration-file", { action: "select", token }),
+    activated: token => ipcRenderer.invoke("pad-configuration-file", { action: "activated", token }),
+    create: name => ipcRenderer.invoke("pad-configuration-file", { action: "new", name }),
+    duplicate: (text, name) => ipcRenderer.invoke("pad-configuration-file", { action: "duplicate", text, name }),
+    import: () => ipcRenderer.invoke("pad-configuration-file", { action: "import" }),
+    save: (text, token, expectedText) => ipcRenderer.invoke("pad-configuration-file", { action: "save", text, token, expectedText })
 });
 
 contextBridge.exposeInMainWorld(

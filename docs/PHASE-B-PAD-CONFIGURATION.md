@@ -1,5 +1,58 @@
 # Phase B — Pad Configuration files
 
+Le workflow actuel est décrit dans [Bibliothèque de Pad Configurations](PAD-CONFIGURATION-LIBRARY.md).
+Les sections ci-dessous documentent les étapes historiques Phase B/B.1.
+
+## Complément Phase B.1 — préférences et restauration
+
+La Phase B a été validée sur Electron/DrumBrute et commitée en `814b299`.
+Les changements B.1 suivants sont en attente de validation, sans commit.
+Ils remplacent la limitation de restauration au redémarrage décrite dans le
+rapport historique ci-dessous.
+
+Les préférences sont conservées dans `pad-configuration-preferences.json` sous
+`app.getPath("userData")`, séparément des fichiers musicaux. Un dernier dossier
+commun à LOAD et SAVE AS est mémorisé après sélection dans le dialogue ; une
+annulation du dialogue ne le change pas. Un fichier sélectionné mais invalide
+peut donc mémoriser son dossier sans devenir la configuration active.
+Un dossier disparu, inaccessible ou remplacé par un fichier entraîne un repli
+vers Documents. SAVE AS conserve le nom proposé et utilise ce dernier dossier.
+
+Le chemin actif est mémorisé après LOAD effectivement activé (accusé de réception
+du renderer par jeton IPC), ou après SAVE/SAVE AS réussi. Un LOAD refusé pendant
+PLAY ou invalide ne remplace pas ce chemin. Les préférences utilisent l'écriture
+temporaire/remplacement existante ; une erreur de préférence est signalée sans
+annuler une activation ou une sauvegarde musicale déjà réussie.
+
+Au démarrage, la restauration se termine avant de connecter les entrées MIDI et
+les commandes de transport. Elle réutilise exactement le parseur/validateur et
+l'activation de Phase B. Le nom, les Voices et le fichier courant sont restaurés,
+et SAVE peut réécrire ce fichier. Aucun état du Motif n'est restauré ou modifié.
+Un fichier absent/invalide conserve la compatibilité avec une indication dans
+SETTINGS ; des préférences illisibles reviennent aux valeurs par défaut.
+Le chemin indisponible est conservé pour permettre une nouvelle tentative au
+prochain démarrage. SoundCheck et le Clock Engine ne sont pas modifiés.
+
+Fichiers B.1 : `main.js`, `preload.js`, `src/SettingsUI.js`, `src/app.js`,
+`src/PadConfigurationPreferences.cjs` (nouveau),
+`scripts/test-pad-configuration.mjs` et ce rapport.
+
+Validation automatisée B.1 : 38 tests réussis avec `npm.cmd test`, contrôles de
+syntaxe et `git diff --check`. Ajouts : préférences après redémarrage simulé,
+dossier absent/non-dossier, restauration UTF-8 BOM, fichiers absents/invalides
+(dont doublons), préférences corrompues, échec d'écriture de préférence,
+restauration SETTINGS avec Motif conservé et notification d'activation uniquement
+après LOAD accepté. Les dialogues natifs et le matériel restent à valider.
+
+Test manuel B.1 : LOAD depuis un dossier choisi, puis SAVE AS et LOAD pour vérifier
+leur dossier initial commun ; redémarrer et vérifier configuration/fichier courant,
+puis SAVE. Renommer le dernier fichier ou le rendre invalide et redémarrer :
+compatibilité, indication SETTINGS, aucun crash. Supprimer/renommer le dernier
+dossier : prochain dialogue dans Documents. Enfin, charger A avec succès puis
+tenter B pendant PLAY ; au redémarrage, A doit être restauré.
+
+---
+
 Implémentation sans commit. Validation Electron et hardware à effectuer par Daniel.
 
 ## Fichiers

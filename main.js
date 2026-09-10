@@ -43,64 +43,56 @@ const {
     utilityProcess
 } = require("electron");
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
-const { readConfiguration, writeConfiguration } = require("./src/PadConfigurationStorage.cjs");
-const padFiles = new Map();
+const { PadConfigurationPreferences } = require("./src/PadConfigurationPreferences.cjs");
+const { PadConfigurationLibrary } = require("./src/PadConfigurationLibrary.cjs");
+let padPreferences;
+let padLibrary;
+let padPreferencesWarning;
 let padFileBusy = false;
 
-// Only native-dialog-selected paths can be read or overwritten by this API.
 ipcMain.handle("pad-configuration-file", async (event, request) => {
     if (event.sender !== mainWindow?.webContents ||
         event.senderFrame !== mainWindow.webContents.mainFrame) {
         throw new Error("Unauthorized Pad Configuration request");
     }
-    if (padFileBusy) return { error: "Une opération de fichier est déjà en cours." };
+    if (padFileBusy) return { error: "Une opération de bibliothèque est déjà en cours." };
     padFileBusy = true;
     try {
-        const { parseConfiguration, serializeConfiguration, EXTENSION } = await import("./src/PadConfigurationFile.mjs");
-        const filters = [{ name: "LiRythme Pad Configuration", extensions: ["lirythme-pads.json"] }];
-        if (request?.action === "load") {
-            const result = await dialog.showOpenDialog(mainWindow, { filters, properties: ["openFile"] });
-            if (result.canceled || !result.filePaths.length) return { canceled: true };
-            const file = result.filePaths[0];
-            const text = await readConfiguration(file);
-            parseConfiguration(text);
-            const token = randomUUID();
-            padFiles.set(token, file);
-            return { text, file, token };
-        }
-        if (!["save", "saveAs"].includes(request?.action)) throw new Error("Opération de fichier inconnue.");
-        const config = parseConfiguration(request.text);
-        const text = serializeConfiguration(config);
-        let file = request.action === "save" ? padFiles.get(request.token) : undefined;
-        if (!file) {
-            const safeName = config.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/, "") || "Pad Configuration";
-            const result = await dialog.showSaveDialog(mainWindow, {
-                filters,
-                defaultPath: path.join(app.getPath("documents"), safeName + EXTENSION)
-            });
-            if (result.canceled || !result.filePath) return { canceled: true };
-            file = result.filePath;
-            if (!file.toLowerCase().endsWith(EXTENSION)) {
-                file += EXTENSION;
-                // The native dialog confirmed the original path, not this adjusted one.
-                try {
-                    await require("node:fs/promises").access(file);
-                    const confirmation = await dialog.showMessageBox(mainWindow, {
-                        type: "question", buttons: ["Annuler", "Remplacer"], defaultId: 0, cancelId: 0,
-                        message: `Remplacer le fichier existant ?\n${file}`
-                    });
-                    if (confirmation.response !== 1) return { canceled: true };
-                } catch (error) { if (error.code !== "ENOENT") throw error; }
+        switch (request?.action) {
+            case "confirmDiscard": {
+                if (!["close", "reload"].includes(request.reason)) throw new Error("Confirmation inconnue.");
+                const result = await dialog.showMessageBox(mainWindow, {
+                    type: "question", buttons: ["Annuler", "Abandonner les modifications"], defaultId: 0, cancelId: 0,
+                    message: request.reason === "close" ? "Quitter sans sauvegarder les modifications de la Pad Configuration ?" : "Abandonner les modifications non sauvegardées et recharger le fichier ?"
+                });
+                return { confirmed: result.response === 1 };
             }
+            case "restore": {
+                const result = await padLibrary.restore();
+                result.warning = [result.warning, padPreferencesWarning].filter(Boolean).join("\n");
+                return result;
+            }
+            case "list": return await padLibrary.list();
+            case "select": return await padLibrary.select(request.token);
+            case "activated": return await padLibrary.activated(request.token);
+            case "new": return await padLibrary.newConfiguration(request.name);
+            case "duplicate":
+                if (typeof request.name !== "string") throw new Error("Le nom est obligatoire.");
+                return await padLibrary.create(request.text, request.name);
+            case "save": return await padLibrary.save(request.token, request.text, request.expectedText);
+            case "import": {
+                const result = await dialog.showOpenDialog(mainWindow, {
+                    filters: [{ name: "LiRythme Pad Configuration", extensions: ["lirythme-pads.json"] }],
+                    properties: ["openFile"], defaultPath: await padPreferences.dialogDirectory()
+                });
+                if (result.canceled || !result.filePaths.length) return { canceled: true };
+                const warning = await padPreferences.update({ lastDirectory: path.dirname(result.filePaths[0]) });
+                return { ...await padLibrary.importFile(result.filePaths[0]), warning };
+            }
+            default: throw new Error("Opération de bibliothèque inconnue.");
         }
-        await writeConfiguration(file, text);
-        const token = request.action === "save" && padFiles.get(request.token) === file ? request.token : randomUUID();
-        padFiles.set(token, file);
-        return { file, token };
-    } catch (error) {
-        return { error: error.message };
-    } finally { padFileBusy = false; }
+    } catch (error) { return { error: error.message }; }
+    finally { padFileBusy = false; }
 });
 
 let mainWindow;
@@ -303,7 +295,10 @@ ipcMain.handle("native-midi-request", (event, command) => {
     return requestNativeMidi(command);
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+    padPreferences = new PadConfigurationPreferences(app.getPath("userData"), app.getPath("documents"));
+    padPreferencesWarning = await padPreferences.load();
+    padLibrary = new PadConfigurationLibrary(path.join(app.getPath("documents"), "LiRythme", "Pad Configurations"), padPreferences, path.join(__dirname, "docs/examples/DrumBrute Impact.lirythme-pads.json"));
     startMidiClockUtility();
     createWindow();
 });
