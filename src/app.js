@@ -7,6 +7,7 @@ import { DrumBruteImpactProfile } from "./hardware/midi/profiles/DrumBruteImpact
 import { LaunchpadMini } from "./hardware/launchpad/LaunchpadMini.js";
 import { LiRythmeActions } from "./LiRythmeActions.js";
 import { initializeSettingsUI } from "./SettingsUI.js";
+import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
 
 
 // ============================================================
@@ -46,6 +47,7 @@ const midiManager = new MidiManager();
 
 const state = new LiRythmeState();
 const clock = new LiRythmeClock(state);
+const playStatusUI = initializePlayStatusUI({ state, clock, midiManager });
 
 state.filterMode =
     focusStartupCheckbox.checked;
@@ -266,6 +268,7 @@ midiClockOutputSelector.addEventListener(
 
 actions.setTransportTransitionHandler(
     ({ from, to, origin, transportRevision }) => {
+        playStatusUI.render();
         if (to === "PAUSE" || to === "STOP") {
             try {
                 launchpad.cancelInstrumentPulses(true);

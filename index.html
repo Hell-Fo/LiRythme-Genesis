@@ -25,6 +25,9 @@
         dl { display: grid; grid-template-columns: minmax(100px, 1fr) 2fr; gap: 8px; }
         dd { margin: 0; overflow-wrap: anywhere; }
         aside { margin-top: 20px; }
+        .play-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; }
+        .play-status dt { color: #59636e; font-size: .85rem; letter-spacing: .08em; }
+        .play-status dd { margin-top: 8px; font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
         [hidden] { display: none !important; }
     </style>
 </head>
@@ -131,7 +134,12 @@
         </section>
         <section id="play-page" class="panel" hidden aria-labelledby="play-title">
             <h2 id="play-title">PLAY</h2>
-            <p>Page provisoire. S : SETTINGS · P : PLAY · H : Help.</p>
+            <dl class="play-status" aria-live="polite" aria-atomic="true">
+                <div><dt>SELECTED</dt><dd id="play-selected">Non disponible</dd></div>
+                <div><dt>STATE</dt><dd id="play-state">Non disponible</dd></div>
+                <div><dt>BPM</dt><dd id="play-bpm">XXX</dd></div>
+                <div><dt>CLOCK SOURCE</dt><dd id="play-source">Non disponible</dd></div>
+            </dl>
         </section>
     </main>
     <aside id="help-panel" aria-labelledby="help-title">
