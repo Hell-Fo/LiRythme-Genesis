@@ -202,20 +202,18 @@ export class LaunchpadMini {
 
             if (steps[step]) {
                 hasAnyVoice = true;
-
-                if (isSelectedInstrument) {
-                    hasSelectedVoice = true;
-                }
+                if (isSelectedInstrument) hasSelectedVoice = true;
             }
         }
 
-        if (hasSelectedVoice) {
-            return this.colors.YELLOW;
+        const explicitLength = selectedVoiceId === null
+            ? this.state.motifLength : this.state.voiceLengths?.[selectedVoiceId];
+        if (Number.isInteger(explicitLength) && step === explicitLength - 1) {
+            return hasAnyVoice ? this.colors.RED : this.colors.DIM_RED;
         }
 
-        if (hasAnyVoice) {
-            return this.colors.DIM_AMBER;
-        }
+        if (hasSelectedVoice) return this.colors.YELLOW;
+        if (hasAnyVoice) return this.colors.DIM_AMBER;
 
         return 0;
     }
@@ -506,7 +504,17 @@ export class LaunchpadMini {
     }
 
     drawPlayhead(step = this.state.playheadPosition) {
+        // The physical timeline has 32 pads, even when the global LCM is longer.
+        step %= this.mapping.MOTIF.length;
+        this.lastPlayheadStep = step;
         const note = this.mapping.MOTIF[step];
+
+        // Explicit boundaries retain priority; ordinary MOTIF cells show the cursor.
+        const motifColor = this.getMotifStepColor(step);
+        if (motifColor === this.colors.RED || motifColor === this.colors.DIM_RED) {
+            this.setLed(note, motifColor);
+            return;
+        }
 
         const selectedVoiceId = this.state.selectedInstrument;
 
@@ -517,7 +525,7 @@ export class LaunchpadMini {
         if (this.state.currentTimeline === "MOTIF") {
             this.setLed(
                 note,
-                hasSelectedVoice
+                motifColor === this.colors.YELLOW || motifColor === this.colors.DIM_AMBER
                     ? this.colors.GREEN
                     : this.colors.DIM_GREEN
             );
@@ -946,9 +954,11 @@ export class LaunchpadMini {
             controlType === "MOTIF" &&
             value > 0
         ) {
-            this.actions.toggleInstrumentStep(
-                controlPosition
-            );
+            if (this.shiftPressed) {
+                this.actions.toggleSelectedLength(controlPosition + 1);
+            } else {
+                this.actions.toggleInstrumentStep(controlPosition);
+            }
             this.drawMotif();
             this.drawPlayhead();
             this.swapBuffers();

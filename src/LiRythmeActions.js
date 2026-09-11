@@ -225,6 +225,20 @@ export class LiRythmeActions {
     stopClock() {
         this.clock.stop();
     }
+    setSelectedLength(length) {
+        return this.state.setTargetLength(length);
+    }
+
+    clearSelectedLength() {
+        return this.state.setTargetLength(null);
+    }
+
+    toggleSelectedLength(length) {
+        if (!Number.isInteger(length) || length < 1 || length > 32) return false;
+        const id = this.state.selectedInstrument;
+        const current = id === null ? this.state.motifLength : this.state.voiceLengths[id];
+        return this.state.setTargetLength(current === length ? null : length);
+    }
 
     selectMotifTimeline() {
         this.state.currentTimeline = "MOTIF";
@@ -255,7 +269,7 @@ export class LiRythmeActions {
     }
     previousStep({ preview = false } = {}) {
         this.state.playheadPosition =
-            (this.state.playheadPosition + 31) % 32;
+            (this.state.playheadPosition + this.state.getMotifDuration() - 1) % this.state.getMotifDuration();
 
         console.log(
             "PLAYHEAD:",
@@ -276,7 +290,7 @@ export class LiRythmeActions {
 
     nextStep({ preview = false } = {}) {
         this.state.playheadPosition =
-            (this.state.playheadPosition + 1) % 32;
+            (this.state.playheadPosition + 1) % this.state.getMotifDuration();
 
         console.log(
             "PLAYHEAD:",

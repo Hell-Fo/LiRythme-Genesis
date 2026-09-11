@@ -22,6 +22,7 @@ export function readPlayStatus(state, clock, midiManager) {
 }
 
 export function initializePlayStatusUI({ state, clock, midiManager,
+    renderMotif = () => {},
     document = globalThis.document, window = globalThis.window }) {
     const fields = Object.fromEntries(["selected", "state", "bpm", "source"]
         .map(key => [key, document.getElementById(`play-${key}`)]));
@@ -33,6 +34,7 @@ export function initializePlayStatusUI({ state, clock, midiManager,
         for (const [key, element] of Object.entries(fields)) {
             if (element.textContent !== status[key]) element.textContent = status[key];
         }
+        renderMotif();
     }
     function observe() {
         render();

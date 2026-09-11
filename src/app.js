@@ -8,6 +8,7 @@ import { LaunchpadMini } from "./hardware/launchpad/LaunchpadMini.js";
 import { LiRythmeActions } from "./LiRythmeActions.js";
 import { initializeSettingsUI } from "./SettingsUI.js";
 import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
+import { initializePlayMotifUI } from "./PlayMotifUI.mjs";
 
 
 // ============================================================
@@ -47,7 +48,8 @@ const midiManager = new MidiManager();
 
 const state = new LiRythmeState();
 const clock = new LiRythmeClock(state);
-const playStatusUI = initializePlayStatusUI({ state, clock, midiManager });
+const motifUI = initializePlayMotifUI({ state });
+const playStatusUI = initializePlayStatusUI({ state, clock, midiManager, renderMotif: motifUI.render });
 
 state.filterMode =
     focusStartupCheckbox.checked;
@@ -609,7 +611,8 @@ updateSoundCheck();
 function triggerMotifStep(step) {
     const triggeredInstruments = [];
     for (const [voiceId, steps] of state.motif.entries()) {
-        if (!steps[step]) {
+        const localStep = state.getVoiceStep?.(voiceId, step) ?? step;
+        if (!steps[localStep]) {
             continue;
         }
 
@@ -657,10 +660,8 @@ actions.setStepPreviewHandler(triggerMotifStep);
 actions.setClockStepHandler(() => {
     triggerMotifStep(state.playheadPosition);
 
-    const currentStep = state.playheadPosition;
-    const previousStep = (currentStep + 31) % 32;
-
-    launchpad.drawClockStep(previousStep, currentStep);
+    // A reset may jump from any physical pad to zero, not necessarily pad 32.
+    launchpad.drawClockStep(launchpad.lastPlayheadStep ?? 0, state.playheadPosition % 32);
 });
 
 

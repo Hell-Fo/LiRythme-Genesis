@@ -119,11 +119,12 @@ test("PLAY has only informational markup and app wires rendering before transpor
     const html = await source("index.html");
     const play = html.slice(html.indexOf('<section id="play-page"'), html.indexOf('</main>'));
     assert.doesNotMatch(play, /<(button|input|select|textarea|a|canvas|summary)\b|\b(?:onclick|onkeydown|tabindex|contenteditable)\s*=/i);
-    for (const key of ["selected", "state", "bpm", "source"]) {
+    assert.match(play, /<p id="play-selected"/);
+    for (const key of ["state", "bpm", "source"]) {
         assert.match(play, new RegExp(`<dd id="play-${key}">`));
     }
     const app = await source("src/app.js");
-    assert.match(app, /initializePlayStatusUI\(\{ state, clock, midiManager \}\)/);
+    assert.match(app, /initializePlayStatusUI\(\{ state, clock, midiManager, renderMotif: motifUI.render \}\)/);
     assert.match(app, /setTransportTransitionHandler\(\s*\(\{ from, to, origin, transportRevision \}\) => \{\s*playStatusUI.render\(\);/);
     assert.doesNotMatch(await source("src/PlayStatusUI.mjs"), /innerHTML|\.actions|\.setTempo\(|\.setSource\(|\.send\(/);
 });

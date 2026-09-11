@@ -28,6 +28,13 @@
         .play-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; }
         .play-status dt { color: #59636e; font-size: .85rem; letter-spacing: .08em; }
         .play-status dd { margin-top: 8px; font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .play-zones { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(280px, 1.5fr) minmax(180px, .8fr); gap: 16px; margin-top: 24px; }
+        .play-zones > section { min-width: 0; }
+        .selection-name { margin: 0; font-size: 1.25rem; font-weight: 600; overflow-wrap: anywhere; }
+        @media (max-width: 850px) { .play-zones { grid-template-columns: 1fr; } .play-modulation { min-height: 220px; } }
+        .motif-clock-space { min-height: 220px; display: grid; place-items: center; border-block: 1px solid #c9cfd5; }
+        .motif-position { grid-template-columns: 1fr 1fr; }
+        .motif-chain { min-height: 100px; padding-top: 16px; border-top: 1px solid #c9cfd5; }
         [hidden] { display: none !important; }
     </style>
 </head>
@@ -135,11 +142,33 @@
         <section id="play-page" class="panel" hidden aria-labelledby="play-title">
             <h2 id="play-title">PLAY</h2>
             <dl class="play-status" aria-live="polite" aria-atomic="true">
-                <div><dt>SELECTED</dt><dd id="play-selected">Non disponible</dd></div>
                 <div><dt>STATE</dt><dd id="play-state">Non disponible</dd></div>
                 <div><dt>BPM</dt><dd id="play-bpm">XXX</dd></div>
                 <div><dt>CLOCK SOURCE</dt><dd id="play-source">Non disponible</dd></div>
             </dl>
+            <div class="play-zones">
+            <section id="play-motif" class="panel play-motif" aria-labelledby="play-motif-title">
+                <h3 id="play-motif-title">MOTIF —</h3>
+                <dl><dt>DURATION</dt><dd id="play-motif-duration">Non disponible</dd></dl>
+                <div class="motif-clock-space" aria-label="Espace réservé à la future horloge graphique">
+                    <span class="muted">GRAPHIC CLOCK — espace réservé</span>
+                </div>
+                <dl class="play-status motif-position">
+                    <div><dt>STEP</dt><dd id="play-motif-step">Non disponible</dd></div>
+                    <div><dt>PLAY MODE</dt><dd id="play-motif-mode">Non disponible</dd></div>
+                </dl>
+                <section class="motif-chain" aria-labelledby="motif-chain-title">
+                    <h3 id="motif-chain-title">CHAIN</h3>
+                </section>
+            </section>
+            <section id="play-modulation" class="panel play-modulation" aria-labelledby="play-modulation-title">
+                <h3 id="play-modulation-title">MODULATION</h3>
+            </section>
+            <section id="play-selection" class="panel" aria-labelledby="play-selection-title">
+                <h3 id="play-selection-title">SELECTION</h3>
+                <p id="play-selected" class="selection-name" aria-live="polite">Non disponible</p>
+            </section>
+            </div>
         </section>
     </main>
     <aside id="help-panel" aria-labelledby="help-title">
