@@ -227,6 +227,15 @@ export class LiRythmeActions {
     stopClock() {
         this.clock.stop();
     }
+    clearMotifEvents(voiceId = null) {
+        if (this.state.currentTimeline !== "MOTIF") return false;
+        if (voiceId !== null && (!Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16)) return false;
+        const rows = voiceId === null ? this.state.motif : [this.state.motif[voiceId]];
+        // Existing scheduled Note Offs own active notes and remain untouched.
+        for (const row of rows) row.fill(false);
+        return true;
+    }
+
     setSelectedLength(length) {
         return this.state.setTargetLength(length, {
             defer: this.clock.source === "INTERNAL" && this.state.transportState === "PLAY"

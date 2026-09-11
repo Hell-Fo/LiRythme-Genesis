@@ -41,6 +41,9 @@ test("SHIFT+STEP sets, moves and removes Voice/Motif boundaries; DELETE has no l
     press(0x90, controller.mapping.MOTIF[23]);
     assert.equal(state.motifLength, 24);
     press(0x90, controller.mapping.VALUE_CONTROLS.DELETE);
+    press(0x90, controller.mapping.VALUE_CONTROLS.DELETE, 0);
+    press(0x90, controller.mapping.VALUE_CONTROLS.DELETE);
+    press(0x90, controller.mapping.VALUE_CONTROLS.DELETE, 0);
     assert.equal(state.motifLength, 24);
     press(0x90, controller.mapping.MOTIF[10]);
     assert.equal(state.motifLength, 11);
@@ -51,6 +54,9 @@ test("SHIFT+STEP sets, moves and removes Voice/Motif boundaries; DELETE has no l
     assert.equal(state.voiceLengths[12], 7);
     press(0x90, controller.mapping.INSTRUMENTS[12]);
     press(0x90, controller.mapping.VALUE_CONTROLS.DELETE);
+    press(0x90, controller.mapping.VALUE_CONTROLS.DELETE, 0);
+    press(0x90, controller.mapping.VALUE_CONTROLS.DELETE);
+    press(0x90, controller.mapping.VALUE_CONTROLS.DELETE, 0);
     assert.equal(state.voiceLengths[12], 7);
     press(0x90, controller.mapping.MOTIF[10]);
     assert.equal(state.voiceLengths[12], 11);
@@ -535,5 +541,89 @@ test("cycle feedback observes the validated live boundary without changing Leade
     colors.length = 0;
     for (let tick = 1; tick <= 16; tick++) clock.advanceStepPipeline();
     assert.deepEqual(colors, [controller.colors.YELLOW]);
+    controller.resetInputState();
+});
+
+test("DELETE arms, blinks RED, cancels and ignores invalid targets", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, controller } = setup();
+    const events = [];
+    controller.midiManager.send = (_, data) => events.push(data);
+    const del = controller.mapping.VALUE_CONTROLS.DELETE;
+    const press = (status, pad) => { controller.handleMidiMessage([status, pad, 127]); controller.handleMidiMessage([status, pad, 0]); };
+    const before = structuredClone(state);
+    press(0x90, del);
+    assert.equal(controller.deleteArmed, true);
+    assert.deepEqual(events.at(-1), [0x90, del, (controller.colors.RED & 0x33) | 4]);
+    t.mock.timers.tick(160);
+    assert.deepEqual(events.at(-1), [0x90, del, (controller.colors.OFF & 0x33) | 4]);
+    t.mock.timers.tick(160);
+    assert.equal(events.at(-1)[2], (controller.colors.RED & 0x33) | 4);
+    for (const [status, pad] of [[0x90, controller.mapping.MOTIF[0]], [0x90, 127], [0xB0, controller.mapping.TOP_CONTROLS.NEXT]]) press(status, pad);
+    assert.equal(controller.deleteArmed, true);
+    assert.deepEqual(structuredClone(state), before);
+    press(0x90, del);
+    assert.equal(controller.deleteArmed, false);
+    const count = events.length;
+    t.mock.timers.tick(1000);
+    assert.equal(events.length, count);
+    assert.deepEqual(structuredClone(state), before);
+    press(0x90, del); controller.resetInputState();
+    assert.equal(controller.deleteArmed, false);
+    assert.equal(controller.deleteBlinkTimer, null);
+    state.currentTimeline = "MODULATION";
+    press(0x90, del);
+    assert.equal(controller.deleteArmed, false);
+});
+
+test("DELETE Voice/PLAY clears events only in Leader/Follower, consumes held target and release", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const mode of ["INTERNAL", "MIDI"]) for (const target of [3, null]) {
+        const { state, clock, actions, controller, length } = setup();
+        state.motif.forEach(row => row.fill(true));
+        length(3, 7); length(4, 5); length(null, 16);
+        clock.setSource(mode); actions.startPlayback(); clock.advanceStepPipeline();
+        if (mode === "INTERNAL") length(3, 11); // preserve pending geometry too
+        const before = structuredClone(state), revision = clock.transportRevision;
+        const del = controller.mapping.VALUE_CONTROLS.DELETE;
+        controller.handleMidiMessage([0x90, del, 127]);
+        controller.handleMidiMessage([0x90, del, 0]);
+        const status = target === null ? 0xB0 : 0x90;
+        const pad = target === null ? controller.mapping.TOP_CONTROLS.PLAY_STOP : controller.mapping.INSTRUMENTS[target];
+        controller.handleMidiMessage([status, pad, 127]);
+        assert.equal(controller.deleteArmed, false);
+        t.mock.timers.tick(500); // target hold must not STOP
+        controller.handleMidiMessage([status, pad, 0]); // release must not PAUSE/select
+        const expected = structuredClone(before);
+        if (target === null) expected.motif.forEach(row => row.fill(false));
+        else expected.motif[target].fill(false);
+        assert.deepEqual(structuredClone(state), expected);
+        assert.equal(clock.transportRevision, revision);
+        assert.equal(controller.playStopTimer, null);
+        controller.resetInputState();
+    }
+});
+
+test("event deletion retains scheduled Note Offs and suppresses subsequent Note Ons", async () => {
+    const { state, actions, controller } = setup();
+    state.motif[12].fill(true);
+    const app = await source("app.js");
+    const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    const events = [], pending = [];
+    const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${dispatch}; return triggerMotifStep;`)(state,
+        { options: [{ textContent: "Hardware" }], selectedIndex: 0 },
+        { send: (output, data) => events.push([output, data]), findOutput: () => ({}) },
+        { pulseInstrument() {} }, fn => pending.push(fn));
+    actions.startPlayback(); trigger(0);
+    const ons = structuredClone(events);
+    controller.handleMidiMessage([0x90, controller.mapping.VALUE_CONTROLS.DELETE, 127]);
+    controller.handleMidiMessage([0x90, controller.mapping.VALUE_CONTROLS.DELETE, 0]);
+    controller.handleMidiMessage([0x90, controller.mapping.INSTRUMENTS[12], 127]);
+    trigger(1);
+    assert.deepEqual(events, ons);
+    state.padConfiguration.voices[12].note = 99;
+    pending.forEach(fn => fn());
+    assert.deepEqual(events.slice(ons.length), ons.map(([output, [status, note]]) => [output, [status, note, 0]]));
+    for (const invalid of [-1, 16, 1.5, "0"]) assert.equal(actions.clearMotifEvents(invalid), false);
     controller.resetInputState();
 });

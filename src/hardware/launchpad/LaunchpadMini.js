@@ -46,6 +46,10 @@ export class LaunchpadMini {
         this.colors = LaunchpadColors;
         this.layout = GenesisLayout;
 
+        this.deleteArmed = false;
+        this.deleteBlinkTimer = null;
+        this.deleteBlinkGeneration = 0;
+        this.deleteConsumedInputs = new Set();
         this.shiftPressed = false;
         this.previousPressed = false;
         this.nextPressed = false;
@@ -85,6 +89,8 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.setDeleteArmed(false);
+        this.deleteConsumedInputs.clear();
         this.cancelInstrumentPulses();
         this.cancelTransportPulse();
         clearTimeout(this.playStopTimer);
@@ -763,8 +769,35 @@ export class LaunchpadMini {
         return true;
     }
 
+    setDeleteArmed(armed) {
+        clearTimeout(this.deleteBlinkTimer);
+        this.deleteBlinkTimer = null;
+        const generation = ++this.deleteBlinkGeneration;
+        this.deleteArmed = armed;
+        let lit = true;
+        const draw = () => {
+            if (generation !== this.deleteBlinkGeneration) return;
+            // Copy DELETE alone to both buffers; do not swap the musical surface.
+            const color = armed && lit ? this.colors.RED : this.colors.OFF;
+            this.midiManager.send(this.deviceName,
+                [0x90, this.mapping.VALUE_CONTROLS.DELETE, (color & 0x33) | 0x04]);
+            if (armed) {
+                lit = !lit;
+                this.deleteBlinkTimer = setTimeout(draw, 160);
+            }
+        };
+        draw();
+    }
+
     handleMidiMessage(data) {
-        const [status, number, value] = data;
+        const [rawStatus, number, rawValue] = data;
+        const status = rawStatus === 0x80 ? 0x90 : rawStatus;
+        const value = rawStatus === 0x80 ? 0 : rawValue;
+        const inputKey = status + ":" + number;
+        if (this.deleteConsumedInputs.has(inputKey)) {
+            if (value === 0) this.deleteConsumedInputs.delete(inputKey);
+            return;
+        }
 
         const controlType = this.getControlType(status, number);
         const controlPosition = this.getControlPosition(
@@ -776,6 +809,26 @@ export class LaunchpadMini {
             status,
             number
         );
+        if (controlName === "DELETE") {
+            if (value > 0) {
+                this.deleteConsumedInputs.add(inputKey);
+                if (this.deleteArmed || this.state.currentTimeline === "MOTIF") {
+                    this.setDeleteArmed(!this.deleteArmed);
+                }
+            }
+            return;
+        }
+        if (this.deleteArmed && value > 0) {
+            this.deleteConsumedInputs.add(inputKey);
+            const valid = controlType === "INSTRUMENT" || controlName === "PLAY_STOP";
+            if (valid && this.actions.clearMotifEvents(controlType === "INSTRUMENT" ? controlPosition : null)) {
+                this.setDeleteArmed(false);
+                this.drawMotif();
+                this.drawPlayhead();
+                this.swapBuffers();
+            }
+            return;
+        }
         if (controlName === "SHIFT") {
             this.shiftPressed = value > 0;
 
