@@ -227,6 +227,29 @@ export class LiRythmeActions {
     stopClock() {
         this.clock.stop();
     }
+    captureMusicalCopy(kind, voiceId) {
+        if (this.state.currentTimeline !== "MOTIF") return null;
+        if (kind === "MOTIF") {
+            return { kind, events: this.state.motif.map(row => row.slice()),
+                voiceLengths: this.state.voiceLengths.slice(), motifLength: this.state.motifLength };
+        }
+        if (kind !== "VOICE" || !Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return null;
+        return { kind, events: this.state.motif[voiceId].slice(), length: this.state.voiceLengths[voiceId] };
+    }
+
+    applyVoiceCopy(copy, target) {
+        if (this.state.currentTimeline !== "MOTIF" || copy?.kind !== "VOICE" ||
+            !Number.isInteger(target) || target < 0 || target >= 16 ||
+            !Array.isArray(copy.events) || copy.events.length !== 32 ||
+            !copy.events.every(event => typeof event === "boolean") ||
+            !(copy.length === null || Number.isInteger(copy.length) && copy.length >= 1 && copy.length <= 32)) return false;
+        // COPY preserves live phase for either clock source, using the existing transition.
+        this.state.setTargetLength(copy.length, { target, defer: this.state.transportState === "PLAY" });
+        this.state.motif[target] = copy.events.slice();
+        // Scheduled Note Offs remain owned by the existing dispatch callbacks.
+        return true;
+    }
+
     clearMotifEvents(voiceId = null) {
         if (this.state.currentTimeline !== "MOTIF") return false;
         if (voiceId !== null && (!Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16)) return false;

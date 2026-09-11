@@ -627,3 +627,104 @@ test("event deletion retains scheduled Note Offs and suppresses subsequent Note 
     for (const invalid of [-1, 16, 1.5, "0"]) assert.equal(actions.clearMotifEvents(invalid), false);
     controller.resetInputState();
 });
+
+test("COPY stages, cancellation, invalid targets, SHIFT reservation and DELETE exclusion", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, controller } = setup();
+    const events = [];
+    controller.midiManager.send = (_, data) => events.push(data);
+    const press = (status, pad) => { controller.handleMidiMessage([status, pad, 127]); controller.handleMidiMessage([status, pad, 0]); };
+    const copy = () => press(0x90, controller.mapping.VALUE_CONTROLS.COPY);
+    const before = structuredClone(state);
+    copy(); assert.equal(controller.copyStage, "SOURCE");
+    assert.equal(events.at(-1)[2], (controller.colors.YELLOW & 0x33) | 4);
+    t.mock.timers.tick(160); assert.equal(events.at(-1)[2], (controller.colors.OFF & 0x33) | 4);
+    copy(); assert.equal(controller.copyStage, null);
+    copy(); press(0x90, controller.mapping.INSTRUMENTS[0]);
+    assert.equal(controller.copyStage, "TARGET");
+    assert.equal(controller.copyTimer, null);
+    assert.equal(events.at(-1)[2], (controller.colors.YELLOW & 0x33) | 4);
+    press(0xB0, controller.mapping.TOP_CONTROLS.PLAY_STOP);
+    press(0x90, controller.mapping.MOTIF[0]);
+    assert.equal(controller.copyStage, "TARGET");
+    copy(); assert.equal(controller.copyStage, null);
+    t.mock.timers.tick(500);
+    assert.deepEqual(structuredClone(state), before);
+    controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 127]);
+    copy(); assert.equal(controller.copyStage, null);
+    controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 0]);
+    copy(); press(0x90, controller.mapping.VALUE_CONTROLS.DELETE);
+    assert.equal(controller.copyStage, null); assert.equal(controller.deleteArmed, true);
+    copy(); assert.equal(controller.deleteArmed, false); assert.equal(controller.copyStage, "SOURCE");
+    controller.resetInputState(); assert.equal(controller.copyStage, null);
+    state.currentTimeline = "MODULATION"; copy(); assert.equal(controller.copyStage, null);
+});
+
+test("COPY Voice snapshots events and explicit/null geometry without identity or source mutations", () => {
+    for (const sourceLength of [7, null, 32]) {
+        const { state, actions, controller, length } = setup();
+        length(0, sourceLength); length(1, 3); length(null, 16);
+        state.motif[0][0] = true; state.motif[0][31] = true; state.motif[1].fill(true);
+        const before = structuredClone(state);
+        const press = pad => { controller.handleMidiMessage([0x90, pad, 127]); controller.handleMidiMessage([0x90, pad, 0]); };
+        press(controller.mapping.VALUE_CONTROLS.COPY); press(controller.mapping.INSTRUMENTS[0]);
+        press(controller.mapping.INSTRUMENTS[1]);
+        const expected = structuredClone(before);
+        expected.voiceLengths[1] = sourceLength; expected.motif[1] = before.motif[0].slice();
+        assert.deepEqual(structuredClone(state), expected);
+        assert.equal(controller.copyStage, null);
+        assert.notEqual(state.motif[0], state.motif[1]);
+        const snapshot = actions.captureMusicalCopy("VOICE", 0);
+        state.motif[0][0] = false;
+        actions.applyVoiceCopy(snapshot, 1); assert.equal(state.motif[1][0], true);
+        const motif = actions.captureMusicalCopy("MOTIF");
+        assert.deepEqual(motif, { kind: "MOTIF", events: state.motif, voiceLengths: state.voiceLengths, motifLength: 16 });
+        assert.equal(actions.applyVoiceCopy(motif, 1), false);
+        for (const invalid of [-1, 16, null, "1"]) assert.equal(actions.applyVoiceCopy(snapshot, invalid), false);
+        controller.resetInputState();
+    }
+});
+
+test("COPY live Leader/Follower reuses local/global boundaries without resetting phase", () => {
+    for (const mode of ["INTERNAL", "MIDI"]) for (const sourceLength of [7, null]) {
+        const { state, clock, actions, length } = setup();
+        length(0, sourceLength); length(1, 4); length(null, 16);
+        state.motif[0][0] = true;
+        clock.setSource(mode); actions.startPlayback();
+        let sequence = 0;
+        const tick = () => {
+            if (mode === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
+            else assert.equal(clock.receiveInternalClockStep({ sequence: ++sequence, transportRevision: clock.transportRevision }).accepted, true);
+        };
+        tick(); tick();
+        const revision = clock.transportRevision, config = structuredClone(state.padConfiguration);
+        actions.applyVoiceCopy(actions.captureMusicalCopy("VOICE", 0), 1);
+        assert.equal(state.playheadPosition, 2); assert.equal(state.getVoiceStep(1), 2);
+        assert.equal(state.transportState, "PLAY"); assert.equal(clock.transportRevision, revision);
+        assert.deepEqual(structuredClone(state.padConfiguration), config);
+        tick(); assert.equal(state.getVoiceStep(1), 3);
+        tick(); assert.equal(state.getVoiceStep(1), 0);
+        tick(); assert.equal(state.getVoiceStep(1), 1);
+        for (let i = 6; i <= 16; i++) tick();
+        assert.equal(state.playheadPosition, 0); assert.equal(state.liveLengthCycle, null);
+        assert.equal(state.getVoiceLength(1), sourceLength ?? 32);
+    }
+});
+
+test("COPY retains captured Note Offs for active destination notes", async () => {
+    const { state, actions } = setup();
+    state.motif[12][0] = true;
+    const app = await source("app.js");
+    const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    const events = [], pending = [];
+    const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${dispatch}; return triggerMotifStep;`)(state,
+        { options: [{ textContent: "Hardware" }], selectedIndex: 0 },
+        { send: (output, data) => events.push([output, data]), findOutput: () => ({}) },
+        { pulseInstrument() {} }, fn => pending.push(fn));
+    actions.startPlayback(); trigger(0);
+    const ons = structuredClone(events);
+    actions.applyVoiceCopy(actions.captureMusicalCopy("VOICE", 0), 12);
+    trigger(0); assert.deepEqual(events, ons);
+    pending.forEach(fn => fn());
+    assert.deepEqual(events.slice(ons.length), ons.map(([output, [status, note]]) => [output, [status, note, 0]]));
+});

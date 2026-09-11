@@ -46,6 +46,10 @@ export class LaunchpadMini {
         this.colors = LaunchpadColors;
         this.layout = GenesisLayout;
 
+        this.copyStage = null;
+        this.copySource = null;
+        this.copyTimer = null;
+        this.copyGeneration = 0;
         this.deleteArmed = false;
         this.deleteBlinkTimer = null;
         this.deleteBlinkGeneration = 0;
@@ -89,6 +93,7 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.setCopyStage(null);
         this.setDeleteArmed(false);
         this.deleteConsumedInputs.clear();
         this.cancelInstrumentPulses();
@@ -769,6 +774,26 @@ export class LaunchpadMini {
         return true;
     }
 
+    setCopyStage(stage, source = null) {
+        clearTimeout(this.copyTimer);
+        this.copyTimer = null;
+        const generation = ++this.copyGeneration;
+        this.copyStage = stage;
+        this.copySource = source;
+        let lit = true;
+        const draw = () => {
+            if (generation !== this.copyGeneration) return;
+            const color = stage && lit ? this.colors.YELLOW : this.colors.OFF;
+            this.midiManager.send(this.deviceName,
+                [0x90, this.mapping.VALUE_CONTROLS.COPY, (color & 0x33) | 0x04]);
+            if (stage === "SOURCE") {
+                lit = !lit;
+                this.copyTimer = setTimeout(draw, 160);
+            }
+        };
+        draw();
+    }
+
     setDeleteArmed(armed) {
         clearTimeout(this.deleteBlinkTimer);
         this.deleteBlinkTimer = null;
@@ -809,11 +834,37 @@ export class LaunchpadMini {
             status,
             number
         );
+        if (controlName === "COPY") {
+            if (value > 0) {
+                this.deleteConsumedInputs.add(inputKey);
+                if (this.copyStage) this.setCopyStage(null);
+                else if (!this.shiftPressed && this.state.currentTimeline === "MOTIF") {
+                    this.setDeleteArmed(false);
+                    this.setCopyStage("SOURCE");
+                }
+            }
+            return;
+        }
         if (controlName === "DELETE") {
             if (value > 0) {
                 this.deleteConsumedInputs.add(inputKey);
                 if (this.deleteArmed || this.state.currentTimeline === "MOTIF") {
+                    this.setCopyStage(null);
                     this.setDeleteArmed(!this.deleteArmed);
+                }
+            }
+            return;
+        }
+        if (this.copyStage && value > 0) {
+            this.deleteConsumedInputs.add(inputKey);
+            if (controlType === "INSTRUMENT" && this.state.currentTimeline === "MOTIF") {
+                if (this.copyStage === "SOURCE") {
+                    this.setCopyStage("TARGET", this.actions.captureMusicalCopy("VOICE", controlPosition));
+                } else if (this.actions.applyVoiceCopy(this.copySource, controlPosition)) {
+                    this.setCopyStage(null);
+                    this.drawMotif();
+                    this.drawPlayhead();
+                    this.swapBuffers();
                 }
             }
             return;

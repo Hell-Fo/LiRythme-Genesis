@@ -90,11 +90,11 @@ export class LiRythmeState {
         }
     }
 
-    setTargetLength(length, { defer = false } = {}) {
+    setTargetLength(length, { defer = false, target = this.selectedInstrument } = {}) {
         if (length !== null && (!Number.isInteger(length) || length < 1 || length > 32)) {
             return false;
         }
-        const id = this.selectedInstrument;
+        const id = target;
         if (id !== null && (!Number.isInteger(id) || id < 0 || id >= 16)) return false;
         const previous = id === null ? this.motifLength : this.voiceLengths[id];
         if (previous === length) return false;
