@@ -67,6 +67,7 @@ export class LiRythmeActions {
 
         this.stopClock();
 
+        this.state.liveLengthCycle = null;
         this.state.playheadPosition = 0;
         this.clock.resetMidiPhase();
         this.state.transportState = "PLAY";
@@ -127,6 +128,7 @@ export class LiRythmeActions {
 
         this.state.transportState = "STOP";
         this.state.lockMode = false;
+        this.state.liveLengthCycle = null;
         this.state.playheadPosition = 0;
         this.clock.resetMidiPhase();
         this.notifyTransportTransition(previousState, origin);
@@ -226,18 +228,20 @@ export class LiRythmeActions {
         this.clock.stop();
     }
     setSelectedLength(length) {
-        return this.state.setTargetLength(length);
+        return this.state.setTargetLength(length, {
+            defer: this.clock.source === "INTERNAL" && this.state.transportState === "PLAY"
+        });
     }
 
     clearSelectedLength() {
-        return this.state.setTargetLength(null);
+        return this.setSelectedLength(null);
     }
 
     toggleSelectedLength(length) {
         if (!Number.isInteger(length) || length < 1 || length > 32) return false;
         const id = this.state.selectedInstrument;
         const current = id === null ? this.state.motifLength : this.state.voiceLengths[id];
-        return this.state.setTargetLength(current === length ? null : length);
+        return this.setSelectedLength(current === length ? null : length);
     }
 
     selectMotifTimeline() {
@@ -268,6 +272,7 @@ export class LiRythmeActions {
         );
     }
     previousStep({ preview = false } = {}) {
+        this.state.liveLengthCycle = null;
         this.state.playheadPosition =
             (this.state.playheadPosition + this.state.getMotifDuration() - 1) % this.state.getMotifDuration();
 
@@ -289,8 +294,7 @@ export class LiRythmeActions {
     }
 
     nextStep({ preview = false } = {}) {
-        this.state.playheadPosition =
-            (this.state.playheadPosition + 1) % this.state.getMotifDuration();
+        this.state.advanceLiveLengthCycle();
 
         console.log(
             "PLAYHEAD:",

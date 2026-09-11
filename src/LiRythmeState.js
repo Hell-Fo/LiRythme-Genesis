@@ -42,6 +42,7 @@ export class LiRythmeState {
         this.motif = Array.from({ length: 16 }, () => new Array(32).fill(false));
         this.motifLength = null;
         this.voiceLengths = new Array(16).fill(null);
+        this.liveLengthCycle = null;
     }
 
     getVoiceLength(voiceId) {
@@ -61,10 +62,35 @@ export class LiRythmeState {
     }
 
     getVoiceStep(voiceId, position = this.playheadPosition) {
+        if (this.liveLengthCycle && position === this.playheadPosition) {
+            return this.liveLengthCycle.steps[voiceId];
+        }
         return position % this.getVoiceLength(voiceId);
     }
 
-    setTargetLength(length) {
+    advanceLiveLengthCycle() {
+        const cycle = this.liveLengthCycle;
+        if (!cycle) {
+            this.playheadPosition = (this.playheadPosition + 1) % this.getMotifDuration();
+            return;
+        }
+        this.playheadPosition++;
+        if (this.playheadPosition >= cycle.duration) {
+            this.playheadPosition = 0;
+            // The global boundary still resets incomplete local cycles.
+            this.liveLengthCycle = null;
+            return;
+        }
+        for (let id = 0; id < 16; id++) {
+            cycle.steps[id]++;
+            if (cycle.steps[id] >= cycle.lengths[id]) {
+                cycle.steps[id] = 0;
+                cycle.lengths[id] = this.getVoiceLength(id);
+            }
+        }
+    }
+
+    setTargetLength(length, { defer = false } = {}) {
         if (length !== null && (!Number.isInteger(length) || length < 1 || length > 32)) {
             return false;
         }
@@ -72,10 +98,19 @@ export class LiRythmeState {
         if (id !== null && (!Number.isInteger(id) || id < 0 || id >= 16)) return false;
         const previous = id === null ? this.motifLength : this.voiceLengths[id];
         if (previous === length) return false;
+        if (defer && !this.liveLengthCycle) {
+            this.liveLengthCycle = {
+                duration: this.getMotifDuration(),
+                lengths: Array.from({ length: 16 }, (_, voice) => this.getVoiceLength(voice)),
+                steps: Array.from({ length: 16 }, (_, voice) => this.getVoiceStep(voice))
+            };
+        }
         if (id === null) this.motifLength = length;
         else this.voiceLengths[id] = length;
-        // Atomic phase reset; note data and pending Note Offs remain untouched.
-        this.playheadPosition = 0;
+        if (!defer) {
+            this.liveLengthCycle = null;
+            this.playheadPosition = 0;
+        }
         return true;
     }
 

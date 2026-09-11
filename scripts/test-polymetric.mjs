@@ -207,8 +207,9 @@ test("all local phases reset at natural or explicit boundary, including free Voi
     }
 });
 
-test("length edits reset atomically during PLAY, idempotent sets do not; PAUSE and STOP remain coherent", () => {
+test("FOLLOWER length edits retain immediate reset; PAUSE and STOP remain coherent", () => {
     const { state, clock, actions, length } = setup();
+    clock.setSource("MIDI");
     actions.startPlayback();
     clock.advanceStepPipeline();
     length(12, 7);
@@ -306,4 +307,233 @@ test("physical playhead remains within 32 pads when resolution exceeds 32", () =
     controller.drawClockStep(controller.lastPlayheadStep, 0);
     assert.equal(controller.lastPlayheadStep, 0);
     assert.ok(leds.every(([note]) => Number.isInteger(note)));
+});
+
+test("LEADER Voice create/move/remove waits for local wrap, Motif duration waits for global wrap", () => {
+    for (const [before, after] of [[null, 7], [7, 3], [3, 11], [7, null], [32, 1]]) {
+        const { state, clock, actions, length } = setup();
+        length(0, before); length(null, 32);
+        actions.startPlayback();
+        const tick = () => {
+            const sequence = (clock.lastAcceptedNativeStepSequence ?? 0) + 1;
+            assert.equal(clock.receiveInternalClockStep({ sequence, transportRevision: clock.transportRevision }).accepted, true);
+        };
+        tick(); tick();
+        const revision = clock.transportRevision;
+        length(0, after);
+        assert.equal(state.playheadPosition, 2);
+        assert.equal(state.getVoiceStep(0), 2);
+        assert.equal(clock.transportRevision, revision);
+        const oldLength = before ?? 32;
+        for (let pos = 3; pos <= 32; pos++) {
+            tick();
+            assert.equal(state.playheadPosition, pos % 32);
+            const expected = pos === 32 ? 0 : pos < oldLength ? pos : (pos - oldLength) % (after ?? 32);
+            assert.equal(state.getVoiceStep(0), expected);
+            assert.equal(state.getVoiceStep(1), pos % 32);
+        }
+        assert.equal(state.liveLengthCycle, null);
+    }
+});
+
+test("LEADER Motif create/move/remove and implicit LCM finish the old global cycle", () => {
+    for (const [before, after] of [[null, 3], [8, 3], [3, 8], [8, null]]) {
+        const { state, clock, actions, length } = setup();
+        length(0, 5); length(null, before);
+        const duration = state.getMotifDuration();
+        actions.startPlayback(); clock.advanceStepPipeline();
+        length(null, after);
+        assert.equal(state.playheadPosition, 1);
+        for (let pos = 2; pos <= duration; pos++) {
+            clock.advanceStepPipeline();
+            assert.equal(state.playheadPosition, pos % duration);
+        }
+        const next = after ?? 5;
+        for (let pos = 1; pos <= next; pos++) {
+            clock.advanceStepPipeline();
+            assert.equal(state.playheadPosition, pos % next);
+        }
+    }
+    const { state, clock, actions, length } = setup();
+    length(0, 4); length(1, 6);
+    actions.startPlayback(); clock.advanceStepPipeline();
+    length(0, 5);
+    for (let pos = 2; pos <= 12; pos++) {
+        clock.advanceStepPipeline();
+        assert.equal(state.playheadPosition, pos % 12);
+    }
+    for (let pos = 1; pos <= 30; pos++) {
+        clock.advanceStepPipeline();
+        assert.equal(state.playheadPosition, pos % 30);
+    }
+});
+
+test("LEADER pending edits coalesce, survive PAUSE, and clear on START/STOP", () => {
+    const { state, clock, actions, length } = setup();
+    length(0, 8); length(null, 16);
+    actions.startPlayback(); clock.advanceStepPipeline();
+    length(0, 3); length(0, 5); length(null, 7);
+    assert.equal(length(0, 5), false);
+    actions.pausePlayback();
+    const snapshot = structuredClone(state.liveLengthCycle);
+    actions.continuePlayback();
+    assert.deepEqual(state.liveLengthCycle, snapshot);
+    for (let pos = 2; pos <= 8; pos++) clock.advanceStepPipeline();
+    assert.equal(state.getVoiceStep(0), 0);
+    assert.equal(state.liveLengthCycle.lengths[0], 5);
+    actions.stop();
+    assert.equal(state.liveLengthCycle, null);
+    assert.equal(state.playheadPosition, 0);
+    actions.startPlayback(); clock.advanceStepPipeline(); length(0, 2);
+    actions.startPlayback();
+    assert.equal(state.liveLengthCycle, null);
+    assert.equal(state.getVoiceStep(0), 0);
+});
+
+test("live Note On indices and captured Note Offs survive Leader/Follower length edits", async () => {
+    const app = await source("app.js");
+    const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    for (const mode of ["INTERNAL", "MIDI"]) {
+        const { state, clock, actions, length } = setup();
+        length(12, 4); length(null, 16);
+        state.motif[12].fill(true);
+        const events = [], pending = [], indices = [];
+        const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${dispatch}; return triggerMotifStep;`)(state,
+            { options: [{ textContent: "Hardware" }], selectedIndex: 0 },
+            { send: (output, data) => events.push([output, data]), findOutput: () => ({}) },
+            { pulseInstrument() {} }, fn => pending.push(fn));
+        clock.setSource(mode);
+        clock.setClockStepHandler(() => { indices.push(state.getVoiceStep(12)); trigger(state.playheadPosition); });
+        actions.startPlayback();
+        let sequence = 0;
+        const tick = () => {
+            if (mode === "MIDI") for (let i = 0; i < 6; i++) clock.receiveMidiClockPulse();
+            else assert.equal(clock.receiveInternalClockStep({ sequence: ++sequence, transportRevision: clock.transportRevision }).accepted, true);
+        };
+        tick(); length(12, 3); tick(); tick(); tick(); tick();
+        assert.deepEqual(indices, mode === "INTERNAL" ? [1, 2, 3, 0, 1] : [1, 1, 2, 0, 1]);
+        length(12, null); length(null, 2);
+        tick();
+        actions.pausePlayback(); actions.continuePlayback(); tick(); actions.stop();
+        const ons = events.slice();
+        state.padConfiguration.voices[12].note = 99;
+        pending.forEach(fn => fn());
+        assert.equal(ons.length, 7);
+        assert.deepEqual(events.slice(ons.length), ons.map(([output, [status, note]]) => [output, [status, note, 0]]));
+    }
+});
+
+test("FOLLOWER create/move/remove retains pulse phase and immediate pattern reset", () => {
+    for (const target of [0, null]) for (const [before, after] of [[null, 7], [7, 3], [3, 11], [7, null]]) {
+        const { state, clock, actions, length } = setup();
+        length(target, before); clock.setSource("MIDI"); actions.startPlayback();
+        for (let i = 0; i < 9; i++) clock.receiveMidiClockPulse();
+        const revision = clock.transportRevision;
+        length(target, after);
+        assert.equal(state.playheadPosition, 0);
+        assert.equal(state.liveLengthCycle, null);
+        assert.equal(clock.midiPulseCount, 3);
+        assert.equal(clock.transportRevision, revision);
+        for (let i = 0; i < 3; i++) clock.receiveMidiClockPulse();
+        assert.equal(state.playheadPosition, 1);
+    }
+});
+
+test("PLAY cycle feedback follows real Leader/Follower wraps with explicit priority and fallback", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const mode of ["INTERNAL", "MIDI"]) {
+        for (const [motif, voices, duration, colorName] of [[8, [], 8, "YELLOW"], [null, [5, 7], 35, "RED"], [16, [5, 7], 16, "YELLOW"], [null, [], 32, null], [1, [], 1, "YELLOW"]]) {
+            const { state, clock, actions, controller, length } = setup();
+            voices.forEach((n, id) => length(id, n)); length(null, motif);
+            const colors = [];
+            controller.setTransportPulseLed = color => colors.push(color);
+            // Execute the actual app step wiring, including musical dispatch order.
+            const app = await source("app.js");
+            const wiring = app.slice(app.indexOf("actions.setClockStepHandler(() => {"), app.indexOf("// TEST DRUMBRUTE"));
+            new Function("actions", "state", "launchpad", "triggerMotifStep", wiring)(actions, state, controller, () => {});
+            clock.setSource(mode); actions.startPlayback();
+            assert.deepEqual(colors, []);
+            for (let tick = 1; tick <= duration * 2; tick++) {
+                colors.length = 0;
+                if (mode === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
+                else assert.equal(clock.receiveInternalClockStep({ sequence: tick, transportRevision: clock.transportRevision }).accepted, true);
+                assert.equal(state.playheadPosition, tick % duration);
+                const special = colors.filter(c => c === controller.colors.YELLOW || c === controller.colors.RED);
+                assert.deepEqual(special, tick % duration === 0 && colorName ? [controller.colors[colorName]] : []);
+                if (tick % duration === 0 && colorName) {
+                    assert.equal(colors.at(-1), controller.colors[colorName]); // beat must not overwrite cycle
+                    controller.setTopLed = (_, color) => colors.push(color);
+                    controller.drawTransport();
+                    assert.equal(colors.at(-1), controller.colors[colorName]);
+                }
+                t.mock.timers.tick(80);
+                if (colors.length) assert.equal(colors.at(-1), controller.colors.GREEN);
+            }
+            controller.resetInputState();
+        }
+    }
+});
+
+test("PLAY pulse ownership prevents stale beat/cycle timers overwriting transport or newer pulses", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller, length } = setup();
+    const colors = [];
+    controller.setTransportPulseLed = color => colors.push(color);
+    length(null, 8); actions.startPlayback();
+    controller.pulseTransport(); t.mock.timers.tick(40);
+    controller.pulseMotifCycle();
+    t.mock.timers.tick(40);
+    assert.equal(colors.at(-1), controller.colors.YELLOW);
+    controller.pulseTransport(); // lower priority cannot replace cycle
+    t.mock.timers.tick(40);
+    assert.equal(colors.at(-1), controller.colors.GREEN);
+    controller.pulseTransport();
+    assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
+    t.mock.timers.tick(80);
+    assert.equal(colors.at(-1), controller.colors.GREEN);
+    for (const transition of [() => actions.pausePlayback(), () => actions.stop()]) {
+        actions.startPlayback(); controller.pulseMotifCycle();
+        transition(); controller.drawTransport();
+        assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
+        const count = colors.length;
+        t.mock.timers.tick(80);
+        assert.equal(colors.length, count);
+    }
+    actions.startPlayback(); controller.pulseMotifCycle(); t.mock.timers.tick(40);
+    actions.stop(); actions.startPlayback(); controller.pulseTransport();
+    t.mock.timers.tick(40);
+    assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
+    t.mock.timers.tick(40);
+    assert.equal(colors.at(-1), controller.colors.GREEN);
+    state.currentTimeline = "MODULATION";
+    const count = colors.length;
+    controller.pulseMotifCycle();
+    assert.equal(colors.length, count);
+});
+
+test("cycle feedback observes the validated live boundary without changing Leader phases", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, clock, actions, controller, length } = setup();
+    length(0, 5); length(1, 7);
+    actions.startPlayback();
+    const colors = [];
+    controller.setTransportPulseLed = color => colors.push(color);
+    clock.setClockStepHandler(() => {
+        const before = structuredClone(state);
+        controller.pulseMotifCycle();
+        assert.deepEqual(structuredClone(state), before);
+    });
+    for (let tick = 1; tick <= 35; tick++) {
+        if (tick === 4) length(null, 16);
+        clock.advanceStepPipeline();
+        assert.equal(state.playheadPosition, tick % 35);
+        assert.equal(state.getVoiceStep(0), (tick % 35) % 5);
+        assert.equal(state.getVoiceStep(1), (tick % 35) % 7);
+        assert.deepEqual(colors, tick === 35 ? [controller.colors.YELLOW] : []);
+    }
+    t.mock.timers.tick(80);
+    colors.length = 0;
+    for (let tick = 1; tick <= 16; tick++) clock.advanceStepPipeline();
+    assert.deepEqual(colors, [controller.colors.YELLOW]);
+    controller.resetInputState();
 });

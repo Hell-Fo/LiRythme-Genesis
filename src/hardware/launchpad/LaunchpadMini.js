@@ -54,6 +54,8 @@ export class LaunchpadMini {
         this.playStopTimer = null;
         this.transportPulseTimer = null;
         this.transportPulseGeneration = 0;
+        this.transportPulseColor = null;
+        this.transportPulsePriority = 0;
         this.transportPulseRevision = null;
         this.instrumentPulses = new Map();
         this.playStopLongPressTriggered = false;
@@ -430,7 +432,7 @@ export class LaunchpadMini {
                 this.transportPulseTimer !== null &&
                     this.transportPulseRevision ===
                         this.actions.clock.transportRevision
-                    ? this.colors.DIM_GREEN
+                    ? this.transportPulseColor
                     : this.colors.GREEN
             );
         } else {
@@ -462,6 +464,8 @@ export class LaunchpadMini {
         this.transportPulseTimer = null;
         this.transportPulseRevision = null;
         this.transportPulseGeneration += 1;
+        this.transportPulseColor = null;
+        this.transportPulsePriority = 0;
     }
 
     setTransportPulseLed(color) {
@@ -472,7 +476,21 @@ export class LaunchpadMini {
         );
     }
 
-    pulseTransport() {
+    pulseMotifCycle() {
+        // Called only after a musical clock advancement, never by UI redraws.
+        if (this.state.currentTimeline !== "MOTIF" || this.state.playheadPosition !== 0) return;
+        if (this.state.motifLength !== null) {
+            this.pulseTransport(this.colors.YELLOW, 1);
+        } else if (this.state.voiceLengths.some(length => length !== null)) {
+            this.pulseTransport(this.colors.RED, 1);
+        }
+    }
+
+    pulseTransport(color = this.colors.DIM_GREEN, priority = 0) {
+        // Cycle feedback wins over the coincident beat; one timer owns the LED.
+        if (this.state.transportState === "PLAY" &&
+            this.transportPulseRevision === this.actions.clock.transportRevision &&
+            this.transportPulseTimer !== null && this.transportPulsePriority > priority) return;
         this.cancelTransportPulse();
 
         if (this.state.transportState !== "PLAY") {
@@ -482,7 +500,9 @@ export class LaunchpadMini {
         const generation = this.transportPulseGeneration;
         const revision = this.actions.clock.transportRevision;
         this.transportPulseRevision = revision;
-        this.setTransportPulseLed(this.colors.DIM_GREEN);
+        this.transportPulseColor = color;
+        this.transportPulsePriority = priority;
+        this.setTransportPulseLed(color);
 
         this.transportPulseTimer = setTimeout(() => {
             if (generation !== this.transportPulseGeneration) {

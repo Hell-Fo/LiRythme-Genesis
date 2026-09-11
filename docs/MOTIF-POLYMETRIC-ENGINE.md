@@ -37,10 +37,15 @@ remettent à zéro ; PAUSE/CONTINUE conservent la position. La convention exista
 est conservée : le callback avance puis émet. START n’émet pas de note immédiate ;
 le premier callback avance de l’index 0 à 1 (ou reste 0 pour une durée de 1).
 
-Changer effectivement une longueur ou l’effacer remet immédiatement toutes les
-phases à zéro, sans note immédiate, sans changer le transport ni redémarrer la clock.
-Le prochain tick suit le pipeline habituel. Réappliquer la même valeur ne reset pas.
-Les cellules au-delà d’un cycle raccourci restent intactes pour une future extension.
+En Leader (INTERNAL), une ?dition pendant PLAY conserve la phase courante.
+La Voice adopte sa nouvelle longueur au prochain retour local ? z?ro ; la dur?e
+Motif (explicite ou PPCM) attend le retour global ? z?ro du cycle courant.
+Ce reset global reste prioritaire sur les cycles locaux incomplets.
+Les valeurs et marqueurs ?dit?s sont visibles imm?diatement. PAUSE/CONTINUE
+conserve la transition ; START/STOP l'efface et utilise les valeurs ?dit?es.
+Hors PLAY et en FOLLOWER (MIDI), le reset imm?diat reste inchang?.
+R?appliquer la m?me valeur ne change rien. Aucun correctif MIDI ajout?.
+Les cellules au-del?à d’un cycle raccourci restent intactes pour une future extension.
 
 Les Note Off existants à 50 ms capturent sortie/channel/note et ne sont pas annulés
 par les resets. Les tests vérifient leur émission après reset naturel, changement
@@ -87,3 +92,7 @@ Voices libres, resets, transport INTERNAL/MIDI, projection PLAY, dispatch Note O
 et limite physique des LEDs. Validation musicale/hardware confirmée par Daniel,
 incluant le toggle SHIFT + STEP, les frontières et la correction du playhead MOTIF.
 Contrôles syntaxiques et `git diff --check` réussis.
+
+## Investigation Leader apr?s 8144c86
+
+Voir [rapport](LEADER-LIVE-LENGTH-INVESTIGATION.md). Correction : 88/88 tests ; validation hardware en attente.
