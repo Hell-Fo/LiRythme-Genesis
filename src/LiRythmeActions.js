@@ -250,6 +250,21 @@ export class LiRythmeActions {
         return true;
     }
 
+    setPerformanceSelection(kind, selection, edited = false) {
+        if (!["solo", "mute"].includes(kind) || !(selection instanceof Set) ||
+            [...selection].some(id => !Number.isInteger(id) || id < 0 || id >= 16)) return false;
+        this.state[kind + "Selection"] = new Set(selection);
+        this.state[kind + "Active"] = selection.size > 0 && (edited || !this.state[kind + "Active"]);
+        return true;
+    }
+
+    clearPerformanceSelection(kind) {
+        if (!["solo", "mute"].includes(kind)) return false;
+        this.state[kind + "Selection"].clear();
+        this.state[kind + "Active"] = false;
+        return true;
+    }
+
     clearMotifEvents(voiceId = null) {
         if (this.state.currentTimeline !== "MOTIF") return false;
         if (voiceId !== null && (!Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16)) return false;

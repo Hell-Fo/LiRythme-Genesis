@@ -46,6 +46,8 @@ export class LaunchpadMini {
         this.colors = LaunchpadColors;
         this.layout = GenesisLayout;
 
+        this.performanceHolds = new Map();
+        this.performanceBlinks = new Map();
         this.copyStage = null;
         this.copySource = null;
         this.copyTimer = null;
@@ -93,6 +95,9 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.performanceHolds.clear();
+        for (const blink of this.performanceBlinks.values()) clearTimeout(blink.timer);
+        this.performanceBlinks.clear();
         this.setCopyStage(null);
         this.setDeleteArmed(false);
         this.deleteConsumedInputs.clear();
@@ -311,6 +316,8 @@ export class LaunchpadMini {
     }
 
     getInstrumentColor(i) {
+        const hold = [...this.performanceHolds.values()].at(-1);
+        if (hold) return hold.selection.has(i) ? this.colors.YELLOW : this.colors.DIM_GREEN;
         const isSelected =
             i === this.state.selectedInstrument;
 
@@ -384,6 +391,7 @@ export class LaunchpadMini {
     }
 
     pulseInstrument(position) {
+        if (this.performanceHolds.size) return;
         if (!Number.isInteger(position) || position < 0 || position >= 16 ||
             this.state.padConfiguration.voices[position]?.type !== "MIDI DRUM") {
             return;
@@ -452,22 +460,27 @@ export class LaunchpadMini {
         }
     }
     drawFilterStatus() {
-        const solo = this.mapping.TOP_CONTROLS.SOLO;
+        for (const kind of ["solo", "mute"]) this.drawPerformanceStatus(kind);
+    }
 
-        if (
-            this.filterSelectionMode ||
-            this.state.filterMode
-        ) {
-            this.setTopLed(
-                solo,
-                this.colors.GREEN
-            );
-        } else {
-            this.setTopLed(
-                solo,
-                this.colors.AMBER
-            );
-        }
+    drawPerformanceStatus(kind) {
+        const active = this.state[kind + "Active"];
+        const old = this.performanceBlinks.get(kind);
+        if (old && old.active === active) return;
+        if (old) clearTimeout(old.timer);
+        const blink = { active, timer: null, lit: true };
+        this.performanceBlinks.set(kind, blink);
+        const draw = () => {
+            if (this.performanceBlinks.get(kind) !== blink) return;
+            const normal = this.colors[this.layout.TOP_CONTROLS[kind.toUpperCase()]];
+            this.midiManager.send(this.deviceName, [0xB0, this.mapping.TOP_CONTROLS[kind.toUpperCase()],
+                ((active && !blink.lit ? this.colors.OFF : normal) & 0x33) | 4]);
+            if (active) {
+                blink.lit = !blink.lit;
+                blink.timer = setTimeout(draw, 160);
+            }
+        };
+        draw();
     }
 
     cancelTransportPulse() {
@@ -871,11 +884,47 @@ export class LaunchpadMini {
         }
         if (this.deleteArmed && value > 0) {
             this.deleteConsumedInputs.add(inputKey);
-            const valid = controlType === "INSTRUMENT" || controlName === "PLAY_STOP";
-            if (valid && this.actions.clearMotifEvents(controlType === "INSTRUMENT" ? controlPosition : null)) {
+            const performance = ["SOLO", "MUTE"].includes(controlName);
+            const valid = performance || controlType === "INSTRUMENT" || controlName === "PLAY_STOP";
+            if (valid && (performance ? this.actions.clearPerformanceSelection(controlName.toLowerCase()) : this.actions.clearMotifEvents(controlType === "INSTRUMENT" ? controlPosition : null))) {
+                if (performance) {
+                    this.performanceHolds.delete(controlName.toLowerCase());
+                    this.drawPerformanceStatus(controlName.toLowerCase());
+                }
                 this.setDeleteArmed(false);
                 this.drawMotif();
                 this.drawPlayhead();
+                this.swapBuffers();
+            }
+            return;
+        }
+        if (["SOLO", "MUTE"].includes(controlName)) {
+            const kind = controlName.toLowerCase();
+            if (value > 0) {
+                if (!this.performanceHolds.has(kind)) {
+                    this.performanceHolds.set(kind, { selection: new Set(this.state[kind + "Selection"]), edited: false });
+                    this.cancelInstrumentPulses();
+                }
+            } else {
+                const hold = this.performanceHolds.get(kind);
+                if (hold) {
+                    this.actions.setPerformanceSelection(kind, hold.selection, hold.edited);
+                    this.performanceHolds.delete(kind);
+                    this.drawPerformanceStatus(kind);
+                }
+            }
+            this.drawInstruments();
+            this.swapBuffers();
+            return;
+        }
+        if (this.performanceHolds.size && controlType === "INSTRUMENT") {
+            if (value > 0) {
+                this.deleteConsumedInputs.add(inputKey);
+                const hold = [...this.performanceHolds.values()].at(-1);
+                if (hold.selection.has(controlPosition)) hold.selection.delete(controlPosition);
+                else hold.selection.add(controlPosition);
+                hold.edited = true;
+                this.drawInstruments();
                 this.swapBuffers();
             }
             return;
@@ -1197,83 +1246,12 @@ export class LaunchpadMini {
 
             return;
         }
-        if (controlName === "SOLO") {
-            // PRESS SOLO
-            if (value > 0) {
-                if (this.shiftPressed) {
-                    this.filterWasActive =
-                        this.state.filterMode;
-
-                    // On entre dans la sélection du filtre
-                    this.filterSelectionMode = true;
-                    this.filterSelectionChanged = false;
-
-                    // Si le filtre était OFF, il devient immédiatement ON
-                    if (!this.state.filterMode) {
-                        this.actions.enterFocusMode();
-                    }
-
-                    console.log("FILTER SELECT: ON");
-
-                    this.drawInstruments();
-                    this.drawMotif();
-                    this.drawPlayhead();
-                    this.drawFilterStatus();
-                    this.swapBuffers();
-
-                    return;
-                }
-
-                console.log("SOLO PRESS");
-                return;
-            }
-
-            // RELEASE SOLO
-            if (this.filterSelectionMode) {
-                this.filterSelectionMode = false;
-
-                if (this.filterSelectionChanged) {
-                    // Focus a été modifié :
-                    // il reste actif
-                    this.actions.activateFocusMode();
-
-                } else if (this.filterWasActive) {
-                    // Focus était déjà actif :
-                    // Shift + Solo = sortie complète
-                    this.actions.exitFocusMode();
-
-                } else {
-                    // Focus venait juste d'être activé
-                    // et aucune voix n'a été touchée :
-                    // il reste actif, même vide
-                    this.actions.activateFocusMode();
-                }
-
-                this.drawInstruments();
-                this.drawMotif();
-                this.drawPlayhead();
-                this.drawFilterStatus();
-                this.swapBuffers();
-
-                return;
-            }
-
-            console.log("SOLO RELEASE");
-            return;
-        }
 
         if (value > 0) {
             if (controlType === "VALUE" && controlPosition === 0) {
                 this.actions.nextBook();
                 return;
             }
-
-            console.log(
-                "PRESS:",
-                controlName ?? controlType,
-                "position:",
-                controlPosition
-            );
         }
     }
 }

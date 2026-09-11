@@ -612,7 +612,7 @@ function triggerMotifStep(step) {
     const triggeredInstruments = [];
     for (const [voiceId, steps] of state.motif.entries()) {
         const localStep = state.getVoiceStep?.(voiceId, step) ?? step;
-        if (!steps[localStep]) {
+        if (!steps[localStep] || state.isVoiceAudible?.(voiceId) === false) {
             continue;
         }
 

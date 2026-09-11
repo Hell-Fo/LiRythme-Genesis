@@ -40,9 +40,18 @@ export class LiRythmeState {
 
         this.padConfiguration = new PadConfiguration();
         this.motif = Array.from({ length: 16 }, () => new Array(32).fill(false));
+        this.soloSelection = new Set();
+        this.muteSelection = new Set();
+        this.soloActive = false;
+        this.muteActive = false;
         this.motifLength = null;
         this.voiceLengths = new Array(16).fill(null);
         this.liveLengthCycle = null;
+    }
+
+    isVoiceAudible(voiceId) {
+        return (!this.soloActive || this.soloSelection.has(voiceId)) &&
+            (!this.muteActive || !this.muteSelection.has(voiceId));
     }
 
     getVoiceLength(voiceId) {

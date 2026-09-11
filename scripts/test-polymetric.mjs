@@ -728,3 +728,74 @@ test("COPY retains captured Note Offs for active destination notes", async () =>
     pending.forEach(fn => fn());
     assert.deepEqual(events.slice(ons.length), ons.map(([output, [status, note]]) => [output, [status, note, 0]]));
 });
+
+test("SOLO/MUTE hold selection, memory, empty selection, DELETE and independent blinking", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, controller } = setup();
+    const top = (kind, value) => controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS[kind], value]);
+    const voice = id => { const pad = controller.mapping.INSTRUMENTS[id]; controller.handleMidiMessage([0x90, pad, 127]); controller.handleMidiMessage([0x90, pad, 0]); };
+    const colors = [];
+    controller.midiManager.send = (_, message) => colors.push(message);
+    for (const kind of ["SOLO", "MUTE"]) {
+        const key = kind.toLowerCase();
+        top(kind, 127); voice(0); voice(1); voice(0);
+        assert.equal(state[key + "Active"], false);
+        assert.equal(controller.getInstrumentColor(1), controller.colors.YELLOW);
+        top(kind, 0);
+        assert.deepEqual([...state[key + "Selection"]], [1]);
+        assert.equal(state[key + "Active"], true);
+        t.mock.timers.tick(160);
+        assert.ok(colors.some(m => m[1] === controller.mapping.TOP_CONTROLS[kind] && m[2] === 4));
+        top(kind, 127); top(kind, 0);
+        assert.equal(state[key + "Active"], false);
+        assert.deepEqual([...state[key + "Selection"]], [1]);
+        top(kind, 127); top(kind, 0); assert.equal(state[key + "Active"], true);
+    }
+    assert.equal(state.isVoiceAudible(1), false);
+    assert.equal(state.isVoiceAudible(0), false);
+    for (const kind of ["SOLO", "MUTE"]) {
+        const del = controller.mapping.VALUE_CONTROLS.DELETE;
+        controller.handleMidiMessage([0x90, del, 127]); controller.handleMidiMessage([0x90, del, 0]);
+        top(kind, 127); top(kind, 0);
+        assert.equal(controller.deleteArmed, false);
+        assert.equal(state[kind.toLowerCase() + "Active"], false);
+        assert.equal(state[kind.toLowerCase() + "Selection"].size, 0);
+    }
+    top("SOLO", 127); voice(2); voice(2); top("SOLO", 0);
+    assert.equal(state.soloActive, false);
+    assert.equal(state.isVoiceAudible(0), true);
+    controller.resetInputState();
+});
+
+test("SOLO/MUTE filter actual notes while phases and scheduled Note Offs survive", async () => {
+    const app = await source("app.js");
+    const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    for (const sourceMode of ["INTERNAL", "MIDI"]) {
+        const { state, actions, clock, length } = setup();
+        length(12, 5); length(13, 7);
+        state.motif[12].fill(true); state.motif[13].fill(true);
+        const events = [], pending = [];
+        const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${dispatch}; return triggerMotifStep;`)(state,
+            { options: [{ textContent: "Hardware" }], selectedIndex: 0 },
+            { send: (_, data) => events.push(data), findOutput: () => ({}) },
+            { pulseInstrument() {} }, fn => pending.push(fn));
+        clock.setSource(sourceMode); actions.startPlayback(); clock.setClockStepHandler(() => trigger(state.playheadPosition));
+        trigger(0); assert.equal(events.length, 2);
+        const before = structuredClone(state);
+        actions.setPerformanceSelection("solo", new Set([12, 13]), true);
+        actions.setPerformanceSelection("mute", new Set([13]), true);
+        for (let i = 1; i <= 35; i++) {
+            if (sourceMode === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
+            else clock.receiveInternalClockStep({ sequence: i, transportRevision: clock.transportRevision });
+            assert.equal(state.playheadPosition, i % 35);
+            assert.equal(state.getVoiceStep(12), (i % 35) % 5);
+            assert.equal(state.getVoiceStep(13), (i % 35) % 7);
+        }
+        assert.deepEqual(state.motif, before.motif);
+        assert.deepEqual(state.voiceLengths, before.voiceLengths);
+        assert.equal(state.transportState, "PLAY");
+        assert.equal(events.filter(m => m[1] === 37).length, 1);
+        const ons = events.slice(); pending.forEach(fn => fn());
+        assert.deepEqual(events.slice(ons.length), ons.map(([status, note]) => [status, note, 0]));
+    }
+});
