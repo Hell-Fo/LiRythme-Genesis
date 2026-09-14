@@ -419,7 +419,7 @@ function redrawLaunchpad() {
     launchpad.drawMotif();
     launchpad.drawPlayhead();
     launchpad.drawInstruments();
-    launchpad.drawAttributesTransformations();
+    launchpad.drawBooks();
     launchpad.drawTopControls();
     launchpad.drawTransport();
     launchpad.drawFilterStatus();

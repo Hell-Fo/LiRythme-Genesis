@@ -43,10 +43,14 @@ export class LaunchpadMini {
         this.mapping = LaunchpadMapping;
         this.colors = LaunchpadColors;
         this.layout = GenesisLayout;
+        this.actions.setViewChangeHandler?.(() => this.drawView());
 
         this.performanceHolds = new Map();
+        this.switchPressed = false;
         this.performanceBlinks = new Map();
         this.copyStage = null;
+        this.copyLit = true;
+        this.deleteLit = true;
         this.copySource = null;
         this.copyTimer = null;
         this.copyGeneration = 0;
@@ -93,6 +97,7 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.switchPressed = false;
         this.performanceHolds.clear();
         for (const blink of this.performanceBlinks.values()) clearTimeout(blink.timer);
         this.performanceBlinks.clear();
@@ -400,22 +405,31 @@ export class LaunchpadMini {
         this.setInstrumentEventLed(position, this.getInstrumentColor(position));
     }
 
-    drawAttributesTransformations() {
+    drawView() {
+        this.drawBooks();
+        this.drawPersistentControls();
+        this.drawViewStatus();
+    }
+
+    drawBooks() {
         const books = this.mapping.BOOKS;
 
         for (let i = 0; i < books.length; i++) {
-            const colorName =
-                i < 8
+            // Visual placeholders only: slot 1 represents the existing single motif.
+            const colorName = this.state.currentView === "MOTIF_LIBRARY"
+                ? (i === 0 ? this.layout.BOOKS.MOTIF_LIBRARY : this.layout.BOOKS.MOTIF_LIBRARY_IDLE)
+                : i < 8
                     ? this.layout.BOOKS.ATTRIBUTES
                     : this.layout.BOOKS.TRANSFORMATIONS;
 
-            this.setLed(
-                books[i],
-                this.colors[colorName]
-            );
+            // Keep the view in both buffers without swapping the musical surface.
+            this.midiManager.send(this.deviceName,
+                [0x90, books[i], (this.colors[colorName] & 0x33) | 0x04]);
         }
     }
     drawTopControls() {
+        this.drawPersistentControls();
+        this.drawViewStatus();
         for (const [name, controller] of Object.entries(
             this.mapping.TOP_CONTROLS
         )) {
@@ -779,15 +793,16 @@ export class LaunchpadMini {
         const generation = ++this.copyGeneration;
         this.copyStage = stage;
         this.copySource = source;
-        let lit = true;
+        this.copyLit = true;
         const draw = () => {
             if (generation !== this.copyGeneration) return;
-            const color = stage && lit ? this.colors.YELLOW : this.colors.OFF;
-            this.midiManager.send(this.deviceName,
-                [0x90, this.mapping.VALUE_CONTROLS.COPY, (color & 0x33) | 0x04]);
+            this.drawCopyStatus();
             if (stage === "SOURCE") {
-                lit = !lit;
-                this.copyTimer = setTimeout(draw, 160);
+                this.copyTimer = setTimeout(() => {
+                    if (generation !== this.copyGeneration) return;
+                    this.copyLit = !this.copyLit;
+                    draw();
+                }, 160);
             }
         };
         draw();
@@ -798,19 +813,43 @@ export class LaunchpadMini {
         this.deleteBlinkTimer = null;
         const generation = ++this.deleteBlinkGeneration;
         this.deleteArmed = armed;
-        let lit = true;
+        this.deleteLit = true;
         const draw = () => {
             if (generation !== this.deleteBlinkGeneration) return;
-            // Copy DELETE alone to both buffers; do not swap the musical surface.
-            const color = armed && lit ? this.colors.RED : this.colors.OFF;
-            this.midiManager.send(this.deviceName,
-                [0x90, this.mapping.VALUE_CONTROLS.DELETE, (color & 0x33) | 0x04]);
+            this.drawDeleteStatus();
             if (armed) {
-                lit = !lit;
-                this.deleteBlinkTimer = setTimeout(draw, 160);
+                this.deleteBlinkTimer = setTimeout(() => {
+                    if (generation !== this.deleteBlinkGeneration) return;
+                    this.deleteLit = !this.deleteLit;
+                    draw();
+                }, 160);
             }
         };
         draw();
+    }
+
+    drawPersistentControls() {
+        this.drawCopyStatus();
+        this.drawDeleteStatus();
+    }
+
+    drawCopyStatus() {
+        const color = this.copyStage && this.copyLit ? this.colors.YELLOW : this.colors.OFF;
+        this.midiManager.send(this.deviceName,
+            [0x90, this.mapping.VALUE_CONTROLS.COPY, (color & 0x33) | 0x04]);
+    }
+
+    drawDeleteStatus() {
+        const color = this.deleteArmed && this.deleteLit ? this.colors.RED : this.colors.OFF;
+        this.midiManager.send(this.deviceName,
+            [0x90, this.mapping.VALUE_CONTROLS.DELETE, (color & 0x33) | 0x04]);
+    }
+
+    drawViewStatus() {
+        const color = this.colors.OFF;
+        // BOOK indicates the view; keep SWITCH off in both buffers.
+        this.midiManager.send(this.deviceName,
+            [0x90, this.mapping.VALUE_CONTROLS.SWITCH, (color & 0x33) | 0x04]);
     }
 
     handleMidiMessage(data) {
@@ -833,6 +872,13 @@ export class LaunchpadMini {
             status,
             number
         );
+        if (controlName === "SWITCH") {
+            if (value > 0 && !this.switchPressed) {
+                this.actions.toggleView();
+            }
+            this.switchPressed = value > 0;
+            return;
+        }
         if (controlName === "COPY") {
             if (value > 0) {
                 this.deleteConsumedInputs.add(inputKey);
@@ -1255,11 +1301,5 @@ export class LaunchpadMini {
             return;
         }
 
-        if (value > 0) {
-            if (controlType === "VALUE" && controlPosition === 0) {
-                this.actions.nextBook();
-                return;
-            }
-        }
     }
 }

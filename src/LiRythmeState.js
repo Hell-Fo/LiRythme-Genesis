@@ -18,6 +18,8 @@ import { PadConfiguration } from "./PadConfiguration.js";
 
 export class LiRythmeState {
     constructor() {
+        // Navigation is independent of the musical timeline and transport.
+        this.currentView = "PLAY";
         this.transportState = "STOP";
         this.playheadPosition = 0;
         this.minimumTempo = 20;

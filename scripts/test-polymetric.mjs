@@ -929,3 +929,193 @@ test("SOLO/MUTE filter actual notes while phases and scheduled Note Offs survive
         assert.deepEqual(events.slice(ons.length), ons.map(([status, note]) => [status, note, 0]));
     }
 });
+
+test("THE GATE: initial PLAY, mapping, edge-triggered toggle and SWITCH always OFF", () => {
+    const { state, controller } = setup();
+    const messages = [];
+    controller.midiManager.send = (_, message) => messages.push(message);
+    assert.equal(state.currentView, "PLAY");
+    assert.equal(controller.mapping.VALUE_CONTROLS.SWITCH, 120);
+    controller.drawViewStatus();
+    assert.deepEqual(messages.at(-1), [0x90, 120, 4]);
+    controller.handleMidiMessage([0x90, 120, 127]);
+    assert.equal(state.currentView, "MOTIF_LIBRARY");
+    assert.deepEqual(messages.at(-1), [0x90, 120, 4]);
+    controller.handleMidiMessage([0x90, 120, 127]);
+    controller.handleMidiMessage([0x80, 120, 64]);
+    assert.equal(state.currentView, "MOTIF_LIBRARY");
+    controller.resetInputState();
+    messages.length = 0;
+    controller.drawTopControls();
+    assert.deepEqual(messages.filter(m => m[0] === 0x90 && m[1] === 120), [[0x90, 120, 4]]);
+    controller.handleMidiMessage([0x90, 120, 127]);
+    controller.handleMidiMessage([0x90, 120, 0]);
+    assert.equal(state.currentView, "PLAY");
+    assert.deepEqual(messages.at(-1), [0x90, 120, 4]);
+    assert.ok(messages.filter(m => m[0] === 0x90 && m[1] === 120).every(m => m[2] === 4));
+});
+
+test("THE GATE preserves all musical state, clock and pending performance gestures", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const transport of ["STOP", "PAUSE", "PLAY"]) {
+        const { state, actions, clock, controller, length } = setup();
+        length(12, 5); length(13, 7);
+        state.transportState = transport;
+        state.playheadPosition = 9;
+        if (transport === "PLAY") length(12, 11);
+        state.soloSelection.add(12); state.soloActive = true;
+        state.muteSelection.add(13); state.muteActive = true;
+        state.motif[12][2] = true;
+        controller.setCopyStage("TARGET", actions.captureMusicalCopy("VOICE", 12));
+        controller.setDeleteArmed(true);
+        controller.performanceHolds.set("solo", { selection: new Set([12]), edited: false });
+        const before = structuredClone(state), motif = state.motif;
+        const clockBefore = { ...clock };
+        const gestureBefore = [controller.copyStage, controller.copySource, controller.copyTimer,
+            controller.deleteArmed, controller.deleteBlinkTimer, controller.performanceHolds];
+        for (const expected of ["MOTIF_LIBRARY", "PLAY"]) {
+            controller.handleMidiMessage([0x90, 120, 127]);
+            controller.handleMidiMessage([0x90, 120, 0]);
+            assert.equal(state.currentView, expected);
+            assert.deepEqual(structuredClone(state), { ...before, currentView: expected });
+            assert.equal(state.motif, motif);
+            assert.deepEqual({ ...clock }, clockBefore);
+            assert.deepEqual([controller.copyStage, controller.copySource, controller.copyTimer,
+                controller.deleteArmed, controller.deleteBlinkTimer, controller.performanceHolds], gestureBefore);
+        }
+        controller.resetInputState();
+    }
+});
+
+test("THE GATE keeps Leader/Follower polymetric playback and scheduled Note Offs running", async () => {
+    const app = await source("app.js");
+    const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    for (const mode of ["INTERNAL", "MIDI"]) {
+        const { state, actions, clock, controller, length } = setup();
+        length(12, 5); length(13, 7);
+        state.motif[12].fill(true); state.motif[13].fill(true);
+        const events = [], pending = [];
+        const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${dispatch}; return triggerMotifStep;`)(state,
+            { options: [{ textContent: "Hardware" }], selectedIndex: 0 },
+            { send: (_, data) => events.push(data), findOutput: () => ({}) },
+            { pulseInstrument() {} }, fn => pending.push(fn));
+        clock.setSource(mode); actions.startPlayback();
+        clock.setClockStepHandler(() => trigger(state.playheadPosition));
+        trigger(0);
+        const revision = clock.transportRevision;
+        for (let i = 1; i <= 70; i++) {
+            if (i === 1 || i === 40) {
+                controller.handleMidiMessage([0x90, 120, 127]);
+                controller.handleMidiMessage([0x90, 120, 0]);
+            }
+            if (mode === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
+            else clock.receiveInternalClockStep({ sequence: i, transportRevision: revision });
+            assert.equal(state.playheadPosition, i % 35);
+            assert.equal(state.getVoiceStep(12), (i % 35) % 5);
+            assert.equal(state.getVoiceStep(13), (i % 35) % 7);
+            assert.equal(state.transportState, "PLAY");
+            assert.equal(clock.transportRevision, revision);
+        }
+        assert.equal(events.length, 142);
+        const ons = events.slice(); pending.forEach(fn => fn());
+        assert.deepEqual(events.slice(ons.length), ons.map(([status, note]) => [status, note, 0]));
+    }
+});
+
+test("THE GATE redraws BOOK on view changes and restores PLAY reservations", () => {
+    const { state, actions, controller } = setup();
+    const messages = [];
+    controller.midiManager.send = (_, message) => messages.push(message);
+    const bookMessages = () => messages.filter(([status, note]) =>
+        status === 0x90 && controller.mapping.BOOKS.includes(note));
+    const expected = library => controller.mapping.BOOKS.map((note, i) => [0x90, note,
+        ((library ? (i === 0 ? controller.colors.GREEN : controller.colors.DIM_GREEN)
+            : i < 8 ? controller.colors.DIM_RED : controller.colors.DIM_AMBER) & 0x33) | 4]);
+    const check = library => {
+        assert.deepEqual(bookMessages(), expected(library));
+        assert.ok(messages.every(([status, note]) => status === 0x90 &&
+            (controller.mapping.BOOKS.includes(note) || Object.values(controller.mapping.VALUE_CONTROLS).includes(note))));
+        messages.length = 0;
+    };
+    assert.equal(state.currentView, "PLAY");
+    controller.drawBooks();
+    check(false);
+    for (const library of [true, false]) {
+        controller.handleMidiMessage([0x90, 120, 127]);
+        controller.handleMidiMessage([0x90, 120, 0]);
+        assert.equal(state.currentView, library ? "MOTIF_LIBRARY" : "PLAY");
+        check(library);
+    }
+    // Non-hardware navigation uses the same notification and renderer.
+    actions.toggleView();
+    check(true);
+    controller.drawBooks();
+    check(true);
+    actions.toggleView();
+    check(false);
+});
+
+test("THE GATE retains functional COPY/DELETE, blink phase and Footer Zone 3 in both views", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { initializePlayFooterUI } = await import("../src/PlayFooterUI.mjs");
+    const { state, controller } = setup();
+    const leds = new Map();
+    controller.midiManager.send = (_, [status, note, color]) => leds.set(`${status}:${note}`, color);
+    const fields = new Map();
+    const footer = initializePlayFooterUI({ state, controller, document: {
+        getElementById(id) { if (!fields.has(id)) fields.set(id, { textContent: "" }); return fields.get(id); }
+    } });
+    const states = () => { footer.render(); return fields.get("play-footer-states").textContent; };
+    const tap = (note, status = 0x90) => {
+        controller.handleMidiMessage([status, note, 127]);
+        controller.handleMidiMessage([status, note, 0]);
+    };
+    const color = note => leds.get(`144:${note}`);
+    state.soloSelection.add(12); state.muteSelection.add(13);
+    tap(controller.mapping.TOP_CONTROLS.SOLO, 0xB0);
+    tap(controller.mapping.TOP_CONTROLS.MUTE, 0xB0);
+    assert.equal(states(), "SOLO  MUTE");
+    for (const view of ["MOTIF_LIBRARY", "PLAY"]) {
+        tap(120);
+        assert.equal(state.currentView, view);
+        state.motif[12][3] = true;
+        tap(104); // COPY source selection
+        assert.equal(controller.copyStage, "SOURCE");
+        assert.equal(color(104), (controller.colors.YELLOW & 0x33) | 4);
+        assert.equal(states(), "SOLO  MUTE  COPY");
+        t.mock.timers.tick(160);
+        assert.equal(color(104), 4);
+        const timer = controller.copyTimer;
+        tap(120); tap(120);
+        assert.equal(controller.copyTimer, timer);
+        assert.equal(color(104), 4); // refresh preserves the dark blink phase
+        t.mock.timers.tick(160);
+        assert.equal(color(104), (controller.colors.YELLOW & 0x33) | 4);
+        tap(controller.mapping.INSTRUMENTS[12]);
+        assert.equal(controller.copyStage, "TARGET");
+        tap(120); tap(120);
+        assert.equal(color(104), (controller.colors.YELLOW & 0x33) | 4);
+        tap(controller.mapping.INSTRUMENTS[14]);
+        assert.deepEqual(state.motif[14], state.motif[12]);
+        assert.equal(controller.copyStage, null);
+        assert.equal(states(), "SOLO  MUTE");
+        tap(88);
+        assert.equal(controller.deleteArmed, true);
+        assert.equal(color(88), (controller.colors.RED & 0x33) | 4);
+        assert.equal(states(), "SOLO  MUTE  DELETE");
+        t.mock.timers.tick(160);
+        const deleteTimer = controller.deleteBlinkTimer;
+        tap(120); tap(120);
+        assert.equal(controller.deleteBlinkTimer, deleteTimer);
+        assert.equal(color(88), 4);
+        t.mock.timers.tick(160);
+        assert.equal(color(88), (controller.colors.RED & 0x33) | 4);
+        tap(controller.mapping.INSTRUMENTS[14]);
+        assert.ok(state.motif[14].every(event => !event));
+        assert.equal(controller.deleteArmed, false);
+        assert.equal(states(), "SOLO  MUTE");
+        assert.deepEqual([...state.soloSelection], [12]);
+        assert.deepEqual([...state.muteSelection], [13]);
+    }
+    controller.resetInputState();
+});

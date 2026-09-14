@@ -19,7 +19,9 @@ export const GenesisLayout = {
         MODULATION: "OFF",
 
         ATTRIBUTES: "DIM_RED",
-        TRANSFORMATIONS: "AMBER",
+        TRANSFORMATIONS: "DIM_AMBER",
+        MOTIF_LIBRARY: "GREEN",
+        MOTIF_LIBRARY_IDLE: "DIM_GREEN",
 
         EXTENSIONS: "OFF",
         PROJECTS: "OFF"

@@ -22,9 +22,19 @@ export class LiRythmeActions {
         this.clock = clock;
         this.onStepPreview = null;
         this.onTransportTransition = null;
+        this.onViewChange = null;
     }
     setClockStepHandler(handler) {
         this.clock.setClockStepHandler(handler);
+    }
+    toggleView() {
+        this.state.currentView = this.state.currentView === "PLAY"
+            ? "MOTIF_LIBRARY" : "PLAY";
+        this.onViewChange?.(this.state.currentView);
+        return this.state.currentView;
+    }
+    setViewChangeHandler(handler) {
+        this.onViewChange = handler;
     }
     setClockBeatHandler(handler) {
         this.clock.setClockBeatHandler(handler);
