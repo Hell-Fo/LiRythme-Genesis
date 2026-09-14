@@ -41,14 +41,32 @@ export class LiRythmeState {
         this.filterMode = false;
 
         this.padConfiguration = new PadConfiguration();
-        this.motif = Array.from({ length: 16 }, () => new Array(32).fill(false));
+        this.currentMotifId = 0;
+        this.motifs = Array.from({ length: 16 }, () => ({
+            events: Array.from({ length: 16 }, () => new Array(32).fill(false)),
+            motifLength: null,
+            voiceLengths: new Array(16).fill(null)
+        }));
+        // Compatibility projections; the bank owns the musical data, not a copy.
+        for (const [property, field] of Object.entries({
+            motif: "events", motifLength: "motifLength", voiceLengths: "voiceLengths"
+        })) {
+            Object.defineProperty(this, property, {
+                enumerable: true,
+                get: () => this.getMotif(this.currentMotifId)[field],
+                set: value => { this.getMotif(this.currentMotifId)[field] = value; }
+            });
+        }
         this.soloSelection = new Set();
         this.muteSelection = new Set();
         this.soloActive = false;
         this.muteActive = false;
-        this.motifLength = null;
-        this.voiceLengths = new Array(16).fill(null);
         this.liveLengthCycle = null;
+    }
+
+    getMotif(id) {
+        return Number.isInteger(id) && id >= 0 && id < this.motifs.length
+            ? this.motifs[id] : null;
     }
 
     isVoiceAudible(voiceId) {

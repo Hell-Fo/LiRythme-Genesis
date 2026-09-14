@@ -5,7 +5,7 @@ export function readPlayStatus(state, clock, midiManager) {
         ? state.padConfiguration.voices[id] : null;
     const selected = voice
         ? voice.name || `VOICE ${String(id + 1).padStart(2, "0")}`
-        : "Motif 01";
+        : `Motif ${String(state.currentMotifId + 1).padStart(2, "0")}`;
     const internal = clock.source === "INTERNAL";
     const external = clock.source === "MIDI";
     const inputName = midiManager.clockInput?.name;

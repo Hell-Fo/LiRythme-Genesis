@@ -1120,6 +1120,217 @@ test("THE GATE retains functional COPY/DELETE, blink phase and Footer Zone 3 in 
     controller.resetInputState();
 });
 
+test("PHASE A: 16 independent event and geometry records restore edits through hardware", () => {
+    const { state, controller, actions } = setup();
+    assert.equal(state.currentMotifId, 0);
+    assert.equal(state.motifs.length, 16);
+    assert.equal(new Set(state.motifs).size, 16);
+    assert.equal(new Set(state.motifs.flatMap(m => m.events)).size, 256);
+    assert.equal(new Set(state.motifs.map(m => m.voiceLengths)).size, 16);
+    const tap = note => { controller.handleMidiMessage([0x90, note, 127]); controller.handleMidiMessage([0x90, note, 0]); };
+    tap(120);
+    for (let id = 0; id < 16; id++) {
+        tap(controller.mapping.BOOKS[id]);
+        assert.equal(state.currentMotifId, id);
+        assert.ok(state.motif.every(row => row.every(event => !event)));
+        assert.equal(state.motifLength, null);
+        assert.ok(state.voiceLengths.every(n => n === null));
+        tap(controller.mapping.MOTIF[id]);
+        actions.setSelectedLength(id + 1);
+        state.selectedInstrument = null;
+        actions.setSelectedLength(32 - id);
+        state.selectedInstrument = 12;
+    }
+    for (let id = 0; id < 16; id++) {
+        tap(controller.mapping.BOOKS[id]);
+        assert.deepEqual(state.motif[12], Array.from({ length: 32 }, (_, step) => step === id));
+        assert.equal(state.voiceLengths[12], id + 1);
+        assert.equal(state.motifLength, 32 - id);
+        assert.equal(state.motif, state.getMotif(id).events);
+    }
+    tap(120);
+    assert.equal(state.currentView, "PLAY");
+    assert.equal(state.currentMotifId, 15);
+    tap(controller.mapping.BOOKS[0]);
+    assert.equal(state.currentMotifId, 15); // PLAY BOOK reservations do not select motifs
+});
+
+test("PHASE A: STOP/PAUSE select synchronously, PLAY and invalid selections are inert", () => {
+    for (const mode of ["INTERNAL", "MIDI"]) {
+        const { state, actions, clock, controller } = setup();
+        clock.setSource(mode);
+        for (const transport of ["STOP", "PAUSE"]) {
+            state.transportState = transport;
+            state.playheadPosition = 25;
+            state.liveLengthCycle = { duration: 32, lengths: Array(16).fill(32), steps: Array(16).fill(25) };
+            const revision = clock.transportRevision;
+            assert.equal(actions.selectMotif(transport === "STOP" ? 4 : 5), true);
+            assert.equal(state.transportState, transport);
+            assert.equal(state.playheadPosition, 0);
+            assert.equal(state.liveLengthCycle, null);
+            assert.equal(clock.transportRevision, revision);
+        }
+        actions.startPlayback();
+        actions.toggleView();
+        const before = structuredClone(state), clockBefore = { ...clock };
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[9], 127]);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[9], 0]);
+        assert.equal(actions.selectMotif(9), false);
+        assert.deepEqual(structuredClone(state), before);
+        assert.deepEqual({ ...clock }, clockBefore);
+        actions.pausePlayback();
+        for (const id of [-1, 16, 1.5, "1", null, NaN, state.currentMotifId]) {
+            const snapshot = structuredClone(state);
+            assert.equal(actions.selectMotif(id), false);
+            assert.deepEqual(structuredClone(state), snapshot);
+        }
+    }
+});
+
+test("PHASE A: BOOK current slot, Footer Zone 1 and PLAY projections follow selection", async () => {
+    const { initializePlayFooterUI } = await import("../src/PlayFooterUI.mjs");
+    const { readPlayStatus } = await import("../src/PlayStatusUI.mjs");
+    const { state, actions, clock, controller } = setup();
+    const leds = new Map(), elements = new Map();
+    controller.midiManager.send = (_, [status, note, color]) => leds.set(`${status}:${note}`, color);
+    const footer = initializePlayFooterUI({ state, controller, document: {
+        getElementById(id) { if (!elements.has(id)) elements.set(id, { textContent: "" }); return elements.get(id); }
+    } });
+    actions.setMotifChangeHandler(() => { controller.drawSelectedMotif(); footer.render(); });
+    state.selectedInstrument = null;
+    actions.toggleView();
+    for (const id of [4, 15, 0]) {
+        assert.equal(actions.selectMotif(id), true);
+        assert.equal(elements.get("play-footer-zone1").textContent, `MOTIF ${String(id + 1).padStart(2, "0")}`);
+        assert.equal(readPlayMotif(state).title, elements.get("play-footer-zone1").textContent);
+        assert.equal(readPlayStatus(state, clock, {}).selected, `Motif ${String(id + 1).padStart(2, "0")}`);
+        controller.mapping.BOOKS.forEach((note, index) => assert.equal(leds.get(`144:${note}`),
+            ((index === id ? controller.colors.GREEN : controller.colors.DIM_GREEN) & 0x33) | 4));
+        assert.equal(leds.get("144:120"), 4);
+    }
+    const app = await source("app.js");
+    assert.match(app, /setMotifChangeHandler\(\(\) => \{\s*launchpad.drawSelectedMotif\(\);\s*playStatusUI.render\(\);/);
+});
+
+test("PHASE A: pending COPY/DELETE do not cross slots, globals stay global", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller } = setup();
+    const config = state.padConfiguration;
+    state.soloSelection.add(12); state.soloActive = true;
+    state.muteSelection.add(13); state.muteActive = true;
+    state.filterMode = true; state.visibleInstrumentFilter.add(12);
+    actions.toggleView();
+    for (const note of [104, 88]) {
+        controller.handleMidiMessage([0x90, note, 127]);
+        controller.handleMidiMessage([0x90, note, 0]);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[1], 127]);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[1], 0]);
+        assert.equal(state.currentMotifId, 0);
+        assert.ok(note === 104 ? controller.copyStage : controller.deleteArmed);
+        controller.handleMidiMessage([0x90, note, 127]);
+        controller.handleMidiMessage([0x90, note, 0]);
+    }
+    actions.selectMotif(1);
+    assert.equal(state.padConfiguration, config);
+    assert.equal(state.soloActive, true); assert.equal(state.muteActive, true);
+    assert.deepEqual([...state.soloSelection], [12]); assert.deepEqual([...state.muteSelection], [13]);
+    assert.equal(state.filterMode, true); assert.deepEqual([...state.visibleInstrumentFilter], [12]);
+    controller.resetInputState();
+});
+
+test("PHASE A: paused motif selection preserves captured Note Offs and resumes the new geometry", async () => {
+    const app = await source("app.js");
+    const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    for (const mode of ["INTERNAL", "MIDI"]) {
+        const { state, actions, clock, length } = setup();
+        state.motif[12][0] = true;
+        const original = structuredClone(state.getMotif(0));
+        actions.selectMotif(1); length(12, 5); length(13, 7);
+        state.motif[13].fill(true);
+        actions.selectMotif(0);
+        const events = [], pending = [];
+        const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${dispatch}; return triggerMotifStep;`)(state,
+            { options: [{ textContent: "Hardware" }], selectedIndex: 0 },
+            { send: (_, data) => events.push(data), findOutput: () => ({}) },
+            { pulseInstrument() {} }, fn => pending.push(fn));
+        clock.setSource(mode); actions.startPlayback(); trigger(0);
+        const ons = events.slice();
+        assert.equal(ons.length, 1);
+        actions.pausePlayback(); actions.selectMotif(1);
+        pending.splice(0).forEach(fn => fn());
+        assert.deepEqual(events.slice(ons.length), ons.map(([status, note]) => [status, note, 0]));
+        actions.continuePlayback();
+        clock.setClockStepHandler(() => trigger(state.playheadPosition));
+        for (let i = 1; i <= 35; i++) {
+            if (mode === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
+            else clock.receiveInternalClockStep({ sequence: i, transportRevision: clock.transportRevision });
+            assert.equal(state.playheadPosition, i % 35);
+            assert.equal(state.getVoiceStep(12), (i % 35) % 5);
+            assert.equal(state.getVoiceStep(13), (i % 35) % 7);
+        }
+        assert.equal(events.length, 37);
+        pending.splice(0).forEach(fn => fn());
+        assert.deepEqual(state.getMotif(0), original);
+        assert.equal(state.currentMotifId, 1);
+        assert.equal(state.transportState, "PLAY");
+    }
+});
+
+test("hardware repro 4/7/5/32: exact dispatch across 4480 ticks (four LCM cycles), before and after Phase A", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const baseline = file => execFileSync("git", ["show", `e322070:src/${file}`], { encoding: "utf8" });
+    const baselinePad = url(baseline("PadConfiguration.js"));
+    const { LiRythmeState: OldState } = await import(url(baseline("LiRythmeState.js").replace('"./PadConfiguration.js"', JSON.stringify(baselinePad))));
+    const { LiRythmeActions: OldActions } = await import(url(baseline("LiRythmeActions.js")));
+    const { LiRythmeClock: OldClock } = await import(url(baseline("LiRythmeClock.js")));
+    const configurations = [[OldState, OldActions, OldClock, baseline("app.js")],
+        [LiRythmeState, LiRythmeActions, LiRythmeClock, await source("app.js")]];
+    const traces = [];
+    const log = console.log;
+    console.log = () => {};
+    try {
+        for (const [State, Actions, Clock, app] of configurations) {
+            for (const mode of ["INTERNAL", "MIDI"]) {
+                const state = new State(), clock = new Clock(state), actions = new Actions(state, clock);
+                // Exact supplied patterns, mapped to four valid drum Voices.
+                const patterns = [[4, [0]], [7, [1, 3, 5]], [5, [1, 3]], [32, [0]]];
+                const ids = [12, 11, 10, 15];
+                ids.forEach((id, i) => {
+                    state.setTargetLength(patterns[i][0], { target: id });
+                    patterns[i][1].forEach(step => { state.motif[id][step] = true; });
+                    state.padConfiguration.voices[id] = { type: "MIDI DRUM", output: { mode: "DEFAULT" }, channel: 1, note: 60 + i };
+                });
+                assert.equal(state.getMotifDuration(), 1120); // LCM = 32 * 7 * 5; 4 divides 32.
+                const geometry = structuredClone(state.voiceLengths), matrix = structuredClone(state.motif);
+                const events = ids.map(() => []);
+                let tick = 0;
+                const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+                const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${dispatch}; return triggerMotifStep;`)(state,
+                    { options: [{ textContent: "Hardware" }], selectedIndex: 0 },
+                    { send: (_, [, note, velocity]) => { if (velocity) events[note - 60].push(tick); }, findOutput: () => ({}) },
+                    { pulseInstrument() {} }, () => {});
+                clock.setSource(mode); actions.startPlayback(); trigger(0);
+                clock.setClockStepHandler(() => trigger(state.playheadPosition));
+                for (tick = 1; tick <= 4480; tick++) {
+                    if (mode === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
+                    else clock.receiveInternalClockStep({ sequence: tick, transportRevision: clock.transportRevision });
+                    ids.forEach((id, i) => assert.equal(state.getVoiceStep(id), tick % patterns[i][0]));
+                }
+                patterns.forEach(([period, onSteps], i) => {
+                    const expected = Array.from({ length: 4481 }, (_, n) => n).filter(n => onSteps.includes(n % period));
+                    assert.deepEqual(events[i], expected);
+                });
+                assert.ok(events[0].slice(1).every((n, i) => n - events[0][i] === 4));
+                assert.deepEqual(state.voiceLengths, geometry);
+                assert.deepEqual(state.motif, matrix);
+                assert.equal(state.liveLengthCycle, null);
+                traces.push(events);
+            }
+        }
+    } finally { console.log = log; }
+    traces.slice(1).forEach(events => assert.deepEqual(events, traces[0]));
+});
+
 test("shared MIDI worker drains simultaneous Voices without pulse spacing and respects clock guard", async () => {
     const { execFileSync } = await import("node:child_process");
     const old = execFileSync("git", ["show", "e322070:src/hardware/midi/MidiClockWorker.cjs"], { encoding: "utf8" });

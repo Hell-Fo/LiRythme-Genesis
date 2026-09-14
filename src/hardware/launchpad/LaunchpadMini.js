@@ -44,6 +44,7 @@ export class LaunchpadMini {
         this.colors = LaunchpadColors;
         this.layout = GenesisLayout;
         this.actions.setViewChangeHandler?.(() => this.drawView());
+        this.actions.setMotifChangeHandler?.(() => this.drawSelectedMotif());
 
         this.performanceHolds = new Map();
         this.switchPressed = false;
@@ -411,13 +412,21 @@ export class LaunchpadMini {
         this.drawViewStatus();
     }
 
+    drawSelectedMotif() {
+        this.cancelInstrumentPulses();
+        this.drawMotif();
+        this.drawPlayhead();
+        this.drawInstruments();
+        this.drawView();
+        this.swapBuffers();
+    }
+
     drawBooks() {
         const books = this.mapping.BOOKS;
 
         for (let i = 0; i < books.length; i++) {
-            // Visual placeholders only: slot 1 represents the existing single motif.
             const colorName = this.state.currentView === "MOTIF_LIBRARY"
-                ? (i === 0 ? this.layout.BOOKS.MOTIF_LIBRARY : this.layout.BOOKS.MOTIF_LIBRARY_IDLE)
+                ? (i === this.state.currentMotifId ? this.layout.BOOKS.MOTIF_LIBRARY : this.layout.BOOKS.MOTIF_LIBRARY_IDLE)
                 : i < 8
                     ? this.layout.BOOKS.ATTRIBUTES
                     : this.layout.BOOKS.TRANSFORMATIONS;
@@ -877,6 +886,13 @@ export class LaunchpadMini {
                 this.actions.toggleView();
             }
             this.switchPressed = value > 0;
+            return;
+        }
+        if (controlType === "BOOK" && this.state.currentView === "MOTIF_LIBRARY") {
+            // Do not let pending destructive/copy gestures cross motif boundaries.
+            if (value > 0 && !this.copyStage && !this.deleteArmed && !this.performanceHolds.size) {
+                this.actions.selectMotif(controlPosition);
+            }
             return;
         }
         if (controlName === "COPY") {

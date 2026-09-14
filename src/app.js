@@ -414,6 +414,10 @@ const handleControllerMessage =
     (data) => launchpad.handleMidiMessage(data);
 
 footerUI = initializePlayFooterUI({ state, controller: launchpad });
+actions.setMotifChangeHandler(() => {
+    launchpad.drawSelectedMotif();
+    playStatusUI.render();
+});
 
 function redrawLaunchpad() {
     launchpad.drawMotif();

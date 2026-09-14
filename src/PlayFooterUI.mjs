@@ -2,6 +2,7 @@
 // belong to the controller. No commands or additional animation loop.
 export function readPlayFooter(state, controller) {
     return {
+        zone1: `MOTIF ${String(state.currentMotifId + 1).padStart(2, "0")}`,
         project: "Non disponible", // No active Project identity exists in the engine yet.
         states: [state.soloActive && "SOLO", state.muteActive && "MUTE",
             controller.copyStage && "COPY", controller.deleteArmed && "DELETE"]
@@ -11,7 +12,7 @@ export function readPlayFooter(state, controller) {
 }
 
 export function initializePlayFooterUI({ state, controller, document = globalThis.document }) {
-    const fields = Object.fromEntries(["project", "states", "resolution"]
+    const fields = Object.fromEntries(["zone1", "project", "states", "resolution"]
         .map(key => [key, document.getElementById(`play-footer-${key}`)]));
     function render() {
         const status = readPlayFooter(state, controller);

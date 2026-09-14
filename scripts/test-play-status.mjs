@@ -45,7 +45,7 @@ test("footer observes all independent active flags and COPY stages through the e
     const { tick, ui } = mount({ ...context, renderFooter: footer.render });
     const value = key => elements.get(`play-footer-${key}`).textContent;
     assert.equal(value("states"), "");
-    assert.equal(value("zone1"), "");
+    assert.equal(value("zone1"), "MOTIF 01");
     assert.equal(value("project"), "Non disponible");
     assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
     for (let mask = 0; mask < 16; mask++) {
@@ -58,7 +58,7 @@ test("footer observes all independent active flags and COPY stages through the e
         assert.equal(value("states"), keys.filter((key, bit) => mask & (1 << bit)).map(key => key.toUpperCase()).join("  "));
         assert.equal(value("project"), "Non disponible");
         assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
-        assert.equal(value("zone1"), "");
+        assert.equal(value("zone1"), "MOTIF 01");
         assert.deepEqual(structuredClone({ state: context.state, controller }), before);
     }
     controller.copyStage = "TARGET"; tick();
@@ -69,7 +69,7 @@ test("footer observes all independent active flags and COPY stages through the e
     controller.copyStage = null; controller.deleteArmed = false;
     tick();
     assert.equal(value("states"), "");
-    assert.equal(value("zone1"), "");
+    assert.equal(value("zone1"), "MOTIF 01");
     assert.equal(value("project"), "Non disponible");
     assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
     context.state.motifLength = 8; context.state.stepDivision = 8;
@@ -77,7 +77,7 @@ test("footer observes all independent active flags and COPY stages through the e
     assert.equal(value("resolution"), "8 STEPS \u00b7 1/8");
     assert.equal(value("project"), "Non disponible");
     assert.equal(value("states"), "SOLO");
-    assert.equal(value("zone1"), "");
+    assert.equal(value("zone1"), "MOTIF 01");
     ui.dispose();
     assert.doesNotMatch(await source("src/PlayFooterUI.mjs"), /addEventListener|setTimeout|setInterval|requestAnimationFrame|innerHTML/);
     assert.match(await source("src/app.js"), /initializePlayFooterUI\(\{ state, controller: launchpad \}\)/);

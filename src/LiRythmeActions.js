@@ -23,6 +23,7 @@ export class LiRythmeActions {
         this.onStepPreview = null;
         this.onTransportTransition = null;
         this.onViewChange = null;
+        this.onMotifChange = null;
     }
     setClockStepHandler(handler) {
         this.clock.setClockStepHandler(handler);
@@ -35,6 +36,18 @@ export class LiRythmeActions {
     }
     setViewChangeHandler(handler) {
         this.onViewChange = handler;
+    }
+    setMotifChangeHandler(handler) {
+        this.onMotifChange = handler;
+    }
+    selectMotif(id) {
+        if (!["STOP", "PAUSE"].includes(this.state.transportState) ||
+            !this.state.getMotif(id) || id === this.state.currentMotifId) return false;
+        this.state.currentMotifId = id;
+        this.state.liveLengthCycle = null;
+        this.state.playheadPosition = 0;
+        this.onMotifChange?.(id);
+        return true;
     }
     setClockBeatHandler(handler) {
         this.clock.setClockBeatHandler(handler);

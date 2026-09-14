@@ -1,4 +1,4 @@
-// Display projection only: the engine currently owns one shared Motif matrix.
+// Read-only projection of the selected bank entry.
 export function readPlayMotif(state) {
     const rows = state.motif;
     const available = Array.isArray(rows) && rows.length === 16 &&
@@ -6,8 +6,7 @@ export function readPlayMotif(state) {
     const id = state.selectedInstrument;
     const validTarget = id === null || (Number.isInteger(id) && id >= 0 && id < rows?.length);
     return {
-        // Existing single-Motif convention, not an engine-provided bank/index.
-        title: available ? "MOTIF 01" : "MOTIF —",
+        title: available ? `MOTIF ${String(state.currentMotifId + 1).padStart(2, "0")}` : "MOTIF —",
         duration: available ? `${state.getMotifDuration()} STEPS` : "Non disponible",
         step: available && validTarget
             ? String(id === null ? state.getMotifDuration() : state.getVoiceLength(id))
