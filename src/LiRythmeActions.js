@@ -24,9 +24,17 @@ export class LiRythmeActions {
         this.onTransportTransition = null;
         this.onViewChange = null;
         this.onMotifChange = null;
+        this.onNextMotifChange = null;
+        this.motifTransitionPending = false;
     }
     setClockStepHandler(handler) {
-        this.clock.setClockStepHandler(handler);
+        this.clock.setClockStepHandler(() => {
+            handler();
+            if (this.motifTransitionPending) {
+                this.motifTransitionPending = false;
+                this.onMotifChange?.(this.state.playingMotifId);
+            }
+        });
     }
     toggleView() {
         this.state.currentView = this.state.currentView === "PLAY"
@@ -48,6 +56,23 @@ export class LiRythmeActions {
         this.state.playheadPosition = 0;
         this.onMotifChange?.(id);
         return true;
+    }
+    setNextMotifChangeHandler(handler) {
+        this.onNextMotifChange = handler;
+    }
+    requestMotif(id) {
+        if (!this.state.getMotif(id)) return false;
+        if (this.state.transportState !== "PLAY") return this.selectMotif(id);
+        const next = id === this.state.playingMotifId ? null : id;
+        if (next === this.state.nextMotifId) return false;
+        this.state.nextMotifId = next;
+        this.onNextMotifChange?.();
+        return true;
+    }
+    clearNextMotif() {
+        if (this.state.nextMotifId === null) return;
+        this.state.nextMotifId = null;
+        this.onNextMotifChange?.();
     }
     setClockBeatHandler(handler) {
         this.clock.setClockBeatHandler(handler);
@@ -86,6 +111,7 @@ export class LiRythmeActions {
     }
 
     startPlayback({ origin = "LOCAL" } = {}) {
+        this.clearNextMotif();
         const previousState = this.state.transportState;
 
         this.stopClock();
@@ -127,6 +153,7 @@ export class LiRythmeActions {
     }
 
     pausePlayback({ origin = "LOCAL" } = {}) {
+        this.clearNextMotif();
         if (this.state.transportState === "PAUSE") {
             return;
         }
@@ -145,6 +172,7 @@ export class LiRythmeActions {
         );
     }
     stop({ origin = "LOCAL" } = {}) {
+        this.clearNextMotif();
         const previousState = this.state.transportState;
 
         this.stopClock();
@@ -365,6 +393,13 @@ export class LiRythmeActions {
 
     nextStep({ preview = false } = {}) {
         this.state.advanceLiveLengthCycle();
+        if (this.state.transportState === "PLAY" && this.state.playheadPosition === 0 &&
+            this.state.nextMotifId !== null) {
+            this.state.playingMotifId = this.state.nextMotifId;
+            this.state.nextMotifId = null;
+            this.state.liveLengthCycle = null;
+            this.motifTransitionPending = true;
+        }
 
         console.log(
             "PLAYHEAD:",

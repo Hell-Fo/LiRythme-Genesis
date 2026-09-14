@@ -45,6 +45,10 @@ export class LaunchpadMini {
         this.layout = GenesisLayout;
         this.actions.setViewChangeHandler?.(() => this.drawView());
         this.actions.setMotifChangeHandler?.(() => this.drawSelectedMotif());
+        this.actions.setNextMotifChangeHandler?.(() => this.drawBooks());
+        this.nextMotifBlinkTimer = null;
+        this.nextMotifBlinkId = null;
+        this.nextMotifLit = true;
 
         this.performanceHolds = new Map();
         this.switchPressed = false;
@@ -98,6 +102,9 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        clearTimeout(this.nextMotifBlinkTimer);
+        this.nextMotifBlinkTimer = null;
+        this.nextMotifBlinkId = null;
         this.switchPressed = false;
         this.performanceHolds.clear();
         for (const blink of this.performanceBlinks.values()) clearTimeout(blink.timer);
@@ -422,14 +429,29 @@ export class LaunchpadMini {
     }
 
     drawBooks() {
+        const next = this.state.currentView === "MOTIF_LIBRARY" ? this.state.nextMotifId : null;
+        if (this.nextMotifBlinkId !== next) {
+            clearTimeout(this.nextMotifBlinkTimer);
+            this.nextMotifBlinkTimer = null;
+            this.nextMotifBlinkId = next;
+            this.nextMotifLit = true;
+        }
+        if (next !== null && this.nextMotifBlinkTimer === null) {
+            this.nextMotifBlinkTimer = setTimeout(() => {
+                this.nextMotifBlinkTimer = null;
+                this.nextMotifLit = !this.nextMotifLit;
+                this.drawBooks();
+            }, 160);
+        }
         const books = this.mapping.BOOKS;
 
         for (let i = 0; i < books.length; i++) {
-            const colorName = this.state.currentView === "MOTIF_LIBRARY"
+            let colorName = this.state.currentView === "MOTIF_LIBRARY"
                 ? (i === this.state.currentMotifId ? this.layout.BOOKS.MOTIF_LIBRARY : this.layout.BOOKS.MOTIF_LIBRARY_IDLE)
                 : i < 8
                     ? this.layout.BOOKS.ATTRIBUTES
                     : this.layout.BOOKS.TRANSFORMATIONS;
+            if (i === next && !this.nextMotifLit) colorName = "OFF";
 
             // Keep the view in both buffers without swapping the musical surface.
             this.midiManager.send(this.deviceName,
@@ -891,7 +913,7 @@ export class LaunchpadMini {
         if (controlType === "BOOK" && this.state.currentView === "MOTIF_LIBRARY") {
             // Do not let pending destructive/copy gestures cross motif boundaries.
             if (value > 0 && !this.copyStage && !this.deleteArmed && !this.performanceHolds.size) {
-                this.actions.selectMotif(controlPosition);
+                this.actions.requestMotif(controlPosition);
             }
             return;
         }

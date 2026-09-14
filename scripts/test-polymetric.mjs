@@ -1155,7 +1155,7 @@ test("PHASE A: 16 independent event and geometry records restore edits through h
     assert.equal(state.currentMotifId, 15); // PLAY BOOK reservations do not select motifs
 });
 
-test("PHASE A: STOP/PAUSE select synchronously, PLAY and invalid selections are inert", () => {
+test("STOP/PAUSE select synchronously; PLAY arms NEXT without changing current motif", () => {
     for (const mode of ["INTERNAL", "MIDI"]) {
         const { state, actions, clock, controller } = setup();
         clock.setSource(mode);
@@ -1176,6 +1176,7 @@ test("PHASE A: STOP/PAUSE select synchronously, PLAY and invalid selections are 
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[9], 127]);
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[9], 0]);
         assert.equal(actions.selectMotif(9), false);
+        before.nextMotifId = 9;
         assert.deepEqual(structuredClone(state), before);
         assert.deepEqual({ ...clock }, clockBefore);
         actions.pausePlayback();
@@ -1372,4 +1373,111 @@ test("shared MIDI worker drains simultaneous Voices without pulse spacing and re
     assert.deepEqual(priority.sent[0].message, noteOff);
     assert.equal(priority.firstBatch, 5);
     assert.match(current, /nextPulseTimeNs \+= pulseIntervalNs;\s*flushMidiMessagesAfterClockPulse\(\);/);
+});
+
+test("NEXT: replacement, cancellation, blink, PAUSE/STOP and view restoration", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller } = setup();
+    const leds = new Map();
+    controller.midiManager.send = (_, [status, note, color]) => leds.set(`${status}:${note}`, color);
+    const tap = id => { const note = controller.mapping.BOOKS[id]; controller.handleMidiMessage([0x90,note,127]); controller.handleMidiMessage([0x90,note,0]); };
+    const color = id => leds.get(`144:${controller.mapping.BOOKS[id]}`);
+    actions.toggleView(); actions.startPlayback(); state.playheadPosition = 3;
+    tap(4);
+    assert.equal(state.playingMotifId, 0); assert.equal(state.currentMotifId, 0);
+    assert.equal(state.nextMotifId, 4); assert.equal(state.playheadPosition, 3);
+    assert.equal(color(0), (controller.colors.GREEN & 0x33) | 4);
+    t.mock.timers.tick(160); assert.equal(color(4), 4);
+    tap(6); assert.equal(state.nextMotifId, 6);
+    assert.equal(color(4), (controller.colors.DIM_GREEN & 0x33) | 4);
+    t.mock.timers.tick(160); assert.equal(color(6), 4);
+    tap(0); assert.equal(state.nextMotifId, null); assert.equal(state.playheadPosition, 3);
+    assert.equal(controller.nextMotifBlinkTimer, null);
+    tap(4); actions.toggleView(); assert.equal(controller.nextMotifBlinkTimer, null);
+    actions.toggleView(); assert.notEqual(controller.nextMotifBlinkTimer, null);
+    actions.pausePlayback(); assert.equal(state.nextMotifId, null);
+    tap(6); assert.equal(state.playingMotifId, 6); assert.equal(state.playheadPosition, 0);
+    actions.continuePlayback(); tap(4); actions.stop();
+    assert.equal(state.nextMotifId, null); assert.equal(state.playingMotifId, 6);
+    assert.equal(controller.nextMotifBlinkTimer, null);
+    controller.resetInputState();
+});
+
+test("NEXT: polymetric boundary dispatches new step zero exactly once, with clock and Note Offs intact", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const app = await source("app.js");
+    const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    const log = console.log; console.log = () => {};
+    try {
+        for (const mode of ["INTERNAL", "MIDI"]) {
+            const { state, actions, clock, controller } = setup();
+            const periods = [4,7,5,32], on = [[0],[1,3,5],[1,3],[0]];
+            [12,11,10,15].forEach((id,i) => {
+                state.setTargetLength(periods[i], { target:id });
+                on[i].forEach(step => state.motif[id][step] = true);
+                state.padConfiguration.voices[id] = { type:"MIDI DRUM", output:{mode:"DEFAULT"}, channel:1, note:60+i };
+            });
+            state.getMotif(4).motifLength = 3; state.getMotif(4).events[12][0] = true;
+            state.getMotif(6).motifLength = 5; state.getMotif(6).events[15][0] = true;
+            const bank = structuredClone(state.motifs), notes = [], offs = [], steps = [], order = [];
+            let tick = 0;
+            const trigger = new Function("state","midiOutputSelector","midiManager","launchpad","setTimeout",`${dispatch}; return triggerMotifStep;`)(state,
+                {options:[{textContent:"Drums"}],selectedIndex:0},
+                {send:(_,m)=>{notes.push({tick,id:state.playingMotifId,m});order.push("note");},findOutput:()=>({})},
+                {pulseInstrument(){}}, fn=>offs.push(fn));
+            actions.setMotifChangeHandler(() => { order.push("view"); controller.drawSelectedMotif(); });
+            actions.setClockStepHandler(() => { steps.push([state.playingMotifId,state.playheadPosition]); trigger(state.playheadPosition); });
+            clock.setSource(mode); actions.startPlayback(); trigger(0);
+            const revision = clock.transportRevision;
+            for (tick=1;tick<=2245;tick++) {
+                if(tick===1121) { actions.requestMotif(4); actions.requestMotif(6); }
+                if(mode==="MIDI") for(let p=0;p<6;p++) clock.receiveMidiClockPulse();
+                else clock.receiveInternalClockStep({sequence:tick,transportRevision:revision});
+                if(tick<2240) {
+                    assert.equal(state.playingMotifId,0);
+                    [12,11,10,15].forEach((id,i)=>assert.equal(state.getVoiceStep(id),tick%periods[i]));
+                }
+            }
+            assert.equal(steps.length,2245);
+            assert.deepEqual(steps[2238],[0,1119]);
+            assert.deepEqual(steps[2239],[6,0]);
+            assert.deepEqual(steps[2240],[6,1]);
+            assert.deepEqual(steps[2244],[6,0]);
+            assert.equal(state.nextMotifId,null); assert.equal(clock.transportRevision,revision);
+            assert.equal(state.transportState,"PLAY");
+            for(let i=0;i<4;i++) assert.deepEqual(notes.filter(n=>n.id===0&&n.m[1]===60+i).map(n=>n.tick),
+                Array.from({length:2240},(_,n)=>n).filter(n=>on[i].includes(n%periods[i])));
+            assert.deepEqual(notes.filter(n=>n.id===6).map(n=>n.tick),[2240,2245]);
+            assert.equal(notes.some(n=>n.id===4),false);
+            assert.equal(order[order.indexOf("view")-1],"note");
+            const ons = notes.map(n=>n.m); offs.forEach(fn=>fn());
+            assert.deepEqual(notes.slice(ons.length).map(n=>n.m),ons.map(([s,n])=>[s,n,0]));
+            assert.deepEqual(state.motifs,bank);
+            controller.resetInputState();
+        }
+    } finally { console.log = log; }
+});
+
+test("NEXT: live geometry boundary and Footer follow PLAYING, not the armed motif", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { readPlayFooter } = await import("../src/PlayFooterUI.mjs");
+    const { state, actions, clock, controller } = setup();
+    state.setTargetLength(8,{target:null});
+    state.getMotif(4).motifLength=3;
+    actions.toggleView(); actions.startPlayback();
+    state.playheadPosition=2;
+    actions.setSelectedLength(5); // Internal live change retains the current global cycle.
+    assert.equal(state.liveLengthCycle.duration,8);
+    actions.requestMotif(4);
+    assert.equal(readPlayFooter(state,controller).zone1,"MOTIF 01");
+    const frames=[];
+    actions.setClockStepHandler(()=>frames.push([state.playingMotifId,state.playheadPosition]));
+    for(let i=1;i<=6;i++) clock.receiveInternalClockStep({sequence:i,transportRevision:clock.transportRevision});
+    assert.deepEqual(frames,[[0,3],[0,4],[0,5],[0,6],[0,7],[4,0]]);
+    assert.equal(readPlayFooter(state,controller).zone1,"MOTIF 05");
+    assert.equal(readPlayFooter(state,controller).resolution,"3 STEPS \u00b7 1/16");
+    assert.equal(readPlayFooter(state,controller).states,"");
+    assert.equal(controller.nextMotifBlinkTimer,null);
+    assert.equal(state.liveLengthCycle,null);
+    controller.resetInputState();
 });

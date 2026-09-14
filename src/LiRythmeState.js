@@ -41,7 +41,14 @@ export class LiRythmeState {
         this.filterMode = false;
 
         this.padConfiguration = new PadConfiguration();
-        this.currentMotifId = 0;
+        this.playingMotifId = 0;
+        this.nextMotifId = null;
+        // Phase B: visible/editable motif follows PLAYING; no independent VIEW yet.
+        Object.defineProperty(this, "currentMotifId", {
+            enumerable: true,
+            get: () => this.playingMotifId,
+            set: id => { this.playingMotifId = id; }
+        });
         this.motifs = Array.from({ length: 16 }, () => ({
             events: Array.from({ length: 16 }, () => new Array(32).fill(false)),
             motifLength: null,
