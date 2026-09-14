@@ -1119,3 +1119,46 @@ test("THE GATE retains functional COPY/DELETE, blink phase and Footer Zone 3 in 
     }
     controller.resetInputState();
 });
+
+test("shared MIDI worker drains simultaneous Voices without pulse spacing and respects clock guard", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const old = execFileSync("git", ["show", "e322070:src/hardware/midi/MidiClockWorker.cjs"], { encoding: "utf8" });
+    const current = await source("hardware/midi/MidiClockWorker.cjs");
+    const run = (code, name, costs = [], offs = []) => {
+        const section = code.slice(code.indexOf("function takePendingMidiMessage()"), code.indexOf("function scheduleIdleMidiFlush()"));
+        return new Function("costs", "offs", `
+            let now = 0n, nextPulseTimeNs = 20833333n;
+            const MIDI_SEND_GUARD_NS = 2000000n;
+            const process = { hrtime: { bigint: () => now } };
+            const pendingMidiMessages = [45, 43, 44, 36].map(note => [0x99, note, 100]);
+            const pendingNoteOffMessages = offs.slice();
+            const sent = [], diagnostic = null;
+            const output = { sendMessage(message) { sent.push({ message, at: Number(now) / 1e6 }); now += BigInt(costs.shift() ?? 100000); } };
+            const getPendingMidiCount = () => pendingMidiMessages.length + pendingNoteOffMessages.length;
+            const recordMidiDrop = () => {}, post = () => {}, serializeError = e => String(e);
+            ${section}
+            ${name}();
+            const firstBatch = sent.length;
+            now = nextPulseTimeNs; nextPulseTimeNs += 20833333n;
+            ${name}();
+            return { sent, firstBatch, pending: getPendingMidiCount() };
+        `)(costs.slice(), offs);
+    };
+    const before = run(old, "sendOneMidiMessageAfterClockPulse");
+    assert.equal(before.firstBatch, 1);
+    assert.equal(before.sent[1].at, 20.833333);
+    const after = run(current, "flushMidiMessagesAfterClockPulse");
+    assert.equal(after.firstBatch, 4);
+    assert.deepEqual(after.sent.map(e => e.message[1]), [45, 43, 44, 36]);
+    assert.equal(after.sent[3].at, 0.3);
+    assert.equal(after.pending, 0);
+    const guarded = run(current, "flushMidiMessagesAfterClockPulse", [19000000]);
+    assert.equal(guarded.firstBatch, 1);
+    assert.equal(guarded.sent[1].at, 20.833333);
+    assert.equal(guarded.pending, 0);
+    const noteOff = [0x99, 40, 0];
+    const priority = run(current, "flushMidiMessagesAfterClockPulse", [], [noteOff]);
+    assert.deepEqual(priority.sent[0].message, noteOff);
+    assert.equal(priority.firstBatch, 5);
+    assert.match(current, /nextPulseTimeNs \+= pulseIntervalNs;\s*flushMidiMessagesAfterClockPulse\(\);/);
+});

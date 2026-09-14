@@ -354,19 +354,15 @@ function sendOnePendingMidiMessage() {
     return true;
 }
 
-function sendOneMidiMessageAfterClockPulse() {
-    if (getPendingMidiCount() === 0) {
-        return;
+function flushMidiMessagesAfterClockPulse() {
+    // A chord must not be serialized across clock pulses. Drain only the
+    // existing bounded queue, checking the clock guard before every send.
+    const pendingCount = getPendingMidiCount();
+    for (let i = 0; i < pendingCount; i++) {
+        const remainingNs = nextPulseTimeNs - process.hrtime.bigint();
+        if (remainingNs <= MIDI_SEND_GUARD_NS) return;
+        if (!sendOnePendingMidiMessage()) return;
     }
-
-    const remainingNs =
-        nextPulseTimeNs - process.hrtime.bigint();
-
-    if (remainingNs <= MIDI_SEND_GUARD_NS) {
-        return;
-    }
-
-    sendOnePendingMidiMessage();
 }
 
 function scheduleIdleMidiFlush() {
@@ -778,7 +774,7 @@ function runClockLoop() {
         recordDiagnosticPulse(nextPulseTimeNs);
 
         nextPulseTimeNs += pulseIntervalNs;
-        sendOneMidiMessageAfterClockPulse();
+        flushMidiMessagesAfterClockPulse();
         reportDiagnostic();
     }
 
