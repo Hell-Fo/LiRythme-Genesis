@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { readPlayStatus, initializePlayStatusUI } from "../src/PlayStatusUI.mjs";
+import { initializePlayFooterUI } from "../src/PlayFooterUI.mjs";
 
 const source = file => fs.readFile(new URL(`../${file}`, import.meta.url), "utf8");
 const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
@@ -31,6 +32,56 @@ test("SELECTED uses the musical selection, including null, unnamed Voices and co
     assert.equal(read().selected, "Motif 01");
     state.selectedInstrument = 99;
     assert.equal(read().selected, "Motif 01");
+});
+
+test("footer observes all independent active flags and COPY stages through the existing render loop", async () => {
+    const context = setup();
+    const controller = { copyStage: null, deleteArmed: false };
+    const keys = ["solo", "mute", "copy", "delete"];
+    const zones = ["zone1", "project", "states", "resolution"];
+    const elements = new Map(zones.map(key => [`play-footer-${key}`, { textContent: "" }]));
+    const footer = initializePlayFooterUI({ state: context.state, controller,
+        document: { getElementById: id => elements.get(id) } });
+    const { tick, ui } = mount({ ...context, renderFooter: footer.render });
+    const value = key => elements.get(`play-footer-${key}`).textContent;
+    assert.equal(value("states"), "");
+    assert.equal(value("zone1"), "");
+    assert.equal(value("project"), "Non disponible");
+    assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
+    for (let mask = 0; mask < 16; mask++) {
+        context.state.soloActive = Boolean(mask & 1);
+        context.state.muteActive = Boolean(mask & 2);
+        controller.copyStage = mask & 4 ? "SOURCE" : null;
+        controller.deleteArmed = Boolean(mask & 8);
+        const before = structuredClone({ state: context.state, controller });
+        tick();
+        assert.equal(value("states"), keys.filter((key, bit) => mask & (1 << bit)).map(key => key.toUpperCase()).join("  "));
+        assert.equal(value("project"), "Non disponible");
+        assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
+        assert.equal(value("zone1"), "");
+        assert.deepEqual(structuredClone({ state: context.state, controller }), before);
+    }
+    controller.copyStage = "TARGET"; tick();
+    assert.equal(value("states"), "SOLO  MUTE  COPY  DELETE");
+    context.state.soloActive = false; context.state.muteActive = false;
+    context.state.soloSelection.add(1); context.state.muteSelection.add(2);
+    context.state.filterMode = true;
+    controller.copyStage = null; controller.deleteArmed = false;
+    tick();
+    assert.equal(value("states"), "");
+    assert.equal(value("zone1"), "");
+    assert.equal(value("project"), "Non disponible");
+    assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
+    context.state.motifLength = 8; context.state.stepDivision = 8;
+    context.state.soloActive = true; tick();
+    assert.equal(value("resolution"), "8 STEPS \u00b7 1/8");
+    assert.equal(value("project"), "Non disponible");
+    assert.equal(value("states"), "SOLO");
+    assert.equal(value("zone1"), "");
+    ui.dispose();
+    assert.doesNotMatch(await source("src/PlayFooterUI.mjs"), /addEventListener|setTimeout|setInterval|requestAnimationFrame|innerHTML/);
+    assert.match(await source("src/app.js"), /initializePlayFooterUI\(\{ state, controller: launchpad \}\)/);
+    assert.match(await source("src/app.js"), /renderFooter: \(\) => footerUI\?\.render\(\)/);
 });
 
 test("BPM reads the Clock's real internal tempo and never substitutes it for external BPM", () => {
@@ -124,7 +175,7 @@ test("PLAY has only informational markup and app wires rendering before transpor
         assert.match(play, new RegExp(`<dd id="play-${key}">`));
     }
     const app = await source("src/app.js");
-    assert.match(app, /initializePlayStatusUI\(\{ state, clock, midiManager, renderMotif: motifUI.render \}\)/);
+    assert.match(app, /initializePlayStatusUI\(\{ state, clock, midiManager,\s*renderMotif: motifUI.render, renderFooter:/);
     assert.match(app, /setTransportTransitionHandler\(\s*\(\{ from, to, origin, transportRevision \}\) => \{\s*playStatusUI.render\(\);/);
     assert.doesNotMatch(await source("src/PlayStatusUI.mjs"), /innerHTML|\.actions|\.setTempo\(|\.setSource\(|\.send\(/);
 });

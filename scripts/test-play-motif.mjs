@@ -97,6 +97,11 @@ test("MOTIF layout preserves order, empty CHAIN and reserved clock without contr
     assert.ok(zone.indexOf('id="play-modulation"') < zone.indexOf('id="play-selection"'));
     assert.match(zone, /<h3 id="play-modulation-title">MODULATION<\/h3>\s*<\/section>/);
     assert.match(zone, /<h3 id="play-selection-title">SELECTION<\/h3>\s*<p id="play-selected"/);
+    const footer = zone.match(/<footer id="play-footer-3"[^>]*>([\s\S]*?)<\/footer>/)[1];
+    assert.deepEqual([...footer.matchAll(/<span id="play-footer-(\w+)"[^>]*><\/span>/g)].map(match => match[1]),
+        ["zone1", "project", "states", "resolution"]);
+    assert.equal((footer.match(/<span\b/g) || []).length, 4);
+    assert.match(html, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
     assert.doesNotMatch(await source("src/PlayMotifUI.mjs"), /addEventListener|requestAnimationFrame|setInterval|setTimeout|innerHTML/);
     assert.match(await source("src/app.js"), /initializePlayMotifUI\(\{ state \}\)/);
 });

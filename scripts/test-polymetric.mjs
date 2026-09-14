@@ -473,7 +473,7 @@ test("PLAY cycle feedback follows real Leader/Follower wraps with explicit prior
                     assert.equal(colors.at(-1), controller.colors[colorName]);
                 }
                 t.mock.timers.tick(80);
-                if (colors.length) assert.equal(colors.at(-1), controller.colors.GREEN);
+                if (colors.length) assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
             }
             controller.resetInputState();
         }
@@ -492,15 +492,15 @@ test("PLAY pulse ownership prevents stale beat/cycle timers overwriting transpor
     assert.equal(colors.at(-1), controller.colors.YELLOW);
     controller.pulseTransport(); // lower priority cannot replace cycle
     t.mock.timers.tick(40);
-    assert.equal(colors.at(-1), controller.colors.GREEN);
-    controller.pulseTransport();
     assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
-    t.mock.timers.tick(80);
+    controller.pulseTransport();
     assert.equal(colors.at(-1), controller.colors.GREEN);
+    t.mock.timers.tick(80);
+    assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
     for (const transition of [() => actions.pausePlayback(), () => actions.stop()]) {
         actions.startPlayback(); controller.pulseMotifCycle();
         transition(); controller.drawTransport();
-        assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
+        assert.equal(colors.at(-1), state.transportState === "PAUSE" ? controller.colors.DIM_GREEN : controller.colors.OFF);
         const count = colors.length;
         t.mock.timers.tick(80);
         assert.equal(colors.length, count);
@@ -508,9 +508,9 @@ test("PLAY pulse ownership prevents stale beat/cycle timers overwriting transpor
     actions.startPlayback(); controller.pulseMotifCycle(); t.mock.timers.tick(40);
     actions.stop(); actions.startPlayback(); controller.pulseTransport();
     t.mock.timers.tick(40);
-    assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
-    t.mock.timers.tick(40);
     assert.equal(colors.at(-1), controller.colors.GREEN);
+    t.mock.timers.tick(40);
+    assert.equal(colors.at(-1), controller.colors.DIM_GREEN);
     state.currentTimeline = "MODULATION";
     const count = colors.length;
     controller.pulseMotifCycle();
@@ -727,6 +727,136 @@ test("COPY retains captured Note Offs for active destination notes", async () =>
     trigger(0); assert.deepEqual(events, ons);
     pending.forEach(fn => fn());
     assert.deepEqual(events.slice(ons.length), ons.map(([output, [status, note]]) => [output, [status, note, 0]]));
+});
+
+test("instrument event feedback respects selection, redraws, retriggers and selection modes", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, controller } = setup();
+    t.after(() => controller.resetInputState());
+    const before = structuredClone(state);
+    const leds = new Map();
+    controller.midiManager.send = (_, [status, note, value]) => {
+        if (status === 0x90) leds.set(note, value & 0x33);
+    };
+    const color = id => leds.get(controller.mapping.INSTRUMENTS[id]);
+    const selected = state.selectedInstrument;
+    const normal = state.padConfiguration.voices.findIndex((voice, id) => id !== selected && voice.type === "MIDI DRUM");
+    controller.drawInstruments();
+    assert.equal(color(normal), controller.colors.DIM_GREEN & 0x33);
+    assert.equal(color(selected), controller.colors.DIM_AMBER & 0x33);
+    controller.pulseInstrument(normal); controller.pulseInstrument(selected);
+    assert.equal(color(normal), controller.colors.GREEN & 0x33);
+    assert.equal(color(selected), controller.colors.YELLOW & 0x33);
+    controller.drawInstruments();
+    assert.equal(color(normal), controller.colors.GREEN & 0x33);
+    assert.equal(color(selected), controller.colors.YELLOW & 0x33);
+    t.mock.timers.tick(40); controller.pulseInstrument(selected);
+    t.mock.timers.tick(40);
+    assert.equal(color(normal), controller.colors.DIM_GREEN & 0x33);
+    assert.equal(color(selected), controller.colors.YELLOW & 0x33);
+    t.mock.timers.tick(40);
+    assert.equal(color(selected), controller.colors.DIM_AMBER & 0x33);
+    assert.deepEqual(structuredClone(state), before);
+    controller.filterSelectionMode = true;
+    state.visibleInstrumentFilter.add(normal);
+    controller.drawInstruments();
+    assert.equal(color(normal), controller.colors.YELLOW & 0x33);
+    controller.performanceHolds.set("solo", { selection: new Set([selected]), edited: false });
+    controller.drawInstruments(); controller.pulseInstrument(normal);
+    assert.equal(color(normal), controller.colors.DIM_GREEN & 0x33);
+    assert.equal(color(selected), controller.colors.YELLOW & 0x33);
+});
+
+test("PLAY flashes GREEN over DIM GREEN; PAUSE stays dim and STOP sends real OFF", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller } = setup();
+    t.after(() => controller.resetInputState());
+    const messages = [];
+    controller.midiManager.send = (_, message) => messages.push(message);
+    const color = () => messages.at(-1)[2] & 0x33;
+    actions.startPlayback(); controller.drawTransport();
+    assert.equal(color(), controller.colors.DIM_GREEN & 0x33);
+    for (let beat = 0; beat < 3; beat++) {
+        controller.pulseTransport();
+        assert.equal(color(), controller.colors.GREEN & 0x33);
+        controller.drawTransport();
+        assert.equal(color(), controller.colors.GREEN & 0x33);
+        t.mock.timers.tick(80);
+        assert.equal(color(), controller.colors.DIM_GREEN & 0x33);
+    }
+    for (const transport of ["PAUSE", "STOP"]) {
+        actions.startPlayback(); controller.pulseTransport();
+        if (transport === "PAUSE") actions.pausePlayback(); else actions.stop();
+        controller.drawTopControls(); controller.drawTransport();
+        const expected = transport === "PAUSE" ? controller.colors.DIM_GREEN & 0x33 : 0;
+        assert.deepEqual(messages.at(-1), [0xB0, controller.mapping.TOP_CONTROLS.PLAY_STOP, expected | 4]);
+        const count = messages.length;
+        controller.pulseTransport(); t.mock.timers.tick(1000);
+        assert.equal(messages.length, count);
+        assert.equal(color(), expected);
+        assert.equal(state.transportState, transport);
+    }
+});
+
+test("SHIFT+SOLO restores historical Instrument Timeline Focus independently of SOLO memory", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, controller } = setup();
+    t.after(() => controller.resetInputState());
+    const top = (name, value) => controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS[name], value]);
+    const voice = id => {
+        controller.handleMidiMessage([0x90, controller.mapping.INSTRUMENTS[id], 127]);
+        controller.handleMidiMessage([0x90, controller.mapping.INSTRUMENTS[id], 0]);
+    };
+    top("SOLO", 127); voice(3); top("SOLO", 0);
+    const before = structuredClone(state);
+    const colors = [];
+    controller.midiManager.send = (_, message) => colors.push(message);
+    const begin = () => { top("SHIFT", 127); top("SOLO", 127); };
+    const end = () => { top("SOLO", 0); top("SHIFT", 0); };
+    begin();
+    assert.equal(state.filterMode, true);
+    assert.equal(state.selectedInstrument, null);
+    assert.equal(controller.performanceHolds.size, 0);
+    assert.equal(state.visibleInstrumentFilter.size, 0);
+    end(); // First empty activation stays active.
+    assert.equal(state.filterMode, true);
+    begin(); end(); // Unedited active focus exits completely.
+    assert.equal(state.filterMode, false);
+    begin(); voice(1); voice(2); voice(1);
+    top("SHIFT", 0); top("SOLO", 0); // Release order must not toggle audio SOLO.
+    assert.equal(controller.filterSelectionMode, false);
+    assert.equal(state.filterMode, true);
+    assert.deepEqual([...state.visibleInstrumentFilter], [2]);
+    begin(); voice(4); end(); // Editing an active focus keeps it active.
+    assert.equal(state.filterMode, true);
+    assert.deepEqual([...state.visibleInstrumentFilter], [2, 4]);
+    t.mock.timers.tick(160);
+    assert.equal(colors.filter(m => m[1] === controller.mapping.TOP_CONTROLS.SOLO).at(-1)[2], 4);
+    t.mock.timers.tick(160);
+    assert.equal(colors.filter(m => m[1] === controller.mapping.TOP_CONTROLS.SOLO).at(-1)[2],
+        (controller.colors.GREEN & 0x33) | 4);
+    begin(); end();
+    assert.equal(state.filterMode, false);
+    assert.equal(state.visibleInstrumentFilter.size, 0);
+    const expected = structuredClone(before);
+    expected.selectedInstrument = null;
+    assert.deepEqual(structuredClone(state), expected);
+    t.mock.timers.tick(160);
+    assert.equal(colors.filter(m => m[1] === controller.mapping.TOP_CONTROLS.SOLO).at(-1)[2], 4);
+    top("SOLO", 127); top("SOLO", 0);
+    assert.equal(state.soloActive, false);
+    assert.deepEqual([...state.soloSelection], [3]);
+    top("SOLO", 127); top("SOLO", 0);
+    assert.equal(state.soloActive, true);
+    // DELETE retains priority even when SHIFT is held.
+    top("SHIFT", 127);
+    const del = controller.mapping.VALUE_CONTROLS.DELETE;
+    controller.handleMidiMessage([0x90, del, 127]);
+    controller.handleMidiMessage([0x90, del, 0]);
+    top("SOLO", 127); top("SOLO", 0); top("SHIFT", 0);
+    assert.equal(state.soloActive, false);
+    assert.equal(state.soloSelection.size, 0);
+    assert.equal(state.filterMode, false);
 });
 
 test("SOLO/MUTE hold selection, memory, empty selection, DELETE and independent blinking", t => {

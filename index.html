@@ -31,6 +31,9 @@
         .play-zones { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(280px, 1.5fr) minmax(180px, .8fr); gap: 16px; margin-top: 24px; }
         .play-zones > section { min-width: 0; }
         .selection-name { margin: 0; font-size: 1.25rem; font-weight: 600; overflow-wrap: anywhere; }
+        .play-footer-3 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 16px; border-top: 1px solid #c9cfd5; }
+        .play-footer-3 > span { min-height: 48px; display: grid; place-items: center; padding: 8px; text-align: center; overflow-wrap: anywhere; white-space: pre-wrap; }
+        .play-footer-3 > span + span { border-left: 1px solid #c9cfd5; }
         @media (max-width: 850px) { .play-zones { grid-template-columns: 1fr; } .play-modulation { min-height: 220px; } }
         .motif-clock-space { min-height: 220px; display: grid; place-items: center; border-block: 1px solid #c9cfd5; }
         .motif-position { grid-template-columns: 1fr 1fr; }
@@ -169,6 +172,9 @@
                 <p id="play-selected" class="selection-name" aria-live="polite">Non disponible</p>
             </section>
             </div>
+            <footer id="play-footer-3" class="play-footer-3" aria-label="Footer PLAY">
+                <span id="play-footer-zone1"></span><span id="play-footer-project" aria-label="Projet"></span><span id="play-footer-states" aria-label="États"></span><span id="play-footer-resolution" aria-label="Résolution"></span>
+            </footer>
         </section>
     </main>
     <aside id="help-panel" aria-labelledby="help-title">

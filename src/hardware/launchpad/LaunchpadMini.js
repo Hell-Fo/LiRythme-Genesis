@@ -28,8 +28,6 @@ const TEMPO_MODERATE_REPEAT_MS = 100;
 const TEMPO_FAST_REPEAT_MS = 80;
 const TRANSPORT_PULSE_MS = 80;
 const INSTRUMENT_PULSE_MS = 80;
-// All eight current voices use MIDI DRUM outputs; the event color follows that type.
-const MIDI_DRUM_EVENT_COLOR = LaunchpadColors.AMBER;
 
 export class LaunchpadMini {
     constructor(
@@ -324,30 +322,16 @@ export class LaunchpadMini {
         const isInFilter =
             this.state.visibleInstrumentFilter.has(i);
 
-        let colorValue =
-            this.colors[
-            this.layout.INSTRUMENTS
-            ];
-
-        if (
-            this.filterSelectionMode &&
-            isInFilter
-        ) {
-            colorValue = this.colors.YELLOW;
-        } else if (isSelected) {
-            colorValue = this.colors.GREEN;
-        }
-
-        return colorValue;
+        if (this.filterSelectionMode && isInFilter) return this.colors.YELLOW;
+        const hasEvent = this.instrumentPulses.get(i)?.timer != null;
+        if (isSelected) return hasEvent ? this.colors.YELLOW : this.colors.DIM_AMBER;
+        return hasEvent ? this.colors.GREEN : this.colors.DIM_GREEN;
     }
 
     drawInstruments() {
         for (let i = 0; i < this.mapping.INSTRUMENTS.length; i++) {
             const note = this.mapping.INSTRUMENTS[i];
-            const colorValue =
-                this.instrumentPulses.get(i)?.timer != null
-                    ? MIDI_DRUM_EVENT_COLOR
-                    : this.getInstrumentColor(i);
+            const colorValue = this.getInstrumentColor(i);
 
             this.setLed(
                 note,
@@ -413,7 +397,7 @@ export class LaunchpadMini {
             this.setInstrumentEventLed(position, this.getInstrumentColor(position));
         }, INSTRUMENT_PULSE_MS);
 
-        this.setInstrumentEventLed(position, MIDI_DRUM_EVENT_COLOR);
+        this.setInstrumentEventLed(position, this.getInstrumentColor(position));
     }
 
     drawAttributesTransformations() {
@@ -452,11 +436,12 @@ export class LaunchpadMini {
                     this.transportPulseRevision ===
                         this.actions.clock.transportRevision
                     ? this.transportPulseColor
-                    : this.colors.GREEN
+                    : this.colors.DIM_GREEN
             );
         } else {
             this.cancelTransportPulse();
-            this.setTransportPulseLed(this.colors.DIM_GREEN);
+            this.setTransportPulseLed(this.state.transportState === "PAUSE"
+                ? this.colors.DIM_GREEN : this.colors.OFF);
         }
     }
     drawFilterStatus() {
@@ -465,14 +450,15 @@ export class LaunchpadMini {
 
     drawPerformanceStatus(kind) {
         const active = this.state[kind + "Active"];
+        const focus = kind === "solo" && (this.filterSelectionMode || this.state.filterMode);
         const old = this.performanceBlinks.get(kind);
-        if (old && old.active === active) return;
+        if (old && old.active === active && old.focus === focus) return;
         if (old) clearTimeout(old.timer);
-        const blink = { active, timer: null, lit: true };
+        const blink = { active, focus, timer: null, lit: true };
         this.performanceBlinks.set(kind, blink);
         const draw = () => {
             if (this.performanceBlinks.get(kind) !== blink) return;
-            const normal = this.colors[this.layout.TOP_CONTROLS[kind.toUpperCase()]];
+            const normal = focus ? this.colors.GREEN : this.colors[this.layout.TOP_CONTROLS[kind.toUpperCase()]];
             this.midiManager.send(this.deviceName, [0xB0, this.mapping.TOP_CONTROLS[kind.toUpperCase()],
                 ((active && !blink.lit ? this.colors.OFF : normal) & 0x33) | 4]);
             if (active) {
@@ -510,7 +496,7 @@ export class LaunchpadMini {
         }
     }
 
-    pulseTransport(color = this.colors.DIM_GREEN, priority = 0) {
+    pulseTransport(color = this.colors.GREEN, priority = 0) {
         // Cycle feedback wins over the coincident beat; one timer owns the LED.
         if (this.state.transportState === "PLAY" &&
             this.transportPulseRevision === this.actions.clock.transportRevision &&
@@ -543,7 +529,7 @@ export class LaunchpadMini {
                 return;
             }
 
-            this.setTransportPulseLed(this.colors.GREEN);
+            this.setTransportPulseLed(this.colors.DIM_GREEN);
         }, TRANSPORT_PULSE_MS);
     }
 
@@ -896,6 +882,28 @@ export class LaunchpadMini {
                 this.drawPlayhead();
                 this.swapBuffers();
             }
+            return;
+        }
+        // Route the whole focus gesture here, even when SHIFT is released first.
+        // A SOLO hold that began without SHIFT remains a performance gesture.
+        if (controlName === "SOLO" && (this.filterSelectionMode ||
+            (value > 0 && this.shiftPressed && !this.performanceHolds.has("solo")))) {
+            if (value > 0) {
+                this.filterWasActive = this.state.filterMode;
+                this.filterSelectionMode = true;
+                this.filterSelectionChanged = false;
+                if (!this.state.filterMode) this.actions.enterFocusMode();
+            } else {
+                this.filterSelectionMode = false;
+                if (this.filterSelectionChanged) this.actions.activateFocusMode();
+                else if (this.filterWasActive) this.actions.exitFocusMode();
+                else this.actions.activateFocusMode();
+            }
+            this.drawInstruments();
+            this.drawMotif();
+            this.drawPlayhead();
+            this.drawFilterStatus();
+            this.swapBuffers();
             return;
         }
         if (["SOLO", "MUTE"].includes(controlName)) {

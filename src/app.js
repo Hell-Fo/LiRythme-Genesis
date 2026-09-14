@@ -9,6 +9,7 @@ import { LiRythmeActions } from "./LiRythmeActions.js";
 import { initializeSettingsUI } from "./SettingsUI.js";
 import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
 import { initializePlayMotifUI } from "./PlayMotifUI.mjs";
+import { initializePlayFooterUI } from "./PlayFooterUI.mjs";
 
 
 // ============================================================
@@ -49,7 +50,9 @@ const midiManager = new MidiManager();
 const state = new LiRythmeState();
 const clock = new LiRythmeClock(state);
 const motifUI = initializePlayMotifUI({ state });
-const playStatusUI = initializePlayStatusUI({ state, clock, midiManager, renderMotif: motifUI.render });
+let footerUI = null;
+const playStatusUI = initializePlayStatusUI({ state, clock, midiManager,
+    renderMotif: motifUI.render, renderFooter: () => footerUI?.render() });
 
 state.filterMode =
     focusStartupCheckbox.checked;
@@ -409,6 +412,8 @@ const launchpad = new LaunchpadMini(
 
 const handleControllerMessage =
     (data) => launchpad.handleMidiMessage(data);
+
+footerUI = initializePlayFooterUI({ state, controller: launchpad });
 
 function redrawLaunchpad() {
     launchpad.drawMotif();

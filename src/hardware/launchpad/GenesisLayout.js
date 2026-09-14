@@ -30,7 +30,7 @@ export const GenesisLayout = {
     TOP_CONTROLS: {
         SHIFT: "GREEN",
         MODULATION: "DIM_RED",
-        PLAY_STOP: "DIM_GREEN",
+        PLAY_STOP: "OFF",
         SOLO: "AMBER",
         MUTE: "YELLOW",
         MUTATION: "DIM_RED",
