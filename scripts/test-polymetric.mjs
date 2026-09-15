@@ -1716,3 +1716,104 @@ test("COPY convention: source blink, yellow success, red held refusal and cancel
         controller.resetInputState();
     }
 });
+
+test("PERSISTENCE: versioned 16-slot roundtrip restores only bank and current ID", async () => {
+    const {snapshotMotifBank,restoreMotifBank,validateMotifBank}=await import("../src/MotifBankFormat.mjs");
+    const {state}=setup();
+    for(let i=0;i<16;i++){state.motifs[i].events[i][i]=true;state.motifs[i].voiceLengths[i]=i+1;state.motifs[i].motifLength=32-i;}
+    state.currentMotifId=6;state.nextMotifId=9;state.transportState="PLAY";state.playheadPosition=15;
+    const bank=JSON.parse(JSON.stringify(snapshotMotifBank(state)));
+    assert.deepEqual(Object.keys(bank).sort(),["currentMotifId","format","motifs","version"]);
+    const fresh=setup();restoreMotifBank(fresh.state,bank);
+    assert.deepEqual(fresh.state.motifs,state.motifs);
+    assert.equal(fresh.state.currentMotifId,6);assert.equal(fresh.state.playheadPosition,0);
+    assert.equal(fresh.state.nextMotifId,null);assert.equal(fresh.state.transportState,"STOP");
+    assert.equal(fresh.state.currentView,"PLAY");assert.equal(fresh.state.soloActive,false);
+    fresh.state.motifs[0].events[0][0]=false;
+    assert.equal(bank.motifs[0].events[0][0],true);
+    assert.equal(new Set(fresh.state.motifs.flatMap(m=>m.events)).size,256);
+    for(const mutate of [b=>b.version=2,b=>b.format="bad",b=>b.currentMotifId=16,b=>b.motifs.pop(),
+        b=>b.motifs[0].events[0][0]=1,b=>b.motifs[0].voiceLengths[0]=0,b=>b.motifs[0].motifLength=33]){
+        const bad=structuredClone(bank);mutate(bad);assert.throws(()=>validateMotifBank(bad));
+    }
+});
+
+test("PERSISTENCE: absent file, atomic replacement, corruption preservation and failed rename", async t => {
+    const {MotifBankStorage}=await import("../src/MotifBankStorage.mjs");
+    const {snapshotMotifBank}=await import("../src/MotifBankFormat.mjs");
+    const os=await import("node:os"),path=await import("node:path");
+    const dir=await fs.mkdtemp(path.join(os.tmpdir(),"genesis-bank-test-"));
+    t.after(async()=>{for(const name of await fs.readdir(dir)) await fs.unlink(path.join(dir,name));await fs.rmdir(dir);});
+    const file=path.join(dir,"motif-bank.json"), store=new MotifBankStorage(file);
+    assert.deepEqual(await store.load(),{bank:null});
+    const {state}=setup();const bank=snapshotMotifBank(state);
+    await store.save(bank);
+    const first=await fs.readFile(file,"utf8");
+    bank.motifs[0].events[12][3]=true;
+    const failing=new MotifBankStorage(file,{...fs,rename:async()=>{throw new Error("simulated rename failure");}});
+    await assert.rejects(failing.save(bank));assert.equal(await fs.readFile(file,"utf8"),first);
+    assert.deepEqual(await fs.readdir(dir),["motif-bank.json"]);
+    await store.save(bank);assert.deepEqual((await new MotifBankStorage(file).load()).bank,bank);
+    for(const text of ["{broken",JSON.stringify({...bank,version:99}),JSON.stringify({...bank,motifs:[]})]) {
+        await fs.writeFile(file,text);
+        const result=await new MotifBankStorage(file).load();assert.equal(result.bank,null);assert.ok(result.warning);
+        const backups=(await fs.readdir(dir)).filter(n=>n.includes(".invalid-"));
+        assert.ok((await Promise.all(backups.map(n=>fs.readFile(path.join(dir,n),"utf8")))).includes(text));
+    }
+});
+
+test("PERSISTENCE: coalesced edits, COPY/DELETE, selected ID; no tick or LED snapshots", async () => {
+    const {initializeMotifBankAutosave}=await import("../src/MotifBankAutosave.mjs");
+    const {state,actions,clock,controller}=setup();
+    let task=null,saves=[];
+    const session=await initializeMotifBankAutosave(state,{load:async()=>({bank:null}),save:async bank=>saves.push(bank)},
+        {schedule:fn=>{task=fn;return 1;},cancel:()=>{task=null;}});
+    assert.equal(task,null);
+    actions.toggleInstrumentStep(0);actions.toggleInstrumentStep(3);actions.setSelectedLength(7);
+    assert.equal(saves.length,0);assert.ok(task);
+    await session.flush();assert.equal(saves.length,1);
+    assert.equal(saves[0].motifs[0].events[12][3],true);assert.equal(saves[0].motifs[0].voiceLengths[12],7);
+    actions.applyMotifCopy(actions.captureMotifCopy(0),4);actions.selectMotif(4);
+    await session.flush();assert.equal(saves.at(-1).currentMotifId,4);
+    assert.deepEqual(saves.at(-1).motifs[4],saves.at(-1).motifs[0]);
+    actions.deleteMotif(4);await session.flush();assert.equal(saves.at(-1).motifs[4].motifLength,null);
+    assert.ok(saves.at(-1).motifs[4].events.every(row=>row.every(v=>!v)));
+    const count=saves.length;actions.startPlayback();
+    for(let i=1;i<=32;i++){clock.receiveInternalClockStep({sequence:i,transportRevision:clock.transportRevision});controller.drawBooks();}
+    assert.equal(task,null);await session.flush();assert.equal(saves.length,count);
+    actions.requestMotif(1);assert.equal(task,null); // NEXT itself is ephemeral.
+    actions.setClockStepHandler(()=>{});
+    for(let i=33;i<=64;i++)clock.receiveInternalClockStep({sequence:i,transportRevision:clock.transportRevision});
+    assert.equal(saves.length,count);assert.ok(task);await session.flush();
+    assert.equal(saves.at(-1).currentMotifId,1);assert.equal("nextMotifId" in saves.at(-1),false);
+    controller.resetInputState();
+});
+
+test("PERSISTENCE: shutdown flush awaits in-flight save and includes a later edit; failure remains retryable", async () => {
+    const {initializeMotifBankAutosave}=await import("../src/MotifBankAutosave.mjs");
+    const {state,actions}=setup();let release,first=true;const saved=[];
+    const session=await initializeMotifBankAutosave(state,{load:async()=>({bank:null}),save:async b=>{
+        if(first){first=false;await new Promise(r=>release=r);} saved.push(b);
+    }},{schedule:()=>1,cancel:()=>{}});
+    actions.toggleInstrumentStep(0);const pending=session.flush();
+    actions.toggleInstrumentStep(1);const closing=session.flush();release();
+    await Promise.all([pending,closing]);assert.equal(saved.length,2);assert.equal(saved.at(-1).motifs[0].events[12][1],true);
+    const other=setup();let fail=true;
+    const retry=await initializeMotifBankAutosave(other.state,{load:async()=>({bank:null}),save:async()=>{if(fail)throw new Error("disk");}},
+        {schedule:()=>1,cancel:()=>{}});
+    other.actions.toggleInstrumentStep(0);await assert.rejects(retry.flush());fail=false;await retry.flush();
+});
+
+test("PERSISTENCE: restored BOOK displays empty/data/active; IPC close waits for flush", async () => {
+    const {initializeMotifBankAutosave}=await import("../src/MotifBankAutosave.mjs");
+    const {snapshotMotifBank}=await import("../src/MotifBankFormat.mjs");
+    const original=setup();original.state.motif[12][0]=true;original.actions.selectMotif(6);
+    const restored=setup();await initializeMotifBankAutosave(restored.state,{load:async()=>({bank:snapshotMotifBank(original.state)}),save:async()=>{}});
+    restored.actions.toggleView();assert.equal(restored.controller.getLibraryMotifColor(0),"DIM_GREEN");
+    assert.equal(restored.controller.getLibraryMotifColor(1),"OFF");assert.equal(restored.controller.getLibraryMotifColor(6),"GREEN");
+    const main=await fs.readFile(new URL("../main.js",import.meta.url),"utf8");
+    const preload=await fs.readFile(new URL("../preload.js",import.meta.url),"utf8");
+    assert.match(main,/event.preventDefault\(\);[\s\S]*webContents.send\("motif-bank-flush"\)/);
+    assert.match(preload,/await callback\(\); ipcRenderer.send\("motif-bank-flushed", true\)/);
+    assert.match(await source("app.js"),/await initializeMotifBankAutosave[\s\S]*const clock = new LiRythmeClock/);
+});

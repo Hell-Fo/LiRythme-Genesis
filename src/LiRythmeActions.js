@@ -87,6 +87,7 @@ export class LiRythmeActions {
     }
     replaceMotif(id, motif) {
         this.state.motifs[id] = motif;
+        this.state.onBankChange?.();
         if (id === this.state.currentMotifId) {
             this.state.liveLengthCycle = null;
             this.state.playheadPosition = 0;
@@ -265,6 +266,7 @@ export class LiRythmeActions {
 
         this.state.motif[voiceId][stepIndex] =
             !this.state.motif[voiceId][stepIndex];
+        this.state.onBankChange?.();
 
         console.log(
             "VOICE " + (voiceId + 1),
@@ -338,6 +340,7 @@ export class LiRythmeActions {
         // COPY preserves live phase for either clock source, using the existing transition.
         this.state.setTargetLength(copy.length, { target, defer: this.state.transportState === "PLAY" });
         this.state.motif[target] = copy.events.slice();
+        this.state.onBankChange?.();
         // Scheduled Note Offs remain owned by the existing dispatch callbacks.
         return true;
     }
@@ -363,6 +366,7 @@ export class LiRythmeActions {
         const rows = voiceId === null ? this.state.motif : [this.state.motif[voiceId]];
         // Existing scheduled Note Offs own active notes and remain untouched.
         for (const row of rows) row.fill(false);
+        this.state.onBankChange?.();
         return true;
     }
 
@@ -437,6 +441,7 @@ export class LiRythmeActions {
         if (this.state.transportState === "PLAY" && this.state.playheadPosition === 0 &&
             this.state.nextMotifId !== null) {
             this.state.playingMotifId = this.state.nextMotifId;
+            this.state.onBankChange?.();
             this.state.nextMotifId = null;
             this.state.liveLengthCycle = null;
             this.motifTransitionPending = true;

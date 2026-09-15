@@ -10,6 +10,7 @@ import { initializeSettingsUI } from "./SettingsUI.js";
 import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
 import { initializePlayMotifUI } from "./PlayMotifUI.mjs";
 import { initializePlayFooterUI } from "./PlayFooterUI.mjs";
+import { initializeMotifBankAutosave } from "./MotifBankAutosave.mjs";
 
 
 // ============================================================
@@ -48,6 +49,9 @@ focusStartupCheckbox.addEventListener(
 const midiManager = new MidiManager();
 
 const state = new LiRythmeState();
+const motifBankAutosave = await initializeMotifBankAutosave(state, window.motifBankFiles);
+window.motifBankFiles.onClose(() => motifBankAutosave.flush());
+window.motifBankFiles.ready();
 const clock = new LiRythmeClock(state);
 const motifUI = initializePlayMotifUI({ state });
 let footerUI = null;

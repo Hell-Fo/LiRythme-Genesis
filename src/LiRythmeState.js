@@ -18,6 +18,7 @@ import { PadConfiguration } from "./PadConfiguration.js";
 
 export class LiRythmeState {
     constructor() {
+        Object.defineProperty(this, "onBankChange", { value: null, writable: true });
         // Navigation is independent of the musical timeline and transport.
         this.currentView = "PLAY";
         this.transportState = "STOP";
@@ -47,7 +48,11 @@ export class LiRythmeState {
         Object.defineProperty(this, "currentMotifId", {
             enumerable: true,
             get: () => this.playingMotifId,
-            set: id => { this.playingMotifId = id; }
+            set: id => {
+                if (id === this.playingMotifId) return;
+                this.playingMotifId = id;
+                this.onBankChange?.();
+            }
         });
         this.motifs = Array.from({ length: 16 }, () => ({
             events: Array.from({ length: 16 }, () => new Array(32).fill(false)),
@@ -143,6 +148,7 @@ export class LiRythmeState {
         }
         if (id === null) this.motifLength = length;
         else this.voiceLengths[id] = length;
+        this.onBankChange?.();
         if (!defer) {
             this.liveLengthCycle = null;
             this.playheadPosition = 0;

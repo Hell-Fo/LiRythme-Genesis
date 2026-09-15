@@ -96,6 +96,26 @@ ipcMain.handle("pad-configuration-file", async (event, request) => {
 });
 
 let mainWindow;
+let motifBankStorage;
+let motifBankReady = false;
+let motifBankClosing = false;
+let motifBankCloseAllowed = false;
+ipcMain.handle("motif-bank", async (event, request) => {
+    if (event.sender !== mainWindow?.webContents ||
+        event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Unauthorized Motif Bank request");
+    if (request?.action === "load") return motifBankStorage.load();
+    if (request?.action === "save") return motifBankStorage.save(request.bank);
+    throw new Error("Unknown Motif Bank operation");
+});
+ipcMain.on("motif-bank-ready", event => {
+    if (event.sender === mainWindow?.webContents) motifBankReady = true;
+});
+ipcMain.on("motif-bank-flushed", (event, ok) => {
+    if (event.sender !== mainWindow?.webContents || !motifBankClosing) return;
+    motifBankClosing = false;
+    if (ok === true) { motifBankCloseAllowed = true; mainWindow.close(); }
+    else console.error("Motif Bank save failed: close cancelled to preserve edits");
+});
 let midiClockUtility;
 let midiClockUtilityReady = false;
 let midiClockCommandQueue = [];
@@ -269,6 +289,15 @@ function createWindow() {
     });
 
     mainWindow.loadFile("index.html");
+    mainWindow.on("close", event => {
+        if (motifBankCloseAllowed) { motifBankCloseAllowed = false; return; }
+        if (!motifBankReady) return;
+        event.preventDefault();
+        if (!motifBankClosing) {
+            motifBankClosing = true;
+            mainWindow.webContents.send("motif-bank-flush");
+        }
+    });
 }
 
 ipcMain.on("midi-clock-command", (event, command) => {
@@ -296,6 +325,8 @@ ipcMain.handle("native-midi-request", (event, command) => {
 });
 
 app.whenReady().then(async () => {
+    const { MotifBankStorage } = await import("./src/MotifBankStorage.mjs");
+    motifBankStorage = new MotifBankStorage(path.join(app.getPath("userData"), "motif-bank.json"));
     padPreferences = new PadConfigurationPreferences(app.getPath("userData"), app.getPath("documents"));
     padPreferencesWarning = await padPreferences.load();
     padLibrary = new PadConfigurationLibrary(path.join(app.getPath("documents"), "LiRythme", "Pad Configurations"), padPreferences, path.join(__dirname, "docs/examples/DrumBrute Impact.lirythme-pads.json"));

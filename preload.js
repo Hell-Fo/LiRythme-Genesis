@@ -1,4 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
+contextBridge.exposeInMainWorld("motifBankFiles", {
+    load: () => ipcRenderer.invoke("motif-bank", { action: "load" }),
+    save: bank => ipcRenderer.invoke("motif-bank", { action: "save", bank }),
+    ready: () => ipcRenderer.send("motif-bank-ready"),
+    onClose: callback => ipcRenderer.on("motif-bank-flush", async () => {
+        try { await callback(); ipcRenderer.send("motif-bank-flushed", true); }
+        catch (error) {
+            console.error("Motif Bank close save failed; window kept open:", error);
+            ipcRenderer.send("motif-bank-flushed", false);
+        }
+    })
+});
 contextBridge.exposeInMainWorld("padConfigurationFiles", {
     confirmDiscard: reason => ipcRenderer.invoke("pad-configuration-file", { action: "confirmDiscard", reason }),
     restore: () => ipcRenderer.invoke("pad-configuration-file", { action: "restore" }),
