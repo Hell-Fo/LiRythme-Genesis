@@ -1029,7 +1029,7 @@ test("THE GATE redraws BOOK on view changes and restores PLAY reservations", () 
     const bookMessages = () => messages.filter(([status, note]) =>
         status === 0x90 && controller.mapping.BOOKS.includes(note));
     const expected = library => controller.mapping.BOOKS.map((note, i) => [0x90, note,
-        ((library ? (i === 0 ? controller.colors.GREEN : controller.colors.DIM_GREEN)
+        ((library ? (i === 0 ? controller.colors.GREEN : controller.colors.OFF)
             : i < 8 ? controller.colors.DIM_RED : controller.colors.DIM_AMBER) & 0x33) | 4]);
     const check = library => {
         assert.deepEqual(bookMessages(), expected(library));
@@ -1206,14 +1206,14 @@ test("PHASE A: BOOK current slot, Footer Zone 1 and PLAY projections follow sele
         assert.equal(readPlayMotif(state).title, elements.get("play-footer-zone1").textContent);
         assert.equal(readPlayStatus(state, clock, {}).selected, `Motif ${String(id + 1).padStart(2, "0")}`);
         controller.mapping.BOOKS.forEach((note, index) => assert.equal(leds.get(`144:${note}`),
-            ((index === id ? controller.colors.GREEN : controller.colors.DIM_GREEN) & 0x33) | 4));
+            ((index === id ? controller.colors.GREEN : controller.colors.OFF) & 0x33) | 4));
         assert.equal(leds.get("144:120"), 4);
     }
     const app = await source("app.js");
     assert.match(app, /setMotifChangeHandler\(\(\) => \{\s*launchpad.drawSelectedMotif\(\);\s*playStatusUI.render\(\);/);
 });
 
-test("PHASE A: pending COPY/DELETE do not cross slots, globals stay global", t => {
+test("COPY/DELETE BOOK targets do not select slots; globals stay global", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { state, actions, controller } = setup();
     const config = state.padConfiguration;
@@ -1227,7 +1227,9 @@ test("PHASE A: pending COPY/DELETE do not cross slots, globals stay global", t =
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[1], 127]);
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[1], 0]);
         assert.equal(state.currentMotifId, 0);
-        assert.ok(note === 104 ? controller.copyStage : controller.deleteArmed);
+        assert.equal(controller.copyStage, note === 104 ? "TARGET" : null);
+        assert.equal(controller.deleteArmed, false);
+        if (note === 88) continue;
         controller.handleMidiMessage([0x90, note, 127]);
         controller.handleMidiMessage([0x90, note, 0]);
     }
@@ -1389,7 +1391,7 @@ test("NEXT: replacement, cancellation, blink, PAUSE/STOP and view restoration", 
     assert.equal(color(0), (controller.colors.GREEN & 0x33) | 4);
     t.mock.timers.tick(160); assert.equal(color(4), 4);
     tap(6); assert.equal(state.nextMotifId, 6);
-    assert.equal(color(4), (controller.colors.DIM_GREEN & 0x33) | 4);
+    assert.equal(color(4), 4);
     t.mock.timers.tick(160); assert.equal(color(6), 4);
     tap(0); assert.equal(state.nextMotifId, null); assert.equal(state.playheadPosition, 3);
     assert.equal(controller.nextMotifBlinkTimer, null);
@@ -1480,4 +1482,237 @@ test("NEXT: live geometry boundary and Footer follow PLAYING, not the armed moti
     assert.equal(controller.nextMotifBlinkTimer,null);
     assert.equal(state.liveLengthCycle,null);
     controller.resetInputState();
+});
+
+test("PHASE C: hardware COPY/DELETE in STOP/PAUSE, independent snapshot, geometry and Footer", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { readPlayFooter } = await import("../src/PlayFooterUI.mjs");
+    for (const transport of ["STOP","PAUSE"]) {
+        const {state,actions,controller}=setup();
+        state.transportState=transport;
+        state.motif[12][3]=true; state.voiceLengths[12]=7; state.motifLength=21;
+        const source=structuredClone(state.getMotif(0));
+        state.soloActive=true; state.muteActive=true;
+        actions.toggleView();
+        const tap=n=>{controller.handleMidiMessage([0x90,n,127]);controller.handleMidiMessage([0x90,n,0]);};
+        tap(104); assert.equal(readPlayFooter(state,controller).states,"SOLO  MUTE  COPY");
+        tap(controller.mapping.BOOKS[0]); assert.equal(controller.copyStage,"TARGET");
+        state.motif[12][4]=true; // Snapshot is captured at source selection.
+        tap(controller.mapping.BOOKS[4]);
+        assert.equal(controller.copyStage,null);
+        assert.equal(state.currentMotifId,0);
+        assert.deepEqual(state.getMotif(4),source);
+        assert.notEqual(state.getMotif(4).events[12],state.getMotif(0).events[12]);
+        assert.notEqual(state.getMotif(4).voiceLengths,state.getMotif(0).voiceLengths);
+        const intact=structuredClone(state.getMotif(0));
+        actions.selectMotif(4); actions.toggleInstrumentStep(8); actions.setSelectedLength(11);
+        assert.deepEqual(state.getMotif(0),intact);
+        tap(104); tap(controller.mapping.BOOKS[4]);
+        const before=structuredClone(state), reference=state.getMotif(4);
+        tap(controller.mapping.BOOKS[4]);
+        assert.deepEqual(structuredClone(state),before); assert.equal(state.getMotif(4),reference);
+        assert.equal(controller.copyStage,null);
+        tap(88); assert.equal(readPlayFooter(state,controller).states,"SOLO  MUTE  DELETE");
+        tap(controller.mapping.BOOKS[4]);
+        assert.ok(state.motif.every(row=>row.every(v=>v===false)));
+        assert.deepEqual(state.voiceLengths,Array(16).fill(null)); assert.equal(state.motifLength,null);
+        assert.equal(state.playheadPosition,0); assert.equal(state.transportState,transport);
+        assert.equal(readPlayFooter(state,controller).states,"SOLO  MUTE");
+        assert.deepEqual(state.getMotif(0),intact);
+        controller.resetInputState();
+    }
+});
+
+test("PHASE C: PLAYING/NEXT writes refused; sources permitted; guards rechecked after NEXT transition", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for(const mode of ["INTERNAL","MIDI"]) {
+        const {state,actions,clock,controller}=setup();
+        state.motif[12][0]=true; state.motifLength=2;
+        state.getMotif(4).motifLength=3; state.getMotif(4).events[13][1]=true;
+        clock.setSource(mode); actions.startPlayback(); actions.requestMotif(4);
+        const before=structuredClone(state), revision=clock.transportRevision;
+        const copy=actions.captureMotifCopy(0), nextCopy=actions.captureMotifCopy(4);
+        assert.equal(actions.applyMotifCopy(copy,4),false);
+        assert.equal(actions.applyMotifCopy(nextCopy,0),false);
+        assert.equal(actions.deleteMotif(0),false); assert.equal(actions.deleteMotif(4),false);
+        assert.deepEqual(structuredClone(state),before); assert.equal(clock.transportRevision,revision);
+        assert.equal(actions.applyMotifCopy(copy,5),true);
+        assert.equal(actions.applyMotifCopy(nextCopy,6),true);
+        assert.deepEqual(state.getMotif(5),state.getMotif(0));
+        assert.equal(state.nextMotifId,4);
+        actions.setClockStepHandler(()=>{});
+        for(let i=1;i<=2;i++) {
+            if(mode==="MIDI") for(let p=0;p<6;p++) clock.receiveMidiClockPulse();
+            else clock.receiveInternalClockStep({sequence:i,transportRevision:revision});
+        }
+        assert.equal(state.playingMotifId,4); assert.equal(state.nextMotifId,null);
+        const playing=structuredClone(state.getMotif(4));
+        assert.equal(actions.applyMotifCopy(copy,4),false);
+        assert.equal(actions.deleteMotif(4),false);
+        assert.deepEqual(state.getMotif(4),playing);
+        assert.equal(actions.deleteMotif(0),true);
+        assert.equal(state.playheadPosition,0); assert.equal(clock.transportRevision,revision);
+        assert.equal(state.transportState,"PLAY");
+        controller.resetInputState();
+    }
+});
+
+test("PHASE C: refused hardware targets keep feedback active and never arm NEXT", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const {state,actions,controller}=setup();
+    actions.toggleView(); actions.startPlayback(); actions.requestMotif(4);
+    const tap=n=>{controller.handleMidiMessage([0x90,n,127]);controller.handleMidiMessage([0x90,n,0]);};
+    tap(104); tap(controller.mapping.BOOKS[1]); tap(controller.mapping.BOOKS[0]);
+    assert.equal(controller.copyStage,"TARGET"); assert.equal(state.nextMotifId,4);
+    tap(controller.mapping.BOOKS[4]); assert.equal(controller.copyStage,"TARGET");
+    tap(controller.mapping.BOOKS[5]); assert.equal(controller.copyStage,null);
+    tap(88); tap(controller.mapping.BOOKS[4]); assert.equal(controller.deleteArmed,true);
+    assert.equal(state.nextMotifId,4);
+    tap(controller.mapping.BOOKS[0]); assert.equal(controller.deleteArmed,true);
+    tap(controller.mapping.BOOKS[5]); assert.equal(controller.deleteArmed,false);
+    assert.equal(state.playingMotifId,0); assert.equal(state.nextMotifId,4);
+    controller.resetInputState();
+});
+
+test("PHASE C hardware: PLAYING and NEXT are valid sources, protected destinations retain snapshot", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for(const sourceId of [0,1]) {
+        const {state,actions,clock,controller}=setup();
+        const leds=new Map(); controller.midiManager.send=(_, [status,n,c])=>leds.set(`${status}:${n}`,c);
+        state.getMotif(sourceId).events[12][0]=true;
+        state.getMotif(sourceId).voiceLengths[12]=7;
+        state.getMotif(sourceId).motifLength=21;
+        actions.toggleView(); actions.startPlayback(); actions.requestMotif(1);
+        const tap=n=>{controller.handleMidiMessage([0x90,n,127]);controller.handleMidiMessage([0x80,n,0]);};
+        const book=id=>tap(controller.mapping.BOOKS[id]);
+        tap(104); book(sourceId);
+        assert.equal(controller.copyStage,"TARGET");
+        const snapshot=controller.copySource, expected=structuredClone(state.getMotif(sourceId));
+        assert.equal(snapshot.sourceId,sourceId);
+        assert.equal(leds.get("144:104"),(controller.colors.YELLOW&0x33)|4);
+        const before=structuredClone(state), revision=clock.transportRevision;
+        for(const id of [0,1]) {
+            book(id);
+            assert.equal(controller.copyStage,"TARGET");
+            assert.equal(controller.copySource,snapshot);
+            assert.deepEqual(structuredClone(state),before);
+        }
+        // An edit after source selection must not leak into the captured copy.
+        state.getMotif(sourceId).events[12][1]=true;
+        book(4);
+        assert.equal(controller.copyStage,null);
+        assert.deepEqual(state.getMotif(4),expected);
+        assert.equal(state.playingMotifId,0); assert.equal(state.nextMotifId,1);
+        assert.equal(state.playheadPosition,0); assert.equal(clock.transportRevision,revision);
+        assert.equal(state.transportState,"PLAY");
+        controller.resetInputState();
+    }
+});
+
+test("PHASE C hardware: DELETE current in STOP/PAUSE redraws empty timeline and retains selected slot", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const {readPlayMotif}=await import("../src/PlayMotifUI.mjs");
+    for(const transport of ["STOP","PAUSE"]) {
+        const {state,actions,clock,controller}=setup();
+        actions.selectMotif(4); state.transportState=transport;
+        state.motif[12][2]=true; state.voiceLengths[12]=7; state.motifLength=21;
+        state.playheadPosition=6; actions.toggleView();
+        const leds=new Map(); controller.midiManager.send=(_, [status,n,c])=>leds.set(`${status}:${n}`,c);
+        let redraws=0;
+        actions.setMotifChangeHandler(()=>{redraws++;controller.drawSelectedMotif();});
+        const revision=clock.transportRevision;
+        const tap=n=>{controller.handleMidiMessage([0x90,n,127]);controller.handleMidiMessage([0x90,n,0]);};
+        tap(88); tap(controller.mapping.BOOKS[4]);
+        assert.equal(redraws,1); assert.equal(controller.deleteArmed,false);
+        assert.equal(state.currentMotifId,4); assert.equal(state.playingMotifId,4);
+        assert.equal(state.transportState,transport); assert.equal(clock.transportRevision,revision);
+        assert.equal(state.motifLength,null); assert.deepEqual(state.voiceLengths,Array(16).fill(null));
+        assert.ok(state.motif.every(row=>row.every(v=>!v)));
+        assert.equal(state.playheadPosition,0);
+        assert.equal(readPlayMotif(state).duration,"32 STEPS");
+        assert.equal(leds.get(`144:${controller.mapping.BOOKS[4]}`),(controller.colors.GREEN&0x33)|4);
+        // Step zero may retain the existing playhead overlay; all other steps are empty.
+        controller.mapping.MOTIF.slice(1).forEach(n=>assert.equal(leds.get(`144:${n}`),controller.colors.OFF&0x33));
+        controller.resetInputState();
+    }
+});
+
+test("BOOK hierarchy: empty OFF, data DIM GREEN, active GREEN; COPY/DELETE redraw and NEXT override", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const {state,actions,controller}=setup();
+    const leds=new Map(); controller.midiManager.send=(_, [status,n,c])=>leds.set(`${status}:${n}`,c);
+    const color=id=>leds.get(`144:${controller.mapping.BOOKS[id]}`)&0x33;
+    const tap=n=>{controller.handleMidiMessage([0x90,n,127]);controller.handleMidiMessage([0x90,n,0]);};
+    const book=id=>tap(controller.mapping.BOOKS[id]);
+    actions.toggleView();
+    assert.equal(color(0),controller.colors.GREEN&0x33);
+    for(let i=1;i<16;i++) assert.equal(color(i),0);
+    state.getMotif(1).events[12][3]=true;
+    state.getMotif(2).voiceLengths[12]=7;
+    state.getMotif(3).motifLength=21;
+    controller.drawBooks();
+    for(const i of [1,2,3]) assert.equal(color(i),controller.colors.DIM_GREEN&0x33);
+    tap(104);book(1);book(4); t.mock.timers.tick(120); assert.equal(color(4),controller.colors.DIM_GREEN&0x33);
+    tap(88);book(4); assert.equal(color(4),0);
+    book(4); assert.equal(color(4),controller.colors.GREEN&0x33);
+    tap(104);book(1);book(4); t.mock.timers.tick(120); assert.equal(color(4),controller.colors.GREEN&0x33);
+    tap(88);book(4); assert.equal(color(4),controller.colors.GREEN&0x33);
+    book(0); assert.equal(color(4),0);
+    actions.startPlayback();book(4);
+    assert.equal(color(4),controller.colors.DIM_GREEN&0x33);
+    t.mock.timers.tick(160); assert.equal(color(4),0);
+    book(1); assert.equal(color(4),0);
+    t.mock.timers.tick(160); assert.equal(color(1),0);
+    book(0); assert.equal(color(1),controller.colors.DIM_GREEN&0x33);
+    assert.equal(color(0),controller.colors.GREEN&0x33);
+    controller.resetInputState();
+});
+
+test("COPY convention: source blink, yellow success, red held refusal and cancellation", async t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    const {readPlayFooter}=await import("../src/PlayFooterUI.mjs");
+    for(const transport of ["STOP","PAUSE","PLAY"]) {
+        const {state,actions,controller}=setup();
+        const leds=new Map(); controller.midiManager.send=(_, [status,n,c])=>leds.set(`${status}:${n}`,c);
+        const color=id=>leds.get(`144:${controller.mapping.BOOKS[id]}`)&0x33;
+        const press=n=>controller.handleMidiMessage([0x90,n,127]);
+        const release=n=>controller.handleMidiMessage([0x80,n,0]);
+        const tap=n=>{press(n);release(n);};
+        const book=id=>tap(controller.mapping.BOOKS[id]);
+        actions.toggleView(); state.transportState=transport;
+        state.motif[12][0]=true;
+        tap(104); assert.equal(readPlayFooter(state,controller).states,"COPY");
+        book(0); const snapshot=controller.copySource;
+        t.mock.timers.tick(160); assert.equal(color(0),0);
+        t.mock.timers.tick(160); assert.equal(color(0),controller.colors.GREEN&0x33);
+        if(transport==="PLAY") {
+            actions.requestMotif(1);
+            const before=structuredClone(state);
+            press(controller.mapping.BOOKS[1]);
+            assert.equal(color(1),controller.colors.RED&0x33);
+            t.mock.timers.tick(480); assert.equal(color(1),controller.colors.RED&0x33);
+            release(controller.mapping.BOOKS[1]);
+            assert.notEqual(color(1),controller.colors.RED&0x33);
+            assert.equal(controller.copySource,snapshot);
+            assert.equal(controller.copyStage,"TARGET");
+            assert.deepEqual(structuredClone(state),before);
+        }
+        book(4);
+        assert.equal(color(4),controller.colors.YELLOW&0x33);
+        assert.equal(controller.copySourceBlinkTimer,null);
+        assert.equal(controller.copyStage,null);
+        assert.equal(readPlayFooter(state,controller).states,"");
+        t.mock.timers.tick(120); assert.equal(color(4),controller.colors.DIM_GREEN&0x33);
+        t.mock.timers.tick(320); assert.equal(color(4),controller.colors.DIM_GREEN&0x33);
+        tap(104); book(5); // Empty source must still visibly blink.
+        assert.equal(color(5),controller.colors.DIM_GREEN&0x33);
+        t.mock.timers.tick(160); assert.equal(color(5),0);
+        const bank=structuredClone(state.motifs);
+        tap(104); assert.equal(controller.copySourceBlinkTimer,null);
+        assert.equal(color(5),0);
+        assert.equal(readPlayFooter(state,controller).states,"");
+        t.mock.timers.tick(640); assert.equal(color(5),0);
+        assert.deepEqual(state.motifs,bank);
+        controller.resetInputState();
+    }
 });

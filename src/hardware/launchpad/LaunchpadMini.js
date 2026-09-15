@@ -54,6 +54,11 @@ export class LaunchpadMini {
         this.switchPressed = false;
         this.performanceBlinks = new Map();
         this.copyStage = null;
+        this.copySourceBlinkTimer = null;
+        this.copySourceLit = true;
+        this.copyDeniedPads = new Set();
+        this.copySuccessPad = null;
+        this.copySuccessTimer = null;
         this.copyLit = true;
         this.deleteLit = true;
         this.copySource = null;
@@ -109,7 +114,7 @@ export class LaunchpadMini {
         this.performanceHolds.clear();
         for (const blink of this.performanceBlinks.values()) clearTimeout(blink.timer);
         this.performanceBlinks.clear();
-        this.setCopyStage(null);
+        this.setCopyStage(null, null, { redraw: false });
         this.setDeleteArmed(false);
         this.deleteConsumedInputs.clear();
         this.cancelInstrumentPulses();
@@ -428,6 +433,25 @@ export class LaunchpadMini {
         this.swapBuffers();
     }
 
+    getLibraryMotifColor(id) {
+        if (this.copyDeniedPads.has(id)) return "RED";
+        if (id === this.copySuccessPad) return "YELLOW";
+        if (this.copyStage === "TARGET" && this.copySource?.kind === "BANK_MOTIF" &&
+            id === this.copySource.sourceId) {
+            return this.copySourceLit
+                ? (id === this.state.currentMotifId ? "GREEN" : "DIM_GREEN") : "OFF";
+        }
+        if (id === this.state.currentMotifId) return this.layout.BOOKS.MOTIF_LIBRARY;
+        if (id === this.state.nextMotifId) {
+            return this.nextMotifLit ? this.layout.BOOKS.MOTIF_LIBRARY_IDLE : "OFF";
+        }
+        const motif = this.state.getMotif(id);
+        const hasData = motif && (motif.motifLength !== null ||
+            motif.voiceLengths.some(length => length !== null) ||
+            motif.events.some(row => row.some(Boolean)));
+        return hasData ? this.layout.BOOKS.MOTIF_LIBRARY_IDLE : "OFF";
+    }
+
     drawBooks() {
         const next = this.state.currentView === "MOTIF_LIBRARY" ? this.state.nextMotifId : null;
         if (this.nextMotifBlinkId !== next) {
@@ -446,12 +470,11 @@ export class LaunchpadMini {
         const books = this.mapping.BOOKS;
 
         for (let i = 0; i < books.length; i++) {
-            let colorName = this.state.currentView === "MOTIF_LIBRARY"
-                ? (i === this.state.currentMotifId ? this.layout.BOOKS.MOTIF_LIBRARY : this.layout.BOOKS.MOTIF_LIBRARY_IDLE)
+            const colorName = this.state.currentView === "MOTIF_LIBRARY"
+                ? this.getLibraryMotifColor(i)
                 : i < 8
                     ? this.layout.BOOKS.ATTRIBUTES
                     : this.layout.BOOKS.TRANSFORMATIONS;
-            if (i === next && !this.nextMotifLit) colorName = "OFF";
 
             // Keep the view in both buffers without swapping the musical surface.
             this.midiManager.send(this.deviceName,
@@ -818,12 +841,29 @@ export class LaunchpadMini {
         return true;
     }
 
-    setCopyStage(stage, source = null) {
+    setCopyStage(stage, source = null, { redraw = true } = {}) {
+        clearTimeout(this.copySourceBlinkTimer);
+        clearTimeout(this.copySuccessTimer);
+        this.copySourceBlinkTimer = null;
+        this.copySuccessTimer = null;
+        this.copySuccessPad = null;
+        this.copyDeniedPads.clear();
+        this.copySourceLit = true;
         clearTimeout(this.copyTimer);
         this.copyTimer = null;
         const generation = ++this.copyGeneration;
         this.copyStage = stage;
         this.copySource = source;
+        if (stage === "TARGET" && source?.kind === "BANK_MOTIF") {
+            const blink = () => {
+                if (generation !== this.copyGeneration) return;
+                this.copySourceLit = !this.copySourceLit;
+                this.drawBooks();
+                this.copySourceBlinkTimer = setTimeout(blink, 160);
+            };
+            this.copySourceBlinkTimer = setTimeout(blink, 160);
+        }
+        if (redraw) this.drawBooks();
         this.copyLit = true;
         const draw = () => {
             if (generation !== this.copyGeneration) return;
@@ -888,6 +928,10 @@ export class LaunchpadMini {
         const status = rawStatus === 0x80 ? 0x90 : rawStatus;
         const value = rawStatus === 0x80 ? 0 : rawValue;
         const inputKey = status + ":" + number;
+        if (value === 0 && status === 0x90) {
+            const id = this.mapping.BOOKS.indexOf(number);
+            if (this.copyDeniedPads.delete(id)) this.drawBooks();
+        }
         if (this.deleteConsumedInputs.has(inputKey)) {
             if (value === 0) this.deleteConsumedInputs.delete(inputKey);
             return;
@@ -911,9 +955,32 @@ export class LaunchpadMini {
             return;
         }
         if (controlType === "BOOK" && this.state.currentView === "MOTIF_LIBRARY") {
-            // Do not let pending destructive/copy gestures cross motif boundaries.
-            if (value > 0 && !this.copyStage && !this.deleteArmed && !this.performanceHolds.size) {
-                this.actions.requestMotif(controlPosition);
+            if (value > 0) {
+                this.deleteConsumedInputs.add(inputKey);
+                if (this.copyStage === "SOURCE") {
+                    this.setCopyStage("TARGET", this.actions.captureMotifCopy(controlPosition));
+                } else if (this.copyStage === "TARGET") {
+                    if (this.actions.applyMotifCopy(this.copySource, controlPosition)) {
+                        this.setCopyStage(null);
+                        this.copySuccessPad = controlPosition;
+                        this.copySuccessTimer = setTimeout(() => {
+                            this.copySuccessPad = null;
+                            this.copySuccessTimer = null;
+                            this.drawBooks();
+                        }, 120);
+                        this.drawBooks();
+                    } else {
+                        this.copyDeniedPads.add(controlPosition);
+                        this.drawBooks();
+                    }
+                } else if (this.deleteArmed) {
+                    if (this.actions.deleteMotif(controlPosition)) {
+                        this.setDeleteArmed(false);
+                        this.drawBooks();
+                    }
+                } else if (!this.performanceHolds.size) {
+                    this.actions.requestMotif(controlPosition);
+                }
             }
             return;
         }
@@ -921,7 +988,7 @@ export class LaunchpadMini {
             if (value > 0) {
                 this.deleteConsumedInputs.add(inputKey);
                 if (this.copyStage) this.setCopyStage(null);
-                else if (!this.shiftPressed && this.state.currentTimeline === "MOTIF") {
+                else if (!this.shiftPressed && (this.state.currentTimeline === "MOTIF" || this.state.currentView === "MOTIF_LIBRARY")) {
                     this.setDeleteArmed(false);
                     this.setCopyStage("SOURCE");
                 }
@@ -931,7 +998,7 @@ export class LaunchpadMini {
         if (controlName === "DELETE") {
             if (value > 0) {
                 this.deleteConsumedInputs.add(inputKey);
-                if (this.deleteArmed || this.state.currentTimeline === "MOTIF") {
+                if (this.deleteArmed || this.state.currentTimeline === "MOTIF" || this.state.currentView === "MOTIF_LIBRARY") {
                     this.setCopyStage(null);
                     this.setDeleteArmed(!this.deleteArmed);
                 }

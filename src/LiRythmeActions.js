@@ -74,6 +74,47 @@ export class LiRythmeActions {
         this.state.nextMotifId = null;
         this.onNextMotifChange?.();
     }
+    captureMotifCopy(id) {
+        const motif = this.state.getMotif(id);
+        return motif ? { kind: "BANK_MOTIF", sourceId: id,
+            events: motif.events.map(row => row.slice()),
+            voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength } : null;
+    }
+    canWriteMotif(id) {
+        return Boolean(this.state.getMotif(id)) &&
+            (this.state.transportState !== "PLAY" ||
+                (id !== this.state.playingMotifId && id !== this.state.nextMotifId));
+    }
+    replaceMotif(id, motif) {
+        this.state.motifs[id] = motif;
+        if (id === this.state.currentMotifId) {
+            this.state.liveLengthCycle = null;
+            this.state.playheadPosition = 0;
+            this.onMotifChange?.(id);
+        }
+    }
+    applyMotifCopy(copy, id) {
+        if (copy?.kind !== "BANK_MOTIF" || !this.state.getMotif(copy.sourceId) ||
+            !this.state.getMotif(id)) return false;
+        // Destination protection never applies to source capture. Check it here,
+        // even for self-copy, so a protected destination keeps COPY armed.
+        if (!this.canWriteMotif(id)) return false;
+        if (copy.sourceId === id) return true;
+        const validLength = n => n === null || Number.isInteger(n) && n >= 1 && n <= 32;
+        if (!Array.isArray(copy.events) || copy.events.length !== 16 ||
+            !copy.events.every(row => Array.isArray(row) && row.length === 32 && row.every(v => typeof v === "boolean")) ||
+            !Array.isArray(copy.voiceLengths) || copy.voiceLengths.length !== 16 ||
+            !copy.voiceLengths.every(validLength) || !validLength(copy.motifLength)) return false;
+        this.replaceMotif(id, { events: copy.events.map(row => row.slice()),
+            voiceLengths: copy.voiceLengths.slice(), motifLength: copy.motifLength });
+        return true;
+    }
+    deleteMotif(id) {
+        if (!this.canWriteMotif(id)) return false;
+        this.replaceMotif(id, { events: Array.from({ length: 16 }, () => Array(32).fill(false)),
+            voiceLengths: Array(16).fill(null), motifLength: null });
+        return true;
+    }
     setClockBeatHandler(handler) {
         this.clock.setClockBeatHandler(handler);
     }
