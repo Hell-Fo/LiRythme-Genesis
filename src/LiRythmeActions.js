@@ -26,10 +26,14 @@ export class LiRythmeActions {
         this.onMotifChange = null;
         this.onNextMotifChange = null;
         this.motifTransitionPending = false;
+        this.onChainChange = null;
+        this.onChainOccurrence = null;
+        this.chainOccurrencePending = false;
     }
     setClockStepHandler(handler) {
         this.clock.setClockStepHandler(() => {
             handler();
+            this.flushChainOccurrence();
             if (this.motifTransitionPending) {
                 this.motifTransitionPending = false;
                 this.onMotifChange?.(this.state.playingMotifId);
@@ -61,6 +65,7 @@ export class LiRythmeActions {
         this.onNextMotifChange = handler;
     }
     requestMotif(id) {
+        if (this.state.chainEnabled) return this.appendChainMotif(id);
         if (!this.state.getMotif(id)) return false;
         if (this.state.transportState !== "PLAY") return this.selectMotif(id);
         const next = id === this.state.playingMotifId ? null : id;
@@ -111,13 +116,83 @@ export class LiRythmeActions {
         return true;
     }
     deleteMotif(id) {
-        if (!this.canWriteMotif(id)) return false;
+        if (this.state.chainEnabled) return this.removeChainOccurrence(this.state.chain.lastIndexOf(id));
+        // Explicit deletion of CURRENT is allowed; COPY destination guards and
+        // the protection of a different prepared NEXT remain unchanged.
+        if (!this.state.getMotif(id) || (id !== this.state.currentMotifId && !this.canWriteMotif(id))) return false;
         this.replaceMotif(id, { events: Array.from({ length: 16 }, () => Array(32).fill(false)),
             voiceLengths: Array(16).fill(null), motifLength: null });
         return true;
     }
     setClockBeatHandler(handler) {
         this.clock.setClockBeatHandler(handler);
+    }
+    toggleChain() {
+        this.state.chainEnabled = !this.state.chainEnabled;
+        this.state.chainPlayingIndex = -1;
+        this.state.chainPlayingDetached = true;
+        this.chainOccurrencePending = false;
+        this.clearNextMotif();
+        this.refreshChainNext();
+        if (!this.state.chainEnabled) this.onChainChange?.();
+        return this.state.chainEnabled;
+    }
+    refreshChainNext(notify = true) {
+        if (!this.state.chainEnabled) return;
+        const { chain, chainPlayingIndex } = this.state;
+        this.state.nextMotifId = chain.length ? chain[(chainPlayingIndex + 1) % chain.length] : null;
+        if (notify) this.onNextMotifChange?.();
+        if (notify) this.onChainChange?.();
+    }
+    appendChainMotif(id, { afterPlaying = false } = {}) {
+        if (!this.state.chainEnabled || !this.state.getMotif(id)) return false;
+        const index = afterPlaying ? this.state.chainPlayingIndex + 1 : this.state.chain.length;
+        this.state.chain.splice(index, 0, id);
+        this.refreshChainNext();
+        return true;
+    }
+    removeChainOccurrence(index) {
+        if (!this.state.chainEnabled || index < 0 || index >= this.state.chain.length) return false;
+        this.state.chain.splice(index, 1);
+        if (index === this.state.chainPlayingIndex) this.state.chainPlayingDetached = true;
+        // Removing PLAYING leaves a gap: finish its current cycle, then play
+        // the element now at that slot. Removing earlier slots preserves identity.
+        if (index <= this.state.chainPlayingIndex) this.state.chainPlayingIndex--;
+        if (!this.state.chain.length) this.state.chainPlayingIndex = -1;
+        this.refreshChainNext();
+        return true;
+    }
+    deleteChainNext() {
+        return this.removeChainOccurrence(this.state.chain.length
+            ? (this.state.chainPlayingIndex + 1) % this.state.chain.length : -1);
+    }
+    clearChain() {
+        if (!this.state.chainEnabled) return false;
+        this.state.chain = [];
+        this.state.chainPlayingIndex = -1;
+        this.state.chainPlayingDetached = true;
+        this.chainOccurrencePending = false;
+        this.refreshChainNext();
+        return true;
+    }
+    flushChainOccurrence() {
+        if (!this.chainOccurrencePending) return;
+        this.chainOccurrencePending = false;
+        this.onChainOccurrence?.();
+        this.onChainChange?.();
+    }
+    prepareChainStart() {
+        if (!this.state.chainEnabled) return;
+        this.state.chainPlayingIndex = this.state.chain.length ? 0 : -1;
+        this.state.chainPlayingDetached = !this.state.chain.length;
+        this.chainOccurrencePending = Boolean(this.state.chain.length);
+        if (this.state.chain.length) {
+            this.state.currentMotifId = this.state.chain[0];
+            this.state.playheadPosition = 0;
+            this.state.liveLengthCycle = null;
+            this.onMotifChange?.(this.state.currentMotifId);
+        }
+        this.refreshChainNext();
     }
     setStepPreviewHandler(handler) {
         this.onStepPreview = handler;
@@ -154,6 +229,7 @@ export class LiRythmeActions {
 
     startPlayback({ origin = "LOCAL" } = {}) {
         this.clearNextMotif();
+        this.prepareChainStart();
         const previousState = this.state.transportState;
 
         this.stopClock();
@@ -164,6 +240,7 @@ export class LiRythmeActions {
         this.state.transportState = "PLAY";
         this.startClock();
         this.notifyTransportTransition(previousState, origin);
+        this.flushChainOccurrence();
 
         console.log(
             "TRANSPORT:",
@@ -183,8 +260,11 @@ export class LiRythmeActions {
         const previousState = this.state.transportState;
 
         this.state.transportState = "PLAY";
+        if (previousState === "STOP") this.prepareChainStart();
+        else this.refreshChainNext();
         this.startClock();
         this.notifyTransportTransition(previousState, origin);
+        this.flushChainOccurrence();
 
         console.log(
             "TRANSPORT:",
@@ -220,6 +300,11 @@ export class LiRythmeActions {
         this.stopClock();
 
         this.state.transportState = "STOP";
+        if (this.state.chainEnabled) {
+            this.state.chainPlayingIndex = -1;
+            this.state.chainPlayingDetached = true;
+            this.chainOccurrencePending = false;
+        }
         this.state.lockMode = false;
         this.state.liveLengthCycle = null;
         this.state.playheadPosition = 0;
@@ -234,6 +319,7 @@ export class LiRythmeActions {
         );
     }
     notifyTransportTransition(previousState, origin) {
+        this.onChainChange?.();
         if (previousState === this.state.transportState) {
             return;
         }
@@ -438,6 +524,14 @@ export class LiRythmeActions {
 
     nextStep({ preview = false } = {}) {
         this.state.advanceLiveLengthCycle();
+        if (this.state.chainEnabled && this.state.transportState === "PLAY" && this.state.playheadPosition === 0) {
+            this.refreshChainNext(false);
+            if (this.state.chain.length) {
+                this.state.chainPlayingIndex = (this.state.chainPlayingIndex + 1) % this.state.chain.length;
+                this.state.chainPlayingDetached = false;
+                this.chainOccurrencePending = true;
+            }
+        }
         if (this.state.transportState === "PLAY" && this.state.playheadPosition === 0 &&
             this.state.nextMotifId !== null) {
             this.state.playingMotifId = this.state.nextMotifId;
@@ -445,6 +539,10 @@ export class LiRythmeActions {
             this.state.nextMotifId = null;
             this.state.liveLengthCycle = null;
             this.motifTransitionPending = true;
+            if (this.state.chainEnabled) {
+                const { chain, chainPlayingIndex } = this.state;
+                this.state.nextMotifId = chain.length ? chain[(chainPlayingIndex + 1) % chain.length] : null;
+            }
         }
 
         console.log(

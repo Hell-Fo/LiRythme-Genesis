@@ -44,6 +44,11 @@ export class LiRythmeState {
         this.padConfiguration = new PadConfiguration();
         this.playingMotifId = 0;
         this.nextMotifId = null;
+        // Phase A session-only occurrence list (IDs are references into motifs).
+        this.chainEnabled = false;
+        this.chain = [];
+        this.chainPlayingIndex = -1;
+        this.chainPlayingDetached = true;
         // Phase B: visible/editable motif follows PLAYING; no independent VIEW yet.
         Object.defineProperty(this, "currentMotifId", {
             enumerable: true,

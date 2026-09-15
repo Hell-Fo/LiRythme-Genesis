@@ -1534,7 +1534,7 @@ test("PHASE C: PLAYING/NEXT writes refused; sources permitted; guards rechecked 
         const copy=actions.captureMotifCopy(0), nextCopy=actions.captureMotifCopy(4);
         assert.equal(actions.applyMotifCopy(copy,4),false);
         assert.equal(actions.applyMotifCopy(nextCopy,0),false);
-        assert.equal(actions.deleteMotif(0),false); assert.equal(actions.deleteMotif(4),false);
+        assert.equal(actions.deleteMotif(4),false);
         assert.deepEqual(structuredClone(state),before); assert.equal(clock.transportRevision,revision);
         assert.equal(actions.applyMotifCopy(copy,5),true);
         assert.equal(actions.applyMotifCopy(nextCopy,6),true);
@@ -1548,8 +1548,8 @@ test("PHASE C: PLAYING/NEXT writes refused; sources permitted; guards rechecked 
         assert.equal(state.playingMotifId,4); assert.equal(state.nextMotifId,null);
         const playing=structuredClone(state.getMotif(4));
         assert.equal(actions.applyMotifCopy(copy,4),false);
-        assert.equal(actions.deleteMotif(4),false);
         assert.deepEqual(state.getMotif(4),playing);
+        assert.equal(actions.deleteMotif(4),true);
         assert.equal(actions.deleteMotif(0),true);
         assert.equal(state.playheadPosition,0); assert.equal(clock.transportRevision,revision);
         assert.equal(state.transportState,"PLAY");
@@ -1568,7 +1568,8 @@ test("PHASE C: refused hardware targets keep feedback active and never arm NEXT"
     tap(controller.mapping.BOOKS[5]); assert.equal(controller.copyStage,null);
     tap(88); tap(controller.mapping.BOOKS[4]); assert.equal(controller.deleteArmed,true);
     assert.equal(state.nextMotifId,4);
-    tap(controller.mapping.BOOKS[0]); assert.equal(controller.deleteArmed,true);
+    tap(controller.mapping.BOOKS[0]); assert.equal(controller.deleteArmed,false);
+    tap(88);
     tap(controller.mapping.BOOKS[5]); assert.equal(controller.deleteArmed,false);
     assert.equal(state.playingMotifId,0); assert.equal(state.nextMotifId,4);
     controller.resetInputState();
@@ -1816,4 +1817,318 @@ test("PERSISTENCE: restored BOOK displays empty/data/active; IPC close waits for
     assert.match(main,/event.preventDefault\(\);[\s\S]*webContents.send\("motif-bank-flush"\)/);
     assert.match(preload,/await callback\(\); ipcRenderer.send\("motif-bank-flushed", true\)/);
     assert.match(await source("app.js"),/await initializeMotifBankAutosave[\s\S]*const clock = new LiRythmeClock/);
+});
+
+test("CHAIN: SHIFT transport is inert in PLAY/PAUSE/STOP and pulses yellow", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const mode of ["PLAY", "PAUSE", "STOP"]) {
+        const {state, actions, clock, controller:c} = setup();
+        state.transportState = mode; state.playheadPosition = 7; clock.midiPulseCount = 3;
+        const revision = clock.transportRevision;
+        const press = (name,v=127) => c.handleMidiMessage([0xB0,c.mapping.TOP_CONTROLS[name],v]);
+        for (const enabled of [true,false]) {
+            press("SHIFT"); press("PLAY_STOP"); press("SHIFT",0);
+            t.mock.timers.tick(600); press("PLAY_STOP",0);
+            assert.equal(state.chainEnabled,enabled); assert.equal(state.transportState,mode);
+            assert.equal(state.playheadPosition,7); assert.equal(clock.midiPulseCount,3);
+            assert.equal(clock.transportRevision,revision);
+            if(enabled && mode === "PLAY") {
+                c.pulseTransport(); assert.equal(c.transportPulseColor,c.colors.YELLOW);
+                c.pulseTransport(c.colors.RED,1); assert.equal(c.transportPulseColor,c.colors.YELLOW);
+            }
+        }
+        c.resetInputState();
+    }
+});
+
+test("CHAIN: append duplicates, longpress once, structural DELETE and normal restoration", t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    const {state,actions,controller:c} = setup();
+    state.currentView = "MOTIF_LIBRARY"; actions.toggleChain();
+    const pad = (id,v=127) => c.handleMidiMessage([0x90,c.mapping.BOOKS[id],v]);
+    const click = id => {pad(id);pad(id,0);};
+    [0,0,4,2].forEach(id=>{pad(id);t.mock.timers.tick(300);pad(id,0);}); assert.deepEqual(state.chain,[0,0,4,2]);
+    actions.startPlayback();
+    pad(7);t.mock.timers.tick(300);pad(7,0);
+    assert.deepEqual(state.chain,[0,0,4,2,7]);
+    state.chain = [0,4,4,4,2,4,4];state.chainPlayingIndex = 0;actions.refreshChainNext();
+    state.motifs[4].events[12][0] = true;
+    const bank = structuredClone(state.motifs);
+    const arm = () => {c.handleMidiMessage([0x90,c.mapping.VALUE_CONTROLS.DELETE,127]);c.handleMidiMessage([0x90,c.mapping.VALUE_CONTROLS.DELETE,0]);};
+    arm();click(4);assert.deepEqual(state.chain,[0,4,4,4,2,4]);
+    arm();click(4);assert.deepEqual(state.chain,[0,4,4,4,2]);
+    arm();c.handleMidiMessage([0xB0,c.mapping.TOP_CONTROLS.NEXT,127]);c.handleMidiMessage([0xB0,c.mapping.TOP_CONTROLS.NEXT,0]);
+    assert.deepEqual(state.chain,[0,4,4,2]);assert.equal(state.nextMotifId,4);
+    arm();c.handleMidiMessage([0x90,c.mapping.INSTRUMENTS[12],127]);
+    assert.deepEqual(state.motifs,bank);
+    c.setDeleteArmed(false); actions.toggleChain();actions.requestMotif(2);assert.equal(state.nextMotifId,2);
+    actions.stop();arm();click(4);assert.equal(state.motifs[4].events[12][0],false);
+    c.resetInputState();
+});
+
+test("CHAIN: exact repeated cycles, wrap, mutable references and deletion of prepared NEXT on both clocks", t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    for (const mode of ["INTERNAL","MIDI"]) {
+        const {state,actions,clock,controller} = setup();
+        state.motifs[0].motifLength=2;
+        state.motifs[4].voiceLengths[12]=3;state.motifs[4].voiceLengths[11]=2; // LCM 6
+        state.motifs[2].motifLength=3;
+        actions.toggleChain();[0,0,4,2].forEach(id=>actions.requestMotif(id));
+        clock.setSource(mode);actions.startPlayback();const revision=clock.transportRevision;
+        const actual=[[state.playingMotifId,state.playheadPosition]], expected=[];
+        actions.setClockStepHandler(()=>actual.push([state.playingMotifId,state.playheadPosition]));
+        for(let tour=0;tour<3;tour++) for(const [id,n] of [[0,2],[0,2],[4,6],[2,3]]) for(let step=0;step<n;step++) expected.push([id,step]);
+        let seq=0;
+        const tick=()=>{if(mode==="MIDI") for(let p=0;p<6;p++) clock.receiveMidiClockPulse();else clock.receiveInternalClockStep({sequence:++seq,transportRevision:revision});};
+        for(let i=1;i<expected.length;i++) tick();
+        assert.deepEqual(actual,expected);assert.equal(clock.transportRevision,revision);
+        // Wrap NEXT is the first occurrence, not the later duplicate.
+        assert.equal(state.chainPlayingIndex,3);actions.deleteChainNext();
+        assert.deepEqual(state.chain,[0,4,2]);assert.equal(state.chainPlayingIndex,2);
+        tick();assert.deepEqual(actual.at(-1),[0,0]);
+        // Replace prepared NEXT, retain phase, then read current library content.
+        actions.deleteChainNext();assert.deepEqual(state.chain,[0,2]);assert.equal(state.nextMotifId,2);
+        state.motifs[2].events[12][0]=true;
+        tick();tick();assert.deepEqual(actual.at(-1),[2,0]);assert.equal(state.motif[12][0],true);
+        assert.equal(clock.transportRevision,revision);
+        controller.resetInputState();
+    }
+});
+
+test("CHAIN: pause resumes occurrence, STOP restarts list; deleting PLAYING or entire chain never stops", () => {
+    const {state,actions,controller} = setup();
+    actions.toggleChain();[4,2].forEach(id=>actions.requestMotif(id));actions.startPlayback();
+    state.playheadPosition=5;actions.pausePlayback();actions.continuePlayback();
+    assert.equal(state.playingMotifId,4);assert.equal(state.playheadPosition,5);assert.equal(state.nextMotifId,2);
+    actions.deleteMotif(4);assert.equal(state.chainPlayingIndex,-1);assert.equal(state.playheadPosition,5);
+    actions.deleteMotif(2);assert.equal(state.nextMotifId,null);assert.equal(state.transportState,"PLAY");
+    actions.requestMotif(2);actions.stop();actions.continuePlayback();
+    assert.equal(state.playingMotifId,2);assert.equal(state.playheadPosition,0);assert.equal(state.chainPlayingIndex,0);
+    controller.resetInputState();
+});
+
+test("CHAIN: real note dispatcher emits one step zero per occurrence and preserves every Note Off", async t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    const app=await source("app.js");
+    const dispatch=app.slice(app.indexOf("function triggerMotifStep(step) {"),app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    for(const mode of ["INTERNAL","MIDI"]) {
+        const {state,actions,clock,controller}=setup();
+        for(const id of [0,4,2]) {state.motifs[id].motifLength=2;state.motifs[id].events[12][0]=true;}
+        state.padConfiguration.voices[12]={type:"MIDI DRUM",output:{mode:"DEFAULT"},channel:1,note:60};
+        const messages=[],offs=[],order=[];
+        const trigger=new Function("state","midiOutputSelector","midiManager","launchpad","setTimeout",`${dispatch}; return triggerMotifStep;`)(state,
+            {options:[{textContent:"Drums"}],selectedIndex:0},
+            {send:(_,m)=>{messages.push(m);order.push("note");},findOutput:()=>({})},
+            {pulseInstrument(){}},fn=>offs.push(fn));
+        actions.setMotifChangeHandler(()=>order.push("view"));
+        actions.toggleChain();[0,0,4,2].forEach(id=>actions.requestMotif(id));
+        clock.setSource(mode);actions.startPlayback();trigger(0);
+        actions.setClockStepHandler(()=>trigger(state.playheadPosition));
+        const revision=clock.transportRevision;
+        for(let tick=1;tick<24;tick++) {
+            if(mode==="MIDI") for(let p=0;p<6;p++) clock.receiveMidiClockPulse();
+            else clock.receiveInternalClockStep({sequence:tick,transportRevision:revision});
+        }
+        assert.equal(messages.length,12);assert.equal(offs.length,12);
+        const ons=messages.slice();offs.forEach(fn=>fn());
+        assert.deepEqual(messages.slice(12),ons.map(([s,n])=>[s,n,0]));
+        assert.equal(clock.transportRevision,revision);
+        for(let i=1;i<order.length;i++) if(order[i]==="view") assert.equal(order[i-1],"note");
+        controller.resetInputState();
+    }
+});
+
+test("CHAIN RED: every occurrence including duplicates and wrap, after dispatch, overrides beat for 80 ms", t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    for(const mode of ["INTERNAL","MIDI"]) {
+        const {state,actions,clock,controller:c}=setup();
+        [0,4,2].forEach(id=>state.motifs[id].motifLength=2);
+        actions.toggleChain();[0,0,4,2].forEach(id=>actions.requestMotif(id));
+        const flashes=[],order=[];
+        c.setTransportPulseLed=color=>{if(color===c.colors.RED) {flashes.push(state.chainPlayingIndex);order.push("red");}};
+        actions.setClockStepHandler(()=>{order.push("dispatch");c.pulseMotifCycle();});
+        actions.setClockBeatHandler(()=>c.pulseTransport());
+        clock.setSource(mode);actions.startPlayback();
+        assert.equal(c.transportPulseColor,c.colors.RED);
+        const revision=clock.transportRevision;
+        t.mock.timers.tick(80);
+        for(let i=1;i<=8;i++) {
+            if(mode==="MIDI") for(let p=0;p<6;p++) clock.receiveMidiClockPulse();
+            else clock.receiveInternalClockStep({sequence:i,transportRevision:revision});
+            if(i%2===0) {
+                assert.equal(order.at(-1),"red");assert.equal(order.at(-2),"dispatch");
+                c.pulseTransport();assert.equal(c.transportPulseColor,c.colors.RED);
+                t.mock.timers.tick(79);assert.equal(c.transportPulseColor,c.colors.RED);
+                t.mock.timers.tick(1);c.pulseTransport();assert.equal(c.transportPulseColor,c.colors.YELLOW);
+            }
+            t.mock.timers.tick(80);
+        }
+        assert.deepEqual(flashes,[0,1,2,3,0]);assert.equal(clock.transportRevision,revision);
+        c.resetInputState();
+    }
+});
+
+test("CHAIN DELETE PLAY: clears only structure in every transport state and consumes held release", t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    for(const mode of ["STOP","PAUSE","PLAY"]) {
+        const {state,actions,clock,controller:c}=setup();
+        state.motifs[0].motifLength=3;state.motifs[0].events[12][0]=true;
+        const bank=structuredClone(state.motifs);
+        actions.toggleChain();[0,4,4,2,6].forEach(id=>actions.requestMotif(id));
+        state.transportState=mode;state.playheadPosition=1;
+        clock.midiPulseCount=3;const revision=clock.transportRevision;
+        const clear=()=>{
+            c.handleMidiMessage([0x90,c.mapping.VALUE_CONTROLS.DELETE,127]);c.handleMidiMessage([0x90,c.mapping.VALUE_CONTROLS.DELETE,0]);
+            c.handleMidiMessage([0xB0,c.mapping.TOP_CONTROLS.PLAY_STOP,127]);
+            t.mock.timers.tick(500);c.handleMidiMessage([0xB0,c.mapping.TOP_CONTROLS.PLAY_STOP,0]);
+        };
+        clear();assert.deepEqual(state.chain,[]);assert.equal(state.nextMotifId,null);
+        assert.deepEqual(state.motifs,bank);assert.equal(state.transportState,mode);
+        assert.equal(state.playheadPosition,1);assert.equal(clock.midiPulseCount,3);assert.equal(clock.transportRevision,revision);
+        if(mode==="PLAY") {actions.nextStep();assert.equal(state.playheadPosition,2);actions.nextStep();assert.equal(state.playheadPosition,0);assert.equal(state.playingMotifId,0);}
+        actions.toggleChain();clear();assert.equal(state.motif[12][0],false);
+        c.resetInputState();
+    }
+});
+
+test("CHAIN UI: occurrence order, duplicates,/NEXT, every mutation and wrap refresh synchronously", async t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    const {initializePlayChainUI}=await import("../src/PlayChainUI.mjs");
+    const {state,actions,clock,controller:c}=setup();
+    const container={children:[],replaceChildren(...children){this.children=children;}};
+    const document={getElementById:()=>container,createElement:()=>({})};
+    initializePlayChainUI({state,actions,document});
+    const labels=()=>container.children.map(e=>e.textContent);
+    assert.deepEqual(labels(),[]);actions.toggleChain();
+    [0,0,4,2].forEach(id=>actions.requestMotif(id));
+    assert.deepEqual(labels(),["[01]","[01]","[05]","[03]"]);
+    state.motifs.forEach(m=>m.motifLength=1);actions.startPlayback();
+    assert.deepEqual(labels(),["[01]","[01]","[05]","[03]"]);
+    actions.setClockStepHandler(()=>{});
+    clock.advanceStepPipeline();assert.deepEqual(labels(),["[01]","[01]","[05]","[03]"]);
+    clock.advanceStepPipeline();clock.advanceStepPipeline();
+    assert.deepEqual(labels(),["[01]","[01]","[05]","[03]"]);
+    clock.advanceStepPipeline();assert.equal(labels()[0],"[01]");
+    actions.appendChainMotif(6,{afterPlaying:true});assert.equal(labels()[1],"[07]");
+    actions.deleteMotif(0);assert.deepEqual(labels(),["[01]","[07]","[05]","[03]"]);
+    actions.deleteChainNext();assert.deepEqual(labels(),["[01]","[05]","[03]"]);
+    actions.deleteMotif(0);assert.deepEqual(labels(),["[05]","[03]"]); // detached is not another occurrence
+    actions.clearChain();assert.deepEqual(labels(),[]);
+    actions.requestMotif(4);clock.advanceStepPipeline();assert.deepEqual(labels(),["[05]"]);
+    actions.toggleChain();assert.deepEqual(labels(),["[05]"]);
+    c.resetInputState();
+});
+
+test("CHAIN BOOK: normal hierarchy, consecutive repeats, yellow boundaries and COPY priority", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ for(const ids of [[0,4,2],[0,0,4],[0,0,0,4],[0,4,0]]) {
+  const {state,actions,clock,controller:c}=setup();state.currentView="MOTIF_LIBRARY";
+  ids.forEach(id=>state.motifs[id].motifLength=1);
+  actions.toggleChain();ids.forEach(id=>actions.requestMotif(id));actions.setClockStepHandler(()=>{});actions.startPlayback();
+  for(let i=0;i<ids.length;i++) {
+   const current=ids[i],next=ids[(i+1)%ids.length],repeat=current===next;
+   for(const lit of [true,false]) {
+    c.nextMotifLit=lit;
+    assert.equal(c.getLibraryMotifColor(current),repeat?(lit?"DIM_GREEN":"DIM_AMBER"):"GREEN");
+    if(!repeat) assert.equal(c.getLibraryMotifColor(next),lit?"DIM_GREEN":"GREEN");
+    for(const id of new Set(ids)) if(id!==current&&id!==next) assert.equal(c.getLibraryMotifColor(id),"DIM_GREEN");
+    assert.equal(c.getLibraryMotifColor(15),"OFF");
+   }
+   const before=JSON.stringify(state);c.drawBooks();assert.equal(JSON.stringify(state),before);
+   clock.advanceStepPipeline();assert.equal(c.chainBookFlashId,repeat?current:null);
+   if(repeat) {
+    assert.equal(c.getLibraryMotifColor(current),"YELLOW");
+    c.copyDeniedPads.add(current);assert.equal(c.getLibraryMotifColor(current),"RED");c.copyDeniedPads.clear();
+    t.mock.timers.tick(119);assert.equal(c.getLibraryMotifColor(current),"YELLOW");
+    t.mock.timers.tick(1);assert.equal(c.chainBookFlashId,null);
+   }
+  }
+  actions.toggleChain();assert.equal(c.chainBookFlashId,null);assert.equal(c.getLibraryMotifColor(state.playingMotifId),"GREEN");
+  actions.requestMotif(14);c.nextMotifLit=false;assert.equal(c.getLibraryMotifColor(14),"OFF");c.resetInputState();
+ }
+});
+
+test("CHAIN BOOK: timer is scoped to library view and cleaned up; PLAY screen has original static styles", async t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    const {state,actions,controller:c}=setup();
+    actions.toggleChain();actions.requestMotif(4);assert.equal(c.nextMotifBlinkTimer,null);
+    actions.toggleView();assert.notEqual(c.nextMotifBlinkTimer,null);
+    actions.toggleView();assert.equal(c.nextMotifBlinkTimer,null);
+    actions.toggleView();c.resetInputState();assert.equal(c.nextMotifBlinkTimer,null);
+    const html=await fs.readFile(new URL("../index.html",import.meta.url),"utf8");
+    assert.doesNotMatch(html,/chain-occurrence-blink|--chain-blink-color/);
+    assert.match(html,/\.chain-occurrence\.is-playing \{ color: #4a9b6b; \}/);
+    assert.match(html,/#play-chain-occurrences \{ font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; \}/);
+    assert.match(html,/\.chain-occurrence \{ display: inline-block; \}/);
+    assert.doesNotMatch(html,/\.chain-occurrence\.is-next/);
+});
+
+test("R1-R3: hardware target routing, current BOOK deletion, Voice COPY/DELETE and autosave notifications", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ for(const chain of [false,true]) for(const transport of ["STOP","PAUSE","PLAY"]) {
+  const {state,actions,controller:c}=setup();state.currentView="MOTIF_LIBRARY";state.transportState=transport;
+  if(chain) {actions.toggleChain();[0,4,0].forEach(id=>actions.requestMotif(id));}
+  state.motif[1][3]=true;state.motif[2][4]=true;state.voiceLengths[1]=7;state.motifLength=16;
+  let dirty=0;state.onBankChange=()=>dirty++;
+  const tap=(status,n)=>{c.handleMidiMessage([status,n,127]);c.handleMidiMessage([status,n,0]);};
+  const command=name=>tap(0x90,c.mapping.VALUE_CONTROLS[name]);
+  const voice=id=>tap(0x90,c.mapping.INSTRUMENTS[id]);
+  const structure=state.chain.slice();
+  command("COPY");voice(1);voice(3);
+  assert.equal(c.copyStage,null);assert.deepEqual(state.motif[3],state.motif[1]);assert.notEqual(state.motif[3],state.motif[1]);assert.equal(state.voiceLengths[3],7);
+  command("DELETE");voice(1);
+  assert.equal(state.motif[1][3],false);assert.equal(state.motif[3][3],true);assert.equal(state.motif[2][4],true);assert.equal(state.voiceLengths[1],7);
+  assert.deepEqual(state.chain,structure);assert.ok(dirty>=2);
+  const bank=structuredClone(state.motifs);
+  command("DELETE");tap(0x90,c.mapping.BOOKS[0]);
+  if(chain) {assert.deepEqual(state.motifs,bank);assert.deepEqual(state.chain,[0,4]);}
+  else {assert.ok(state.motif.every(row=>row.every(v=>!v)));assert.equal(state.motifLength,null);assert.ok(state.voiceLengths.every(v=>v===null));assert.equal(state.currentMotifId,0);assert.equal(c.getLibraryMotifColor(0),"GREEN");assert.ok(dirty>=3);}
+  c.resetInputState();
+ }
+});
+
+test("R4: PLAY chain labels and dimensions stay stable as PLAYING advances", async () => {
+ const {initializePlayChainUI}=await import("../src/PlayChainUI.mjs");const {state,actions,controller}=setup();
+ const container={children:[],replaceChildren(...children){this.children=children;}};
+ const document={getElementById:()=>container,createElement:()=>({})};
+ state.chain=[0,4,4,4,2,4,4];state.chainEnabled=true;state.chainPlayingDetached=false;state.transportState="PLAY";
+ const ui=initializePlayChainUI({state,actions,document});
+ for(let i=0;i<7;i++) {state.chainPlayingIndex=i;ui.render();assert.deepEqual(container.children.map(e=>e.textContent),["[01]","[05]","[05]","[05]","[03]","[05]","[05]"]);assert.equal(container.children.map(e=>e.textContent).join(""),"[01][05][05][05][03][05][05]");assert.deepEqual(container.children.flatMap((e,index)=>e.className.includes("is-playing")?[index]:[]),[i]);assert.ok(container.children.every(e=>!e.className.includes("is-next")));}
+ state.chain=[];ui.render();assert.deepEqual(container.children,[]);
+ controller.resetInputState();
+});
+
+test("R5: short BOOK is inert, long BOOK appends once at tail in every transport state", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ for(const transport of ["STOP","PAUSE","PLAY"]) {
+  const {state,actions,controller:c}=setup();state.currentView="MOTIF_LIBRARY";state.transportState=transport;actions.toggleChain();actions.requestMotif(0);actions.requestMotif(4);
+  state.chainPlayingIndex=0;state.playheadPosition=3;
+  const pad=v=>c.handleMidiMessage([0x90,c.mapping.BOOKS[2],v]);
+  pad(127);t.mock.timers.tick(299);pad(0);assert.deepEqual(state.chain,[0,4]);assert.equal(state.currentMotifId,0);assert.equal(state.playheadPosition,3);
+  pad(127);t.mock.timers.tick(300);assert.deepEqual(state.chain,[0,4,2]);pad(127);t.mock.timers.tick(600);pad(0);assert.deepEqual(state.chain,[0,4,2]);c.resetInputState();
+ }
+});
+
+test("R1 persistence: current BOOK deletion is saved as an empty default slot", async t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ const {initializeMotifBankAutosave}=await import("../src/MotifBankAutosave.mjs");
+ const {state,actions,controller:c}=setup();state.currentView="MOTIF_LIBRARY";
+ const saves=[];const session=await initializeMotifBankAutosave(state,{load:async()=>({bank:null}),save:async bank=>saves.push(bank)});
+ state.motif[12][4]=true;state.motifLength=7;actions.startPlayback();
+ c.handleMidiMessage([0x90,c.mapping.VALUE_CONTROLS.DELETE,127]);c.handleMidiMessage([0x90,c.mapping.VALUE_CONTROLS.DELETE,0]);
+ c.handleMidiMessage([0x90,c.mapping.BOOKS[0],127]);c.handleMidiMessage([0x90,c.mapping.BOOKS[0],0]);
+ await session.flush();const bank=saves.at(-1);assert.equal(bank.version,1);assert.equal(bank.currentMotifId,0);assert.equal(bank.motifs[0].motifLength,null);assert.ok(bank.motifs[0].events.every(row=>row.every(v=>!v)));assert.ok(bank.motifs[0].voiceLengths.every(v=>v===null));c.resetInputState();
+});
+
+test("R3 cross-target COPY rejects Voice-to-BOOK and BOOK-to-Voice without consuming source", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ for(const chain of [false,true]) {
+  const {state,actions,controller:c}=setup();state.currentView="MOTIF_LIBRARY";
+  if(chain) {actions.toggleChain();actions.requestMotif(0);}
+  state.motif[1][2]=true;state.voiceLengths[1]=5;
+  const tap=(status,n)=>{c.handleMidiMessage([status,n,127]);c.handleMidiMessage([status,n,0]);};
+  const copy=()=>tap(0x90,c.mapping.VALUE_CONTROLS.COPY), voice=id=>tap(0x90,c.mapping.INSTRUMENTS[id]), book=id=>tap(0x90,c.mapping.BOOKS[id]);
+  const structure=state.chain.slice();copy();voice(1);const bank=structuredClone(state.motifs);book(4);assert.equal(c.copyStage,"TARGET");assert.deepEqual(state.motifs,bank);voice(2);assert.equal(c.copyStage,null);assert.deepEqual(state.motif[2],state.motif[1]);
+  copy();book(0);const before=structuredClone(state.motifs);voice(3);assert.equal(c.copyStage,"TARGET");assert.deepEqual(state.motifs,before);book(4);assert.equal(c.copyStage,null);assert.deepEqual(state.motifs[4],state.motifs[0]);assert.notEqual(state.motifs[4].events[1],state.motifs[0].events[1]);assert.deepEqual(state.chain,structure);c.resetInputState();
+ }
 });

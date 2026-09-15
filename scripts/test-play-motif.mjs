@@ -90,7 +90,7 @@ test("MOTIF layout preserves order, empty CHAIN and reserved clock without contr
     const positions = ["play-motif-title", "DURATION", "GRAPHIC CLOCK", ">STEP<", "PLAY MODE", ">CHAIN<"].map(label => zone.indexOf(label));
     assert.ok(positions.every((position, index) => position >= 0 && (!index || position > positions[index - 1])));
     assert.doesNotMatch(zone, /<(button|input|select|textarea|a|canvas|svg|summary)\b|\b(onclick|onkeydown|tabindex|contenteditable)\s*=/i);
-    assert.match(zone, /<h3 id="motif-chain-title">CHAIN<\/h3>\s*<\/section>/);
+    assert.match(zone, /<h3 id="motif-chain-title">CHAIN<\/h3>\s*<div id="play-chain-occurrences"[^>]*><\/div>\s*<\/section>/);
     assert.doesNotMatch(zone, /Position globale du Motif|motif-step-scope/);
     const header = html.slice(html.indexOf('<section id="play-page"'), html.indexOf('<div class="play-zones">'));
     assert.doesNotMatch(header, /play-selected|SELECTION|SELECTED/);

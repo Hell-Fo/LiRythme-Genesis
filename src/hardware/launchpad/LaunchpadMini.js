@@ -46,7 +46,27 @@ export class LaunchpadMini {
         this.actions.setViewChangeHandler?.(() => this.drawView());
         this.actions.setMotifChangeHandler?.(() => this.drawSelectedMotif());
         this.actions.setNextMotifChangeHandler?.(() => this.drawBooks());
+        this.chainBookPrevious = null;
+        this.chainBookFlashId = null;
+        this.chainBookFlashTimer = null;
+        this.actions.onChainOccurrence = () => {
+            this.pulseTransport(this.colors.RED, 2);
+            const id = this.state.playingMotifId;
+            const revision = this.actions.clock.transportRevision;
+            const repeated = this.chainBookPrevious?.id === id &&
+                this.chainBookPrevious?.revision === revision;
+            this.chainBookPrevious = { id, revision };
+            clearTimeout(this.chainBookFlashTimer);
+            this.chainBookFlashId = repeated ? id : null;
+            this.chainBookFlashTimer = repeated ? setTimeout(() => {
+                this.chainBookFlashId = null;
+                this.chainBookFlashTimer = null;
+                this.drawBooks();
+            }, 120) : null;
+            this.drawBooks();
+        };
         this.nextMotifBlinkTimer = null;
+        this.chainMotifHolds = new Map();
         this.nextMotifBlinkId = null;
         this.nextMotifLit = true;
 
@@ -107,6 +127,12 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        clearTimeout(this.chainBookFlashTimer);
+        this.chainBookFlashTimer = null;
+        this.chainBookFlashId = null;
+        this.chainBookPrevious = null;
+        for (const hold of this.chainMotifHolds.values()) clearTimeout(hold.timer);
+        this.chainMotifHolds.clear();
         clearTimeout(this.nextMotifBlinkTimer);
         this.nextMotifBlinkTimer = null;
         this.nextMotifBlinkId = null;
@@ -441,6 +467,16 @@ export class LaunchpadMini {
             return this.copySourceLit
                 ? (id === this.state.currentMotifId ? "GREEN" : "DIM_GREEN") : "OFF";
         }
+        if (this.state.chainEnabled) {
+            if (id === this.chainBookFlashId) return "YELLOW";
+            if (id === this.state.playingMotifId && !this.state.chainPlayingDetached &&
+                this.state.transportState !== "STOP" && id === this.state.nextMotifId) {
+                return this.nextMotifLit ? "DIM_GREEN" : "DIM_AMBER";
+            }
+            if (id !== this.state.playingMotifId && id === this.state.nextMotifId) {
+                return this.nextMotifLit ? "DIM_GREEN" : "GREEN";
+            }
+        }
         if (id === this.state.currentMotifId) return this.layout.BOOKS.MOTIF_LIBRARY;
         if (id === this.state.nextMotifId) {
             return this.nextMotifLit ? this.layout.BOOKS.MOTIF_LIBRARY_IDLE : "OFF";
@@ -453,7 +489,15 @@ export class LaunchpadMini {
     }
 
     drawBooks() {
-        const next = this.state.currentView === "MOTIF_LIBRARY" ? this.state.nextMotifId : null;
+        if (!this.state.chainEnabled || this.state.chainPlayingDetached || this.state.transportState === "STOP") {
+            this.chainBookPrevious = null;
+            clearTimeout(this.chainBookFlashTimer);
+            this.chainBookFlashTimer = null;
+            this.chainBookFlashId = null;
+        }
+        // The existing visual timer serves NEXT, including an identical successor.
+        const next = this.state.currentView !== "MOTIF_LIBRARY" ? null
+            : this.state.nextMotifId;
         if (this.nextMotifBlinkId !== next) {
             clearTimeout(this.nextMotifBlinkTimer);
             this.nextMotifBlinkTimer = null;
@@ -504,7 +548,7 @@ export class LaunchpadMini {
                     this.transportPulseRevision ===
                         this.actions.clock.transportRevision
                     ? this.transportPulseColor
-                    : this.colors.DIM_GREEN
+                    : (this.state.chainEnabled ? this.colors.DIM_AMBER : this.colors.DIM_GREEN)
             );
         } else {
             this.cancelTransportPulse();
@@ -555,6 +599,7 @@ export class LaunchpadMini {
     }
 
     pulseMotifCycle() {
+        if (this.state.chainEnabled) return;
         // Called only after a musical clock advancement, never by UI redraws.
         if (this.state.currentTimeline !== "MOTIF" || this.state.playheadPosition !== 0) return;
         if (this.state.motifLength !== null) {
@@ -565,6 +610,7 @@ export class LaunchpadMini {
     }
 
     pulseTransport(color = this.colors.GREEN, priority = 0) {
+        if (this.state.chainEnabled && priority < 2) color = this.colors.YELLOW;
         // Cycle feedback wins over the coincident beat; one timer owns the LED.
         if (this.state.transportState === "PLAY" &&
             this.transportPulseRevision === this.actions.clock.transportRevision &&
@@ -597,7 +643,7 @@ export class LaunchpadMini {
                 return;
             }
 
-            this.setTransportPulseLed(this.colors.DIM_GREEN);
+            this.setTransportPulseLed(this.state.chainEnabled ? this.colors.DIM_AMBER : this.colors.DIM_GREEN);
         }, TRANSPORT_PULSE_MS);
     }
 
@@ -928,6 +974,14 @@ export class LaunchpadMini {
         const status = rawStatus === 0x80 ? 0x90 : rawStatus;
         const value = rawStatus === 0x80 ? 0 : rawValue;
         const inputKey = status + ":" + number;
+        const chainHold = this.chainMotifHolds.get(inputKey);
+        if (chainHold) {
+            if (value === 0) {
+                clearTimeout(chainHold.timer);
+                this.chainMotifHolds.delete(inputKey);
+            }
+            return;
+        }
         if (value === 0 && status === 0x90) {
             const id = this.mapping.BOOKS.indexOf(number);
             if (this.copyDeniedPads.delete(id)) this.drawBooks();
@@ -947,6 +1001,18 @@ export class LaunchpadMini {
             status,
             number
         );
+        if (controlName === "PLAY_STOP" && value > 0 && this.shiftPressed) {
+            this.deleteConsumedInputs.add(inputKey);
+            for (const hold of this.chainMotifHolds.values()) {
+                clearTimeout(hold.timer);
+                hold.fired = true;
+            }
+            this.actions.toggleChain();
+            this.cancelTransportPulse();
+            this.drawTransport();
+            this.swapBuffers();
+            return;
+        }
         if (controlName === "SWITCH") {
             if (value > 0 && !this.switchPressed) {
                 this.actions.toggleView();
@@ -955,6 +1021,15 @@ export class LaunchpadMini {
             return;
         }
         if (controlType === "BOOK" && this.state.currentView === "MOTIF_LIBRARY") {
+            if (this.state.chainEnabled && !this.copyStage && !this.deleteArmed && !this.performanceHolds.size && value > 0) {
+                const hold = { id: controlPosition, fired: false, timer: null };
+                this.chainMotifHolds.set(inputKey, hold);
+                hold.timer = setTimeout(() => {
+                    hold.fired = true;
+                    this.actions.appendChainMotif(hold.id);
+                }, TEMPO_HOLD_DELAY_MS);
+                return;
+            }
             if (value > 0) {
                 this.deleteConsumedInputs.add(inputKey);
                 if (this.copyStage === "SOURCE") {
@@ -1021,6 +1096,11 @@ export class LaunchpadMini {
         }
         if (this.deleteArmed && value > 0) {
             this.deleteConsumedInputs.add(inputKey);
+            if (this.state.chainEnabled && ["NEXT", "PLAY_STOP"].includes(controlName)) {
+                if ((controlName === "NEXT" && this.actions.deleteChainNext()) ||
+                    (controlName === "PLAY_STOP" && this.actions.clearChain())) this.setDeleteArmed(false);
+                return;
+            }
             const performance = ["SOLO", "MUTE"].includes(controlName);
             const valid = performance || controlType === "INSTRUMENT" || controlName === "PLAY_STOP";
             if (valid && (performance ? this.actions.clearPerformanceSelection(controlName.toLowerCase()) : this.actions.clearMotifEvents(controlType === "INSTRUMENT" ? controlPosition : null))) {

@@ -9,6 +9,7 @@ import { LiRythmeActions } from "./LiRythmeActions.js";
 import { initializeSettingsUI } from "./SettingsUI.js";
 import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
 import { initializePlayMotifUI } from "./PlayMotifUI.mjs";
+import { initializePlayChainUI } from "./PlayChainUI.mjs";
 import { initializePlayFooterUI } from "./PlayFooterUI.mjs";
 import { initializeMotifBankAutosave } from "./MotifBankAutosave.mjs";
 
@@ -67,6 +68,7 @@ if (state.filterMode) {
 }
 
 const actions = new LiRythmeActions(state, clock);
+initializePlayChainUI({ state, actions });
 const settingsUI = initializeSettingsUI({ state, clock, actions });
 // Restore before connecting transport/controller input handlers.
 await settingsUI.ready;

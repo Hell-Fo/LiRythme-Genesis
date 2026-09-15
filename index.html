@@ -38,6 +38,9 @@
         .motif-clock-space { min-height: 220px; display: grid; place-items: center; border-block: 1px solid #c9cfd5; }
         .motif-position { grid-template-columns: 1fr 1fr; }
         .motif-chain { min-height: 100px; padding-top: 16px; border-top: 1px solid #c9cfd5; }
+        #play-chain-occurrences { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+        .chain-occurrence { display: inline-block; }
+        .chain-occurrence.is-playing { color: #4a9b6b; }
         [hidden] { display: none !important; }
     </style>
 </head>
@@ -162,6 +165,7 @@
                 </dl>
                 <section class="motif-chain" aria-labelledby="motif-chain-title">
                     <h3 id="motif-chain-title">CHAIN</h3>
+                    <div id="play-chain-occurrences" aria-label="Occurrences de la chaîne"></div>
                 </section>
             </section>
             <section id="play-modulation" class="panel play-modulation" aria-labelledby="play-modulation-title">
