@@ -46,23 +46,11 @@ export class LaunchpadMini {
         this.actions.setViewChangeHandler?.(() => this.drawView());
         this.actions.setMotifChangeHandler?.(() => this.drawSelectedMotif());
         this.actions.setNextMotifChangeHandler?.(() => this.drawBooks());
-        this.chainBookPrevious = null;
-        this.chainBookFlashId = null;
-        this.chainBookFlashTimer = null;
+        this.chainConfirmations = new Map();
+        this.chainNavigationFlashColor = null;
+        this.chainNavigationFlashTimer = null;
         this.actions.onChainOccurrence = () => {
             this.pulseTransport(this.colors.RED, 2);
-            const id = this.state.playingMotifId;
-            const revision = this.actions.clock.transportRevision;
-            const repeated = this.chainBookPrevious?.id === id &&
-                this.chainBookPrevious?.revision === revision;
-            this.chainBookPrevious = { id, revision };
-            clearTimeout(this.chainBookFlashTimer);
-            this.chainBookFlashId = repeated ? id : null;
-            this.chainBookFlashTimer = repeated ? setTimeout(() => {
-                this.chainBookFlashId = null;
-                this.chainBookFlashTimer = null;
-                this.drawBooks();
-            }, 120) : null;
             this.drawBooks();
         };
         this.nextMotifBlinkTimer = null;
@@ -127,12 +115,13 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
-        clearTimeout(this.chainBookFlashTimer);
-        this.chainBookFlashTimer = null;
-        this.chainBookFlashId = null;
-        this.chainBookPrevious = null;
+        clearTimeout(this.chainNavigationFlashTimer);
+        this.chainNavigationFlashTimer = null;
+        this.chainNavigationFlashColor = null;
         for (const hold of this.chainMotifHolds.values()) clearTimeout(hold.timer);
         this.chainMotifHolds.clear();
+        for (const timer of this.chainConfirmations.values()) clearTimeout(timer);
+        this.chainConfirmations.clear();
         clearTimeout(this.nextMotifBlinkTimer);
         this.nextMotifBlinkTimer = null;
         this.nextMotifBlinkId = null;
@@ -468,36 +457,62 @@ export class LaunchpadMini {
                 ? (id === this.state.currentMotifId ? "GREEN" : "DIM_GREEN") : "OFF";
         }
         if (this.state.chainEnabled) {
-            if (id === this.chainBookFlashId) return "YELLOW";
-            if (id === this.state.playingMotifId && !this.state.chainPlayingDetached &&
-                this.state.transportState !== "STOP" && id === this.state.nextMotifId) {
-                return this.nextMotifLit ? "DIM_GREEN" : "DIM_AMBER";
+            if (this.chainConfirmations.has(id)) return "GREEN";
+            const master = this.state.chainLoopMasterIndex;
+            // Shared pads represent PLAYING first, including an identical NEXT.
+            if (this.state.transportState !== "STOP" && id === this.state.playingMotifId) {
+                if (this.state.transportState === "PLAY" && master !== null &&
+                    !this.state.chainPlayingDetached && this.state.chainPlayingIndex === master) {
+                    return this.nextMotifLit ? "GREEN" : "DIM_RED";
+                }
+                return "GREEN";
             }
-            if (id !== this.state.playingMotifId && id === this.state.nextMotifId) {
-                return this.nextMotifLit ? "DIM_GREEN" : "GREEN";
+            if (id === this.state.nextMotifId) {
+                if (master !== null && this.state.getChainNextIndex() === master) {
+                    return this.nextMotifLit ? "RED" : "DIM_RED";
+                }
+                return this.nextMotifLit ? "YELLOW" : "DIM_AMBER";
             }
-        }
-        if (id === this.state.currentMotifId) return this.layout.BOOKS.MOTIF_LIBRARY;
-        if (id === this.state.nextMotifId) {
-            return this.nextMotifLit ? this.layout.BOOKS.MOTIF_LIBRARY_IDLE : "OFF";
+            if (master !== null && id === this.state.chain[master]) return "DIM_RED";
+            if (this.state.chain.includes(id)) return "YELLOW";
+        } else {
+            if (id === this.state.currentMotifId) return this.layout.BOOKS.MOTIF_LIBRARY;
+            if (id === this.state.nextMotifId) return this.nextMotifLit ? "GREEN" : "DIM_GREEN";
         }
         const motif = this.state.getMotif(id);
         const hasData = motif && (motif.motifLength !== null ||
             motif.voiceLengths.some(length => length !== null) ||
             motif.events.some(row => row.some(Boolean)));
-        return hasData ? this.layout.BOOKS.MOTIF_LIBRARY_IDLE : "OFF";
+        return hasData ? (this.state.chainEnabled ? "DIM_AMBER" : this.layout.BOOKS.MOTIF_LIBRARY_IDLE) : "OFF";
+    }
+
+    flashChainNavigationBoundary(controlName) {
+        clearTimeout(this.chainNavigationFlashTimer);
+        this.chainNavigationFlashTimer = null;
+        this.chainNavigationFlashColor = null;
+        if (this.state.chainEnabled && ["STOP", "PAUSE"].includes(this.state.transportState) &&
+            this.state.chain.length && !this.state.chainPlayingDetached) {
+            const index = this.state.chainPlayingIndex;
+            if (controlName === "PREVIOUS" && index === 0) this.chainNavigationFlashColor = "YELLOW";
+            if (controlName === "NEXT" && index === this.state.chain.length - 1) this.chainNavigationFlashColor = "RED";
+        }
+        if (this.chainNavigationFlashColor !== null) {
+            this.chainNavigationFlashTimer = setTimeout(() => {
+                this.chainNavigationFlashTimer = null;
+                this.chainNavigationFlashColor = null;
+                this.drawBooks();
+            }, 120);
+        }
+        this.drawBooks();
     }
 
     drawBooks() {
-        if (!this.state.chainEnabled || this.state.chainPlayingDetached || this.state.transportState === "STOP") {
-            this.chainBookPrevious = null;
-            clearTimeout(this.chainBookFlashTimer);
-            this.chainBookFlashTimer = null;
-            this.chainBookFlashId = null;
+        if (!this.state.chainEnabled || !["STOP", "PAUSE"].includes(this.state.transportState)) {
+            clearTimeout(this.chainNavigationFlashTimer);
+            this.chainNavigationFlashTimer = null;
+            this.chainNavigationFlashColor = null;
         }
-        // The existing visual timer serves NEXT, including an identical successor.
-        const next = this.state.currentView !== "MOTIF_LIBRARY" ? null
-            : this.state.nextMotifId;
+        const next = this.state.currentView !== "MOTIF_LIBRARY" ? null : this.state.nextMotifId;
         if (this.nextMotifBlinkId !== next) {
             clearTimeout(this.nextMotifBlinkTimer);
             this.nextMotifBlinkTimer = null;
@@ -514,11 +529,11 @@ export class LaunchpadMini {
         const books = this.mapping.BOOKS;
 
         for (let i = 0; i < books.length; i++) {
-            const colorName = this.state.currentView === "MOTIF_LIBRARY"
+            const colorName = this.chainNavigationFlashColor ?? (this.state.currentView === "MOTIF_LIBRARY"
                 ? this.getLibraryMotifColor(i)
                 : i < 8
                     ? this.layout.BOOKS.ATTRIBUTES
-                    : this.layout.BOOKS.TRANSFORMATIONS;
+                    : this.layout.BOOKS.TRANSFORMATIONS);
 
             // Keep the view in both buffers without swapping the musical surface.
             this.midiManager.send(this.deviceName,
@@ -1020,13 +1035,28 @@ export class LaunchpadMini {
             this.switchPressed = value > 0;
             return;
         }
+        // STOP/PAUSE selection is contextual in both views; PLAY keeps its library routing.
+        if (controlType === "BOOK" && this.state.chainEnabled && this.shiftPressed &&
+            !this.copyStage && !this.deleteArmed && value > 0 &&
+            (this.state.currentView === "MOTIF_LIBRARY" || ["STOP", "PAUSE"].includes(this.state.transportState))) {
+            this.deleteConsumedInputs.add(inputKey);
+            this.actions.toggleChainLoopPoint(controlPosition);
+            return;
+        }
         if (controlType === "BOOK" && this.state.currentView === "MOTIF_LIBRARY") {
             if (this.state.chainEnabled && !this.copyStage && !this.deleteArmed && !this.performanceHolds.size && value > 0) {
                 const hold = { id: controlPosition, fired: false, timer: null };
                 this.chainMotifHolds.set(inputKey, hold);
                 hold.timer = setTimeout(() => {
                     hold.fired = true;
-                    this.actions.appendChainMotif(hold.id);
+                    if (this.actions.holdChainMotif(hold.id)) {
+                        clearTimeout(this.chainConfirmations.get(hold.id));
+                        this.chainConfirmations.set(hold.id, setTimeout(() => {
+                            this.chainConfirmations.delete(hold.id);
+                            this.drawBooks();
+                        }, 120));
+                        this.drawBooks();
+                    }
                 }, TEMPO_HOLD_DELAY_MS);
                 return;
             }
@@ -1173,6 +1203,15 @@ export class LaunchpadMini {
 
             console.log("SHIFT:", this.shiftPressed);
 
+            return;
+        }
+        if (["PREVIOUS", "NEXT"].includes(controlName) && this.state.chainEnabled &&
+            this.state.transportState !== "PLAY") {
+            if (value > 0) {
+                this.deleteConsumedInputs.add(inputKey);
+                this.actions.navigateContext(controlName === "PREVIOUS" ? -1 : 1);
+                this.flashChainNavigationBoundary(controlName);
+            }
             return;
         }
         if (controlName === "PREVIOUS") {

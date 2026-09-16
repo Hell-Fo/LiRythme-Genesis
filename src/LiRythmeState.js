@@ -49,6 +49,8 @@ export class LiRythmeState {
         this.chain = [];
         this.chainPlayingIndex = -1;
         this.chainPlayingDetached = true;
+        // Session-only occurrence reference, shifted by structural edits.
+        this.chainLoopMasterIndex = null;
         // Phase B: visible/editable motif follows PLAYING; no independent VIEW yet.
         Object.defineProperty(this, "currentMotifId", {
             enumerable: true,
@@ -79,6 +81,12 @@ export class LiRythmeState {
         this.soloActive = false;
         this.muteActive = false;
         this.liveLengthCycle = null;
+    }
+
+    getChainNextIndex() {
+        if (!this.chain.length) return -1;
+        if (!this.chainPlayingDetached && this.chainPlayingIndex === this.chainLoopMasterIndex) return 0;
+        return (this.chainPlayingIndex + 1) % this.chain.length;
     }
 
     getMotif(id) {

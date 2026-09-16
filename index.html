@@ -41,6 +41,13 @@
         #play-chain-occurrences { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
         .chain-occurrence { display: inline-block; }
         .chain-occurrence.is-playing { color: #4a9b6b; }
+        .chain-occurrence.is-loop-master { color: #c94c4c; }
+        .chain-occurrence.is-loop-master.is-playing {
+            text-decoration-line: underline;
+            text-decoration-color: #4a9b6b;
+            text-decoration-thickness: 2px;
+            text-underline-offset: 3px;
+        }
         [hidden] { display: none !important; }
     </style>
 </head>

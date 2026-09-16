@@ -1389,10 +1389,10 @@ test("NEXT: replacement, cancellation, blink, PAUSE/STOP and view restoration", 
     assert.equal(state.playingMotifId, 0); assert.equal(state.currentMotifId, 0);
     assert.equal(state.nextMotifId, 4); assert.equal(state.playheadPosition, 3);
     assert.equal(color(0), (controller.colors.GREEN & 0x33) | 4);
-    t.mock.timers.tick(160); assert.equal(color(4), 4);
+    t.mock.timers.tick(160); assert.equal(color(4), (controller.colors.DIM_GREEN & 0x33) | 4);
     tap(6); assert.equal(state.nextMotifId, 6);
     assert.equal(color(4), 4);
-    t.mock.timers.tick(160); assert.equal(color(6), 4);
+    t.mock.timers.tick(160); assert.equal(color(6), (controller.colors.DIM_GREEN & 0x33) | 4);
     tap(0); assert.equal(state.nextMotifId, null); assert.equal(state.playheadPosition, 3);
     assert.equal(controller.nextMotifBlinkTimer, null);
     tap(4); actions.toggleView(); assert.equal(controller.nextMotifBlinkTimer, null);
@@ -1660,10 +1660,10 @@ test("BOOK hierarchy: empty OFF, data DIM GREEN, active GREEN; COPY/DELETE redra
     tap(88);book(4); assert.equal(color(4),controller.colors.GREEN&0x33);
     book(0); assert.equal(color(4),0);
     actions.startPlayback();book(4);
-    assert.equal(color(4),controller.colors.DIM_GREEN&0x33);
-    t.mock.timers.tick(160); assert.equal(color(4),0);
+    assert.equal(color(4),controller.colors.GREEN&0x33);
+    t.mock.timers.tick(160); assert.equal(color(4),controller.colors.DIM_GREEN&0x33);
     book(1); assert.equal(color(4),0);
-    t.mock.timers.tick(160); assert.equal(color(1),0);
+    t.mock.timers.tick(160); assert.equal(color(1),controller.colors.DIM_GREEN&0x33);
     book(0); assert.equal(color(1),controller.colors.DIM_GREEN&0x33);
     assert.equal(color(0),controller.colors.GREEN&0x33);
     controller.resetInputState();
@@ -2019,7 +2019,7 @@ test("CHAIN UI: occurrence order, duplicates,/NEXT, every mutation and wrap refr
     c.resetInputState();
 });
 
-test("CHAIN BOOK: normal hierarchy, consecutive repeats, yellow boundaries and COPY priority", t => {
+test("CHAIN BOOK: CHAIN palette, shared repeated pads and COPY priority", t => {
  t.mock.timers.enable({apis:["setTimeout"]});
  for(const ids of [[0,4,2],[0,0,4],[0,0,0,4],[0,4,0]]) {
   const {state,actions,clock,controller:c}=setup();state.currentView="MOTIF_LIBRARY";
@@ -2029,22 +2029,16 @@ test("CHAIN BOOK: normal hierarchy, consecutive repeats, yellow boundaries and C
    const current=ids[i],next=ids[(i+1)%ids.length],repeat=current===next;
    for(const lit of [true,false]) {
     c.nextMotifLit=lit;
-    assert.equal(c.getLibraryMotifColor(current),repeat?(lit?"DIM_GREEN":"DIM_AMBER"):"GREEN");
-    if(!repeat) assert.equal(c.getLibraryMotifColor(next),lit?"DIM_GREEN":"GREEN");
-    for(const id of new Set(ids)) if(id!==current&&id!==next) assert.equal(c.getLibraryMotifColor(id),"DIM_GREEN");
+    assert.equal(c.getLibraryMotifColor(current),"GREEN");
+    if(!repeat) assert.equal(c.getLibraryMotifColor(next),lit?"YELLOW":"DIM_AMBER");
+    for(const id of new Set(ids)) if(id!==current&&id!==next) assert.equal(c.getLibraryMotifColor(id),"YELLOW");
     assert.equal(c.getLibraryMotifColor(15),"OFF");
    }
    const before=JSON.stringify(state);c.drawBooks();assert.equal(JSON.stringify(state),before);
-   clock.advanceStepPipeline();assert.equal(c.chainBookFlashId,repeat?current:null);
-   if(repeat) {
-    assert.equal(c.getLibraryMotifColor(current),"YELLOW");
-    c.copyDeniedPads.add(current);assert.equal(c.getLibraryMotifColor(current),"RED");c.copyDeniedPads.clear();
-    t.mock.timers.tick(119);assert.equal(c.getLibraryMotifColor(current),"YELLOW");
-    t.mock.timers.tick(1);assert.equal(c.chainBookFlashId,null);
-   }
+   clock.advanceStepPipeline();assert.equal(c.getLibraryMotifColor(next),"GREEN");
   }
-  actions.toggleChain();assert.equal(c.chainBookFlashId,null);assert.equal(c.getLibraryMotifColor(state.playingMotifId),"GREEN");
-  actions.requestMotif(14);c.nextMotifLit=false;assert.equal(c.getLibraryMotifColor(14),"OFF");c.resetInputState();
+  actions.toggleChain();assert.equal(c.getLibraryMotifColor(state.playingMotifId),"GREEN");
+  actions.requestMotif(14);c.nextMotifLit=false;assert.equal(c.getLibraryMotifColor(14),"DIM_GREEN");c.resetInputState();
  }
 });
 
@@ -2131,4 +2125,711 @@ test("R3 cross-target COPY rejects Voice-to-BOOK and BOOK-to-Voice without consu
   const structure=state.chain.slice();copy();voice(1);const bank=structuredClone(state.motifs);book(4);assert.equal(c.copyStage,"TARGET");assert.deepEqual(state.motifs,bank);voice(2);assert.equal(c.copyStage,null);assert.deepEqual(state.motif[2],state.motif[1]);
   copy();book(0);const before=structuredClone(state.motifs);voice(3);assert.equal(c.copyStage,"TARGET");assert.deepEqual(state.motifs,before);book(4);assert.equal(c.copyStage,null);assert.deepEqual(state.motifs[4],state.motifs[0]);assert.notEqual(state.motifs[4].events[1],state.motifs[0].events[1]);assert.deepEqual(state.chain,structure);c.resetInputState();
  }
+});
+
+test("CHAIN BOOK: emitted LEDs keep PLAYING green while NEXT blinks amber/yellow through transitions", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ const {state,actions,clock,controller:c}=setup();state.currentView="MOTIF_LIBRARY";
+ const leds=new Map();c.midiManager.send=(_,m)=>{if(m[0]===0x90) leds.set(m[1],m[2]);};
+ const color=id=>leds.get(c.mapping.BOOKS[id]);const value=name=>(c.colors[name]&0x33)|4;
+ [0,4,2].forEach(id=>state.motifs[id].motifLength=1);
+ actions.toggleChain();[0,4,2].forEach(id=>actions.requestMotif(id));actions.setClockStepHandler(()=>{});actions.startPlayback();
+ for(const [playing,next,other] of [[0,4,2],[4,2,0],[2,0,4]]) {
+  c.drawBooks();assert.equal(color(playing),value("GREEN"));assert.equal(color(next),value("YELLOW"));assert.equal(color(other),value("YELLOW"));
+  const before=JSON.stringify(state),revision=clock.transportRevision;
+  t.mock.timers.tick(160);assert.equal(color(playing),value("GREEN"));assert.equal(color(next),value("DIM_AMBER"));
+  t.mock.timers.tick(160);assert.equal(color(playing),value("GREEN"));assert.equal(color(next),value("YELLOW"));
+  assert.equal(JSON.stringify(state),before);assert.equal(clock.transportRevision,revision);
+  c.copyDeniedPads.add(playing);assert.equal(c.getLibraryMotifColor(playing),"RED");c.copyDeniedPads.clear();
+  c.copySuccessPad=next;assert.equal(c.getLibraryMotifColor(next),"YELLOW");c.copySuccessPad=null;
+  clock.advanceStepPipeline();
+ }
+ c.resetInputState();
+});
+
+test("CHAIN B: bounded occurrence navigation, duplicate Timeline, contextual hold and Loop Point gesture", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ for(const transport of ["STOP","PAUSE"]) {
+  const {state,actions,controller:c}=setup();state.currentView="MOTIF_LIBRARY";state.transportState=transport;
+  actions.toggleChain();[0,4,4,2].forEach(id=>actions.requestMotif(id));const bank=structuredClone(state.motifs);
+  const tap=(status,n)=>{c.handleMidiMessage([status,n,127]);c.handleMidiMessage([status,n,0]);};
+  const nav=name=>tap(0xB0,c.mapping.TOP_CONTROLS[name]);
+  nav("PREVIOUS");assert.equal(state.chainPlayingIndex,0);nav("PREVIOUS");assert.equal(state.chainPlayingIndex,0);
+  nav("NEXT");assert.equal(state.chainPlayingIndex,1);nav("NEXT");assert.equal(state.chainPlayingIndex,2);assert.equal(state.currentMotifId,4);assert.equal(state.playheadPosition,0);
+  const pad=c.mapping.BOOKS[6];c.handleMidiMessage([0x90,pad,127]);t.mock.timers.tick(300);c.handleMidiMessage([0x90,pad,0]);
+  assert.deepEqual(state.chain,[0,4,4,6,2]);assert.equal(state.chainPlayingIndex,2);assert.deepEqual(state.motifs,bank);
+  const shiftBook=id=>{c.handleMidiMessage([0xB0,c.mapping.TOP_CONTROLS.SHIFT,127]);tap(0x90,c.mapping.BOOKS[id]);c.handleMidiMessage([0xB0,c.mapping.TOP_CONTROLS.SHIFT,0]);};
+  shiftBook(4);assert.equal(state.chainLoopMasterIndex,2);nav("NEXT");nav("NEXT");nav("NEXT");assert.equal(state.chainPlayingIndex,4);
+  shiftBook(2);assert.equal(state.chainLoopMasterIndex,4);assert.equal(c.getLibraryMotifColor(2),transport==="PAUSE"?"GREEN":"DIM_RED");assert.equal(state.nextMotifId,0);
+  shiftBook(2);assert.equal(state.chainLoopMasterIndex,null);assert.deepEqual(state.chain,[0,4,4,6,2]);assert.equal(state.transportState,transport);c.resetInputState();
+ }
+});
+
+test("CHAIN B: LoopMaster remains the same occurrence through insert append delete and clear", () => {
+ const {state,actions,controller:c}=setup();actions.toggleChain();[0,4].forEach(id=>actions.requestMotif(id));actions.navigateContext(1);actions.navigateContext(1);actions.toggleChainLoopPoint(4);
+ actions.holdChainMotif(2);assert.deepEqual(state.chain,[0,4,2]);assert.equal(state.chainLoopMasterIndex,1);assert.equal(state.chainPlayingIndex,1);assert.equal(state.nextMotifId,0);
+ actions.appendChainMotif(6);assert.equal(state.chainLoopMasterIndex,1);actions.deleteMotif(6);assert.deepEqual(state.chain,[0,4,2]);assert.equal(state.chainLoopMasterIndex,1);
+ actions.deleteMotif(2);assert.equal(state.nextMotifId,0);actions.clearChain();assert.equal(state.chainLoopMasterIndex,null);assert.equal(actions.toggleChainLoopPoint(4),false);c.resetInputState();
+});
+
+test("CHAIN B: LoopMaster wraps on natural polymetric boundary with one dispatch and stable transport, both clocks", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ for(const source of ["INTERNAL","MIDI"]) for(const ids of [[0],[0,4]]) {
+  const {state,actions,clock,controller:c}=setup();state.currentView="MOTIF_LIBRARY";
+  state.motifs[0].motifLength=2;state.motifs[4].voiceLengths[1]=2;state.motifs[4].voiceLengths[2]=3;
+  actions.toggleChain();ids.forEach(id=>actions.requestMotif(id));ids.forEach(()=>actions.navigateContext(1));actions.toggleChainLoopPoint(ids.at(-1));actions.appendChainMotif(9);
+  const steps=[],transitions=[],beats=[];actions.setClockStepHandler(()=>steps.push([state.playingMotifId,state.playheadPosition]));actions.setClockBeatHandler(()=>beats.push(1));actions.setTransportTransitionHandler(e=>transitions.push(e));
+  clock.setSource(source);actions.startPlayback();const revision=clock.transportRevision;
+  const duration=ids.length===1?2:8;
+  for(let i=1;i<=duration;i++) {
+   if(source==="MIDI") for(let p=0;p<6;p++) clock.receiveMidiClockPulse();else clock.receiveInternalClockStep({sequence:i,transportRevision:revision});
+   if(i===duration-1) {assert.equal(state.transportState,"PLAY");c.nextMotifLit=true;assert.equal(c.getLibraryMotifColor(ids.at(-1)),"GREEN");c.nextMotifLit=false;assert.equal(c.getLibraryMotifColor(ids.at(-1)),"DIM_RED");}
+  }
+  assert.equal(steps.length,duration);assert.equal(state.transportState,"PLAY");assert.equal(transitions.filter(e=>e.to==="STOP").length,0);assert.deepEqual(steps.at(-1),[0,0]);assert.equal(state.chainPlayingIndex,0);
+  assert.equal(clock.transportRevision,revision);assert.equal(beats.length,ids.length===1?1:3);assert.ok(steps.every(([id])=>id!==9));
+  actions.stop();actions.continuePlayback();assert.equal(state.playingMotifId,0);assert.equal(state.chainPlayingIndex,0);assert.equal(state.playheadPosition,0);assert.equal(state.chainLoopMasterIndex,ids.length-1);c.resetInputState();
+ }
+});
+
+test("CHAIN B: STOP/PAUSE selection highlight follows duplicate occurrence without changing text", async () => {
+ const {initializePlayChainUI}=await import("../src/PlayChainUI.mjs");
+ for(const transport of ["STOP","PAUSE"]) {
+  const {state,actions,controller:c}=setup();state.transportState=transport;actions.toggleChain();[0,4,4,2].forEach(id=>actions.requestMotif(id));
+  const container={children:[],replaceChildren(...v){this.children=v;}};initializePlayChainUI({state,actions,document:{getElementById:()=>container,createElement:()=>({})}});
+  for(let i=0;i<4;i++) {actions.navigateContext(1);assert.equal(container.children.map(e=>e.textContent).join(""),"[01][05][05][03]");assert.deepEqual(container.children.flatMap((e,n)=>e.className.includes("is-playing")?[n]:[]),[i]);assert.equal(state.currentMotifId,state.chain[i]);}
+  c.resetInputState();
+ }
+});
+
+test("CHAIN B: repeated LoopMaster wraps preserve real dispatcher Note Off callbacks and occurrence colors", async t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ const app=await source("app.js"),dispatch=app.slice(app.indexOf("function triggerMotifStep(step) {"),app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+ const {state,actions,clock,controller:c}=setup();state.currentView="MOTIF_LIBRARY";state.motifLength=2;state.motif[12][1]=true;
+ state.padConfiguration.voices[12]={type:"MIDI DRUM",output:{mode:"DEFAULT"},channel:1,note:60};
+ const notes=[],offs=[];
+ const trigger=new Function("state","midiOutputSelector","midiManager","launchpad","setTimeout",dispatch+"; return triggerMotifStep;")(state,{options:[{textContent:"Drums"}],selectedIndex:0},{send:(_,m)=>notes.push(m),findOutput:()=>({})},{pulseInstrument(){}},fn=>offs.push(fn));
+ actions.toggleChain();[0,0].forEach(id=>actions.requestMotif(id));actions.navigateContext(1);actions.navigateContext(1);actions.toggleChainLoopPoint(0);actions.appendChainMotif(4);
+ actions.setClockStepHandler(()=>trigger(state.playheadPosition));actions.startPlayback();clock.advanceStepPipeline();clock.advanceStepPipeline();
+ assert.equal(c.getLibraryMotifColor(0),"GREEN");t.mock.timers.tick(120);c.nextMotifLit=false;assert.equal(c.getLibraryMotifColor(0),"DIM_RED");
+ clock.advanceStepPipeline();clock.advanceStepPipeline();assert.equal(state.transportState,"PLAY");assert.equal(c.getLibraryMotifColor(0),"GREEN");assert.equal(state.chainPlayingIndex,0);assert.equal(notes.length,2);assert.equal(offs.length,2);
+ const ons=notes.slice();offs.forEach(fn=>fn());assert.deepEqual(notes.slice(2),ons.map(([s,n])=>[s,n,0]));c.resetInputState();
+});
+
+
+test("CHAIN correction: accepted contextual hold confirms after transaction only, then restores palette", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ for(const transport of ["STOP","PAUSE","PLAY"]) for(const accepted of [true,false]) {
+  const {state,actions,controller:c}=setup();state.currentView="MOTIF_LIBRARY";
+  actions.toggleChain();[0,4].forEach(id=>actions.requestMotif(id));actions.navigateContext(1);
+  state.transportState=transport;
+  if(!accepted) actions.holdChainMotif=()=>false;
+  const pad=c.mapping.BOOKS[6],before=state.chain.slice();
+  c.handleMidiMessage([0x90,pad,127]);t.mock.timers.tick(299);
+  assert.deepEqual(state.chain,before);assert.equal(c.chainConfirmations.size,0);assert.equal(c.getLibraryMotifColor(6),"OFF");
+  t.mock.timers.tick(1);
+  assert.deepEqual(state.chain,accepted?(transport==="PLAY"?[0,4,6]:[0,6,4]):before);
+  assert.equal(c.getLibraryMotifColor(6),accepted?"GREEN":"OFF");
+  c.handleMidiMessage([0x90,pad,0]);t.mock.timers.tick(119);
+  assert.equal(c.chainConfirmations.has(6),accepted);t.mock.timers.tick(1);
+  assert.equal(c.chainConfirmations.size,0);
+  assert.equal(c.getLibraryMotifColor(6),accepted?(state.nextMotifId===6?(c.nextMotifLit?"YELLOW":"DIM_AMBER"):"YELLOW"):"OFF");
+  c.resetInputState();
+ }
+});
+
+
+
+test("CHAIN correction: reset cancels pending hold and accepted confirmation timers", t => {
+ t.mock.timers.enable({apis:["setTimeout"]});
+ const {state,actions,controller:c}=setup();state.currentView="MOTIF_LIBRARY";actions.toggleChain();actions.requestMotif(0);
+ const press=()=>c.handleMidiMessage([0x90,c.mapping.BOOKS[4],127]);
+ press();t.mock.timers.tick(299);c.resetInputState();t.mock.timers.tick(121);assert.deepEqual(state.chain,[0]);assert.equal(c.chainMotifHolds.size,0);
+ press();t.mock.timers.tick(300);assert.deepEqual(state.chain,[0,4]);assert.equal(c.chainConfirmations.size,1);
+ c.resetInputState();assert.equal(c.chainConfirmations.size,0);t.mock.timers.tick(120);assert.deepEqual(state.chain,[0,4]);c.resetInputState();
+});
+
+// Real clock ingress and hardware gestures for the live Loop Point scenarios.
+function setupLoopPerformance({ source = "INTERNAL", ids = [0,4,2,7,3,9], master = null } = {}) {
+    const context = setup();
+    const { state, actions, clock, controller } = context;
+    state.currentView = "MOTIF_LIBRARY";
+    ids.forEach(id => state.motifs[id].motifLength = 2);
+    actions.toggleChain();
+    ids.forEach(id => actions.requestMotif(id));
+    if (master !== null) {
+        for (let i = 0; i <= master; i++) actions.navigateContext(1);
+        assert.equal(actions.toggleChainLoopPoint(ids[master]), true);
+    }
+    clock.setSource(source);
+    const steps = [], transitions = [];
+    actions.setClockStepHandler(() => steps.push([state.chainPlayingIndex, state.playingMotifId, state.playheadPosition]));
+    actions.setTransportTransitionHandler(event => transitions.push(event));
+    actions.startPlayback();
+    steps.push([state.chainPlayingIndex, state.playingMotifId, state.playheadPosition]);
+    let sequence = 0;
+    const advance = (count = 1) => {
+        for (let i = 0; i < count; i++) {
+            if (source === "MIDI") for (let pulse = 0; pulse < 6; pulse++) clock.receiveMidiClockPulse();
+            else assert.equal(clock.receiveInternalClockStep({ sequence: ++sequence, transportRevision: clock.transportRevision }).accepted, true);
+        }
+    };
+    const shiftBook = id => {
+        controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 127]);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[id], 127]);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[id], 0]);
+        controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 0]);
+    };
+    return { ...context, steps, transitions, advance, shiftBook };
+}
+
+function loopPhase(state, clock) {
+    return {
+        transport: state.transportState, revision: clock.transportRevision,
+        playing: state.playingMotifId, index: state.chainPlayingIndex,
+        detached: state.chainPlayingDetached, position: state.playheadPosition,
+        live: structuredClone(state.liveLengthCycle), pulses: clock.midiPulseCount,
+        sequence: clock.lastAcceptedNativeStepSequence,
+        chain: state.chain.slice(), motifs: structuredClone(state.motifs)
+    };
+}
+
+for (const transport of ["STOP", "PAUSE"]) {
+    test(`LOOP POINT hardware: ${transport} creates and removes the selected 05b in both views`, t => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        for (const view of ["PLAY", "MOTIF_LIBRARY"]) {
+            const { state, actions, clock, controller } = setup();
+            state.currentView = view;
+            actions.toggleChain();
+            [0,4,4,2,7].forEach(id => actions.requestMotif(id));
+            if (transport === "PAUSE") { actions.startPlayback();actions.pausePlayback(); }
+            const tap = (status, note) => {
+                controller.handleMidiMessage([status, note, 127]);
+                controller.handleMidiMessage([status, note, 0]);
+            };
+            const next = () => tap(0xB0, controller.mapping.TOP_CONTROLS.NEXT);
+            if (transport === "STOP") next(); // Select the head before moving to 05b.
+            next();next();
+            assert.equal(state.chainPlayingIndex, 2);
+            assert.equal(state.chainPlayingDetached, false);
+            const before = loopPhase(state, clock);
+            const shiftBook = () => {
+                controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 127]);
+                tap(0x90, controller.mapping.BOOKS[4]);
+                controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 0]);
+            };
+            shiftBook();assert.equal(state.chainLoopMasterIndex, 2);
+            assert.deepEqual(loopPhase(state, clock), before);
+            shiftBook();assert.equal(state.chainLoopMasterIndex, null);
+            assert.deepEqual(loopPhase(state, clock), before);
+            t.mock.timers.tick(600);
+            assert.deepEqual(state.chain, before.chain);
+            assert.equal(controller.chainMotifHolds.size, 0);
+            assert.equal(controller.chainConfirmations.size, 0);
+            assert.equal(state.currentView, view);
+            controller.resetInputState();
+        }
+    });
+}
+
+test("LOOP POINT: intermediate LoopMaster repeats the prefix and leaves the tail intact on both clocks", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const source of ["INTERNAL", "MIDI"]) {
+        const { state, clock, controller, steps, transitions, advance } = setupLoopPerformance({ source, master: 2 });
+        const revision = clock.transportRevision;
+        // Hardware APPEND remains accepted behind the frontier and confirms in GREEN.
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[11], 127]);
+        t.mock.timers.tick(300);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[11], 0]);
+        assert.equal(controller.getLibraryMotifColor(11), "GREEN");
+        t.mock.timers.tick(120);assert.equal(controller.getLibraryMotifColor(11), "YELLOW");
+        advance(18);
+        assert.deepEqual(steps.filter(([, , step]) => step === 0).map(([index, id]) => [index, id]),
+            [[0,0],[1,4],[2,2],[0,0],[1,4],[2,2],[0,0],[1,4],[2,2],[0,0]]);
+        assert.deepEqual(state.chain, [0,4,2,7,3,9,11]);
+        assert.equal(state.chainLoopMasterIndex, 2);
+        assert.equal(state.transportState, "PLAY");
+        assert.equal(clock.transportRevision, revision);
+        assert.equal(transitions.length, 1); // Initial PLAY only; wraps are not transport events.
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: hardware LOOP OFF anywhere in PLAY preserves phase and continues into the tail", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const source of ["INTERNAL", "MIDI"]) for (const playingMaster of [false, true]) {
+        const { state, clock, controller, steps, advance, shiftBook } = setupLoopPerformance({ source, master: 2 });
+        advance(playingMaster ? 5 : 1); // Step 1 of LoopMaster or the first Motif.
+        if (source === "MIDI") clock.receiveMidiClockPulse();
+        const before = loopPhase(state, clock), live = state.liveLengthCycle;
+        shiftBook(2);
+        assert.equal(state.chainLoopMasterIndex, null);
+        assert.deepEqual(loopPhase(state, clock), before);
+        assert.equal(state.liveLengthCycle, live);
+        assert.equal(state.nextMotifId, playingMaster ? 7 : 4);
+        assert.equal(controller.getLibraryMotifColor(2), playingMaster ? "GREEN" : "YELLOW");
+        assert.equal(controller.chainMotifHolds.size, 0);
+        const offset = steps.length;
+        advance(playingMaster ? 7 : 11);
+        assert.deepEqual(steps.slice(offset).filter(([, , step]) => step === 0).map(([, id]) => id),
+            playingMaster ? [7,3,9,0] : [4,2,7,3,9,0]);
+        assert.equal(state.transportState, "PLAY");
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: on-the-fly creation uses only the attached PLAYING occurrence without reset or rephase", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const source of ["INTERNAL", "MIDI"]) {
+        const { state, actions, clock, controller, advance, shiftBook } = setupLoopPerformance({ source });
+        advance(9); // 04 (ID 3), occurrence index 4, step 1.
+        assert.equal(state.playingMotifId, 3);
+        const before = loopPhase(state, clock), live = state.liveLengthCycle;
+        shiftBook(7); // Another pad cannot identify an arbitrary occurrence.
+        assert.equal(state.chainLoopMasterIndex, null);
+        assert.deepEqual(loopPhase(state, clock), before);
+        shiftBook(3);
+        assert.equal(state.chainLoopMasterIndex, 4);
+        assert.deepEqual(loopPhase(state, clock), before);
+        assert.equal(state.liveLengthCycle, live);
+        assert.equal(state.nextMotifId, 0);
+        assert.equal(controller.getLibraryMotifColor(3), "GREEN");
+        actions.holdChainMotif(11);
+        assert.deepEqual(state.chain, [0,4,2,7,3,9,11]);
+        assert.equal(state.chainLoopMasterIndex, 4);
+        advance();
+        assert.equal(state.chainPlayingIndex, 0);
+        assert.equal(state.playheadPosition, 0);
+        shiftBook(0); // Existing Loop Point cannot be moved arbitrarily in PLAY.
+        assert.equal(state.chainLoopMasterIndex, 4);
+        shiftBook(3);
+        assert.equal(state.chainLoopMasterIndex, null);
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: STOP/PAUSE navigation selects and moves the master precisely between duplicate occurrences", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const transport of ["STOP", "PAUSE"]) {
+        const { state, actions, controller } = setup();
+        state.currentView = "MOTIF_LIBRARY";
+        state.transportState = transport;
+        actions.toggleChain();
+        [0,4,4,2].forEach(id => actions.requestMotif(id));
+        const tap = (status, note) => {
+            controller.handleMidiMessage([status, note, 127]);
+            controller.handleMidiMessage([status, note, 0]);
+        };
+        const shiftBook = id => {
+            controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 127]);
+            tap(0x90, controller.mapping.BOOKS[id]);
+            controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 0]);
+        };
+        shiftBook(4); // No selected occurrence yet.
+        assert.equal(state.chainLoopMasterIndex, null);
+        tap(0xB0, controller.mapping.TOP_CONTROLS.NEXT);
+        tap(0xB0, controller.mapping.TOP_CONTROLS.NEXT);
+        const before = state.chain.slice();
+        shiftBook(2);assert.equal(state.chainLoopMasterIndex, null);
+        shiftBook(4);assert.equal(state.chainLoopMasterIndex, 1);
+        tap(0xB0, controller.mapping.TOP_CONTROLS.NEXT);
+        assert.equal(state.chainPlayingIndex, 2);
+        shiftBook(4);assert.equal(state.chainLoopMasterIndex, 2);
+        shiftBook(4);assert.equal(state.chainLoopMasterIndex, null);
+        assert.deepEqual(state.chain, before);
+        assert.equal(state.transportState, transport);
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: duplicate PLAYING creation and pad-based LOOP OFF keep occurrence identity", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const master of [1,2]) {
+        const { state, clock, controller, advance, shiftBook } = setupLoopPerformance({ ids: [0,4,4,2] });
+        advance(master * 2 + 1);
+        shiftBook(4);
+        assert.equal(state.chainLoopMasterIndex, master);
+        assert.equal(controller.getLibraryMotifColor(4), "GREEN");
+        advance();assert.equal(state.chainPlayingIndex, 0);
+        for (const lit of [true,false]) {
+            controller.nextMotifLit = lit;
+            assert.equal(controller.getLibraryMotifColor(4), master === 1 ? (lit ? "RED" : "DIM_RED") : (lit ? "YELLOW" : "DIM_AMBER"));
+        }
+        if (master === 2) {
+            advance(2); // Earlier 05a plays while 05b remains the master.
+            assert.equal(state.chainPlayingIndex, 1);
+            assert.equal(controller.getLibraryMotifColor(4), "GREEN");
+        }
+        const before = loopPhase(state, clock);
+        shiftBook(4);
+        assert.equal(state.chainLoopMasterIndex, null);
+        assert.deepEqual(loopPhase(state, clock), before);
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: emitted LEDs show idle DIM RED, NEXT DIM RED/RED blink, PLAYING GREEN/DIM RED blink and immediate restoration", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, controller, advance, shiftBook } = setupLoopPerformance({ master: 2 });
+    const leds = new Map();
+    controller.midiManager.send = (_, [status, note, color]) => { if (status === 0x90) leds.set(note, color); };
+    const color = id => leds.get(controller.mapping.BOOKS[id]);
+    const value = name => (controller.colors[name] & 0x33) | 4;
+    controller.drawBooks();
+    assert.equal(color(2), value("DIM_RED"));assert.equal(color(0), value("GREEN"));
+    advance(2); // NEXT is now LoopMaster.
+    assert.equal(color(2), value("RED"));
+    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_RED"));assert.equal(color(4), value("GREEN"));
+    t.mock.timers.tick(160);assert.equal(color(2), value("RED"));
+    shiftBook(2); // Remove while NEXT: restore the same temporal grammar in amber/yellow.
+    assert.equal(color(2), value("YELLOW"));
+    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_AMBER"));
+    advance(2); // Current 03 can become master on-the-fly.
+    shiftBook(2);assert.equal(color(2), value("GREEN"));
+    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_RED"));
+    t.mock.timers.tick(160);assert.equal(color(2), value("GREEN"));
+    advance(2); // Master leaves PLAYING: its role becomes DIM RED again.
+    assert.equal(color(2), value("DIM_RED"));assert.equal(color(0), value("GREEN"));
+    advance(2); // Next tour: master is NEXT, so only it blinks red.
+    assert.equal(color(2), value("RED"));
+    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_RED"));
+    advance(2);assert.equal(color(2), value("GREEN"));
+    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_RED"));
+    t.mock.timers.tick(160);assert.equal(color(2), value("GREEN"));
+    shiftBook(2);assert.equal(color(2), value("GREEN"));assert.equal(state.nextMotifId, 7);
+    controller.resetInputState();
+});
+
+test("LOOP POINT: structural insertions and deletions preserve the precise duplicate master, deleting it disables LOOP", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const transport of ["STOP", "PAUSE", "PLAY"]) {
+        const { state, actions, controller, advance } = setupLoopPerformance({ ids: [0,4,4,2], master: 2 });
+        if (transport !== "PLAY") {
+            if (transport === "STOP") actions.stop();else actions.pausePlayback();
+            actions.navigateContext(1); // STOP: head; PAUSE: occurrence 1.
+        }
+        // INSERT before 05b, after the current selected/playing occurrence.
+        actions.appendChainMotif(6, { afterPlaying: true });
+        assert.equal(state.chainLoopMasterIndex, 3);
+        assert.equal(state.chain[3], 4);
+        const masterIndex = state.chainLoopMasterIndex;
+        if (transport !== "PLAY") {
+            while (state.chainPlayingIndex < masterIndex) actions.navigateContext(1);
+            actions.holdChainMotif(7); // INSERT immediately after LoopMaster.
+            assert.equal(state.chainLoopMasterIndex, masterIndex);
+            assert.equal(state.chain[masterIndex + 1], 7);
+        }
+        actions.appendChainMotif(9);assert.equal(state.chainLoopMasterIndex, masterIndex);
+        actions.removeChainOccurrence(state.chain.indexOf(6));assert.equal(state.chainLoopMasterIndex, masterIndex - 1);
+        assert.equal(state.chain[state.chainLoopMasterIndex], 4);
+        actions.removeChainOccurrence(state.chain.length - 1);assert.equal(state.chainLoopMasterIndex, masterIndex - 1);
+        // DELETE BOOK 05 removes its last occurrence, which is precisely 05b.
+        controller.setDeleteArmed(true);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[4], 127]);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[4], 0]);
+        assert.equal(state.chainLoopMasterIndex, null);
+        assert.ok(state.chain.includes(4)); // 05a survives; it does not inherit the role.
+        assert.equal(state.transportState, transport);
+        if (transport === "PLAY") { advance(2);assert.equal(state.transportState, "PLAY"); }
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: deleting active LoopMaster finishes its current cycle, then continues at the gap", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const source of ["INTERNAL", "MIDI"]) {
+        const { state, actions, clock, controller, advance } = setupLoopPerformance({ source, master: 2 });
+        advance(5);
+        const revision = clock.transportRevision;
+        actions.removeChainOccurrence(2);
+        assert.equal(state.chainLoopMasterIndex, null);
+        assert.equal(state.chainPlayingDetached, true);
+        assert.equal(state.playingMotifId, 2);
+        assert.equal(state.playheadPosition, 1);
+        assert.equal(state.nextMotifId, 7);
+        assert.equal(controller.getLibraryMotifColor(2), "GREEN");
+        advance();
+        assert.equal(state.playingMotifId, 7);assert.equal(state.playheadPosition, 0);
+        assert.equal(state.chainPlayingIndex, 2);assert.equal(clock.transportRevision, revision);
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: DELETE NEXT follows the actual wrap successor and adjusts LoopMaster identity", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller, advance } = setupLoopPerformance({ master: 2 });
+    advance(5);assert.equal(state.nextMotifId, 0);
+    actions.deleteChainNext();
+    assert.deepEqual(state.chain, [4,2,7,3,9]);
+    assert.equal(state.chainLoopMasterIndex, 1);assert.equal(state.chainPlayingIndex, 1);
+    assert.equal(state.nextMotifId, 4);
+    advance();assert.equal(state.playingMotifId, 4);assert.equal(state.chainPlayingIndex, 0);
+    controller.resetInputState();
+});
+
+test("LOOP POINT: DELETE PLAY and deletion of the only occurrence leave an empty Chain with LOOP OFF", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const transport of ["STOP", "PAUSE", "PLAY"]) for (const single of [false,true]) {
+        const { state, actions, clock, controller, advance } = setupLoopPerformance({ ids: single ? [0] : [0,4,2], master: single ? 0 : 1 });
+        if (transport === "STOP") actions.stop();else if (transport === "PAUSE") actions.pausePlayback();
+        const revision = clock.transportRevision;
+        if (single) actions.deleteMotif(0);
+        else {
+            controller.setDeleteArmed(true);
+            controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.PLAY_STOP, 127]);
+            controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.PLAY_STOP, 0]);
+        }
+        assert.deepEqual(state.chain, []);assert.equal(state.chainLoopMasterIndex, null);
+        assert.equal(state.nextMotifId, null);assert.equal(actions.toggleChainLoopPoint(0), false);
+        assert.equal(state.transportState, transport);assert.equal(clock.transportRevision, revision);
+        if (transport === "PLAY") { advance(4);assert.equal(state.transportState, "PLAY"); }
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: read-only Chain text and selected occurrence remain stable through loop edits", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { readPlayChain, initializePlayChainUI } = await import("../src/PlayChainUI.mjs");
+    const { state, controller, advance, shiftBook } = setupLoopPerformance({ master: 2 });
+    const container = { children: [], replaceChildren(...children) { this.children = children; } };
+    initializePlayChainUI({ state, actions: controller.actions, document: { getElementById: () => container, createElement: () => ({}) } });
+    const labels = () => container.children.map(element => element.textContent).join("");
+    assert.equal(labels(), "[01][05][03][08][04][10]");
+    advance(4);
+    assert.equal(readPlayChain(state).findIndex(occurrence => occurrence.next), 0);
+    shiftBook(2);
+    assert.equal(readPlayChain(state).findIndex(occurrence => occurrence.next), 3);
+    assert.equal(labels(), "[01][05][03][08][04][10]");
+    assert.deepEqual(container.children.flatMap((element, index) => element.className.includes("is-playing") ? [index] : []), [2]);
+    controller.resetInputState();
+});
+
+test("LOOP POINT: natural lengths explicit, polymetric LCM and default 32 wrap without changing MIDI phase", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const source of ["INTERNAL", "MIDI"]) for (const duration of [3,6,32]) {
+        const { state, clock, controller, steps, advance } = setupLoopPerformance({ source, ids: [0,4,2], master: 1 });
+        state.motifs[4].motifLength = duration === 3 ? 3 : null;
+        if (duration === 6) { state.motifs[4].voiceLengths[1] = 2;state.motifs[4].voiceLengths[2] = 3; }
+        const revision = clock.transportRevision;
+        advance(2 + duration);
+        assert.deepEqual(steps.slice(2, 2 + duration), Array.from({ length: duration }, (_, step) => [1,4,step]));
+        assert.deepEqual(steps.at(-1), [0,0,0]);
+        assert.equal(steps.length, 3 + duration);
+        assert.equal(clock.transportRevision, revision);
+        assert.equal(clock.midiPulseCount, 0);
+        assert.equal(state.chainLoopMasterIndex, 1);
+        controller.resetInputState();
+    }
+});
+
+test("LOOP POINT: a detached PLAYING Motif cannot create a master on a surviving duplicate", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, clock, controller, advance, shiftBook } = setupLoopPerformance({ ids: [0,4,4,2] });
+    advance(3);
+    actions.removeChainOccurrence(1);
+    const before = loopPhase(state, clock);
+    shiftBook(4);
+    assert.equal(state.chainLoopMasterIndex, null);
+    assert.deepEqual(loopPhase(state, clock), before);
+    advance();assert.equal(state.chainPlayingIndex, 1);assert.equal(state.chainPlayingDetached, false);
+    shiftBook(4);assert.equal(state.chainLoopMasterIndex, 1);
+    controller.resetInputState();
+});
+
+test("LOOP POINT hardware: PLAYING blinks GREEN/DIM RED for a shared master/NEXT pad and idle LOOP OFF restores YELLOW", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const single = setupLoopPerformance({ ids: [0], master: 0 });
+    assert.equal(single.state.nextMotifId, 0);
+    for (const lit of [true,false]) {
+        single.controller.nextMotifLit = lit;
+        assert.equal(single.controller.getLibraryMotifColor(0), lit ? "GREEN" : "DIM_RED");
+    }
+    single.advance(4);assert.equal(single.controller.getLibraryMotifColor(0), "DIM_RED");
+    single.shiftBook(0);assert.equal(single.controller.getLibraryMotifColor(0), "GREEN");
+    single.controller.resetInputState();
+    const idle = setupLoopPerformance({ master: 2 });
+    assert.equal(idle.controller.getLibraryMotifColor(2), "DIM_RED");
+    idle.shiftBook(2);assert.equal(idle.controller.getLibraryMotifColor(2), "YELLOW");
+    idle.controller.resetInputState();
+});
+
+test("LOOP POINT UI: only the master occurrence is red and keeps its PLAYING highlight without changing text", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { readPlayChain, initializePlayChainUI } = await import("../src/PlayChainUI.mjs");
+    const { state, actions, controller } = setup();
+    const container = { children: [], replaceChildren(...children) { this.children = children; } };
+    initializePlayChainUI({ state, actions, document: { getElementById: () => container, createElement: () => ({}) } });
+    actions.toggleChain();[0,4,4,2,7].forEach(id => actions.requestMotif(id));
+    const labels = () => container.children.map(element => element.textContent).join("");
+    const masters = () => container.children.flatMap((element, index) => element.className.includes("is-loop-master") ? [index] : []);
+    actions.navigateContext(1);actions.navigateContext(1);actions.navigateContext(1);
+    actions.toggleChainLoopPoint(4);assert.deepEqual(masters(), [2]);
+    assert.equal(labels(), "[01][05][05][03][08]");
+    assert.ok(container.children[2].className.includes("is-playing"));
+    actions.navigateContext(-1);
+    assert.deepEqual(masters(), [2]);assert.ok(container.children[1].className.includes("is-playing"));
+    assert.ok(!container.children[2].className.includes("is-playing"));
+    actions.toggleChainLoopPoint(4);assert.deepEqual(masters(), [1]); // 05a replaces 05b, with the same ID.
+    actions.startPlayback();assert.deepEqual(masters(), [1]);
+    assert.ok(container.children[0].className.includes("is-playing"));
+    state.chainPlayingIndex = 1;state.playingMotifId = 4;actions.onChainChange();
+    assert.ok(container.children[1].className.includes("is-playing"));assert.deepEqual(masters(), [1]);
+    const before = JSON.stringify(state);readPlayChain(state);assert.equal(JSON.stringify(state), before);
+    actions.toggleChainLoopPoint(4);assert.deepEqual(masters(), []);
+    assert.ok(container.children[1].className.includes("is-playing"));
+    assert.equal(labels(), "[01][05][05][03][08]");
+    assert.equal(container.children.length, 5);
+    const html = await fs.readFile(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(html, /\.chain-occurrence\.is-loop-master \{ color: #c94c4c; \}/);
+    const combined = html.match(/\.chain-occurrence\.is-loop-master\.is-playing \{([^}]+)\}/)[1];
+    assert.match(combined, /text-decoration-line: underline/);
+    assert.match(combined, /text-decoration-color: #4a9b6b/);
+    assert.doesNotMatch(combined, /(?:^|[;\n])\s*(?:font|margin|padding|border|width|height|transform|content|color)\s*:/);
+    controller.resetInputState();
+});
+
+test("LOOP POINT LED: LOOP OFF during the dim phase restores fixed GREEN immediately without musical changes", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, clock, controller, advance, shiftBook } = setupLoopPerformance({ master: 2 });
+    const leds = new Map();
+    controller.midiManager.send = (_, [status, note, color]) => { if (status === 0x90) leds.set(note, color); };
+    const value = name => (controller.colors[name] & 0x33) | 4;
+    advance(4);
+    const before = loopPhase(state, clock);
+    t.mock.timers.tick(160);
+    assert.equal(leds.get(controller.mapping.BOOKS[2]), value("DIM_RED"));
+    assert.deepEqual(loopPhase(state, clock), before);
+    shiftBook(2);
+    assert.equal(leds.get(controller.mapping.BOOKS[2]), value("GREEN"));
+    assert.deepEqual(loopPhase(state, clock), before);
+    t.mock.timers.tick(160);assert.equal(leds.get(controller.mapping.BOOKS[2]), value("GREEN"));
+    controller.resetInputState();
+});
+
+function observeNavigationBooks(controller) {
+    const leds = new Map();
+    controller.midiManager.send = (_, [status, note, color]) => {
+        if (status === 0x90 && controller.mapping.BOOKS.includes(note)) leds.set(note, color);
+    };
+    const value = name => (controller.colors[name] & 0x33) | 4;
+    const colors = () => controller.mapping.BOOKS.map(note => leds.get(note));
+    const tap = name => {
+        const note = controller.mapping.TOP_CONTROLS[name];
+        controller.handleMidiMessage([0xB0, note, 127]);
+        controller.handleMidiMessage([0xB0, note, 0]);
+    };
+    return { value, colors, tap };
+}
+
+for (const transport of ["STOP", "PAUSE"]) {
+    test(`CHAIN navigation boundary: ${transport} flashes at both ends, repeats against stops, and restores LoopMaster/data LEDs`, t => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const { state, actions, clock, controller } = setup();
+        state.currentView = "MOTIF_LIBRARY";
+        actions.toggleChain();[0,4,4,2].forEach(id => actions.requestMotif(id));
+        state.motifs[15].voiceLengths[0] = 7;
+        if (transport === "PAUSE") { actions.startPlayback();actions.pausePlayback(); }
+        else actions.navigateContext(1);
+        actions.navigateContext(1);actions.toggleChainLoopPoint(4);actions.navigateContext(1);
+        assert.equal(state.chainPlayingIndex, 2);assert.equal(state.chainLoopMasterIndex, 1);
+        const { value, colors, tap } = observeNavigationBooks(controller);
+        const revision = clock.transportRevision;
+        clock.midiPulseCount = 3;
+        const restore = () => {
+            const before = JSON.stringify(state);
+            t.mock.timers.tick(119);
+            assert.notEqual(controller.chainNavigationFlashColor, null);
+            t.mock.timers.tick(1);
+            assert.equal(controller.chainNavigationFlashColor, null);
+            assert.equal(controller.chainNavigationFlashTimer, null);
+            assert.deepEqual(colors(), controller.mapping.BOOKS.map((_, id) => value(controller.getLibraryMotifColor(id))));
+            assert.equal(colors()[15], value("DIM_AMBER"));assert.equal(colors()[14], value("OFF"));
+            assert.equal(JSON.stringify(state), before);
+            assert.equal(clock.transportRevision, revision);assert.equal(clock.midiPulseCount, 3);
+        };
+        tap("PREVIOUS"); // 05b -> 05a is an intermediate occurrence, despite equal IDs.
+        assert.equal(state.chainPlayingIndex, 1);
+        assert.equal(controller.chainNavigationFlashTimer, null);
+        assert.ok(new Set(colors()).size > 1);
+        tap("PREVIOUS");assert.equal(state.chainPlayingIndex, 0);
+        assert.deepEqual(colors(), Array(16).fill(value("YELLOW")));restore();
+        assert.equal(colors()[4], value(controller.nextMotifLit ? "RED" : "DIM_RED"));
+        const first = JSON.stringify(state);
+        tap("PREVIOUS");assert.equal(JSON.stringify(state), first);
+        assert.deepEqual(colors(), Array(16).fill(value("YELLOW")));restore();
+        tap("NEXT");assert.equal(state.chainPlayingIndex, 1);assert.equal(controller.chainNavigationFlashTimer, null);
+        tap("NEXT");assert.equal(state.chainPlayingIndex, 2);assert.equal(controller.chainNavigationFlashTimer, null);
+        assert.ok(new Set(colors()).size > 1);
+        tap("NEXT");assert.equal(state.chainPlayingIndex, 3);
+        assert.deepEqual(colors(), Array(16).fill(value("RED")));restore();
+        assert.equal(colors()[4], value("DIM_RED")); // Earlier duplicate remains the master.
+        assert.equal(colors()[2], value(transport === "PAUSE" ? "GREEN" : "YELLOW"));
+        const last = JSON.stringify(state);
+        tap("NEXT");assert.equal(JSON.stringify(state), last);
+        assert.deepEqual(colors(), Array(16).fill(value("RED")));restore();
+        assert.deepEqual(state.chain, [0,4,4,2]);assert.equal(state.chainLoopMasterIndex, 1);
+        controller.resetInputState();
+    });
+
+    test(`CHAIN navigation boundary: ${transport} single occurrence uses gesture direction and restores every BOOK in both views`, t => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        for (const view of ["PLAY", "MOTIF_LIBRARY"]) {
+            const { state, actions, controller } = setup();
+            state.currentView = view;actions.toggleChain();actions.requestMotif(4);
+            if (transport === "PAUSE") { actions.startPlayback();actions.pausePlayback(); }
+            else actions.navigateContext(1);
+            actions.toggleChainLoopPoint(4);
+            const { value, colors, tap } = observeNavigationBooks(controller);
+            for (const [direction, color] of [["PREVIOUS","YELLOW"],["PREVIOUS","YELLOW"],["NEXT","RED"],["NEXT","RED"]]) {
+                const before = JSON.stringify(state);
+                tap(direction);assert.equal(state.chainPlayingIndex, 0);
+                assert.deepEqual(colors(), Array(16).fill(value(color)));
+                t.mock.timers.tick(120);
+                const restored = controller.mapping.BOOKS.map((_, id) => value(view === "MOTIF_LIBRARY"
+                    ? controller.getLibraryMotifColor(id)
+                    : id < 8 ? controller.layout.BOOKS.ATTRIBUTES : controller.layout.BOOKS.TRANSFORMATIONS));
+                assert.deepEqual(colors(), restored);
+                assert.equal(JSON.stringify(state), before);
+                assert.equal(state.chainLoopMasterIndex, 0);
+            }
+            controller.resetInputState();
+        }
+    });
+}
+
+test("CHAIN navigation boundary: repeated press restarts 120 ms and leaving a boundary cancels the global flash", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller } = setup();state.currentView = "MOTIF_LIBRARY";
+    actions.toggleChain();[0,4,2].forEach(id => actions.requestMotif(id));
+    const { value, colors, tap } = observeNavigationBooks(controller);
+    tap("PREVIOUS");assert.deepEqual(colors(), Array(16).fill(value("YELLOW")));
+    t.mock.timers.tick(60);tap("PREVIOUS");t.mock.timers.tick(60);
+    assert.deepEqual(colors(), Array(16).fill(value("YELLOW")));
+    t.mock.timers.tick(59);assert.equal(controller.chainNavigationFlashColor, "YELLOW");
+    t.mock.timers.tick(1);assert.equal(controller.chainNavigationFlashColor, null);
+    assert.equal(controller.nextMotifLit, false); // NEXT's visual timer continued beneath the flash.
+    assert.equal(colors()[4], value("DIM_AMBER"));
+    assert.deepEqual(colors(), controller.mapping.BOOKS.map((_, id) => value(controller.getLibraryMotifColor(id))));
+    tap("PREVIOUS");tap("NEXT");assert.equal(state.chainPlayingIndex, 1);
+    assert.equal(controller.chainNavigationFlashColor, null);assert.equal(controller.chainNavigationFlashTimer, null);
+    assert.ok(new Set(colors()).size > 1);
+    controller.resetInputState();
+});
+
+test("CHAIN navigation boundary: empty Chains, normal mode and PLAY have no global flash; reset clears its timer", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller } = setup();state.currentView = "MOTIF_LIBRARY";
+    const { tap } = observeNavigationBooks(controller);
+    actions.toggleChain();tap("PREVIOUS");tap("NEXT");
+    assert.equal(controller.chainNavigationFlashColor, null);
+    actions.requestMotif(0);actions.startPlayback();
+    tap("PREVIOUS");tap("NEXT");assert.equal(controller.chainNavigationFlashColor, null);
+    assert.equal(controller.chainNavigationFlashTimer, null);
+    actions.stop();tap("PREVIOUS");assert.equal(controller.chainNavigationFlashColor, "YELLOW");
+    actions.startPlayback();assert.equal(controller.chainNavigationFlashColor, null);
+    actions.stop();actions.toggleChain();tap("PREVIOUS");tap("NEXT");
+    assert.equal(controller.chainNavigationFlashColor, null);assert.equal(controller.chainNavigationFlashTimer, null);
+    actions.toggleChain();tap("NEXT");assert.equal(controller.chainNavigationFlashColor, "RED");
+    controller.resetInputState();assert.equal(controller.chainNavigationFlashColor, null);
+    assert.equal(controller.chainNavigationFlashTimer, null);
+    t.mock.timers.tick(120);assert.equal(controller.chainNavigationFlashColor, null);
 });

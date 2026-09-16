@@ -6,10 +6,12 @@ export function readPlayChain(state) {
     const stopped = state.transportState === "STOP";
     const playing = enabled && !stopped && !state.chainPlayingDetached
         ? state.chainPlayingIndex : -1;
-    const next = enabled ? (stopped ? 0 : (state.chainPlayingIndex + 1) % chain.length) : -1;
+    const next = enabled ? (stopped ? 0 : state.getChainNextIndex()) : -1;
     return chain.map((id, index) => ({
         label: `[${String(id + 1).padStart(2, "0")}]`,
         playing: index === playing,
+        selected: enabled && stopped && !state.chainPlayingDetached && index === state.chainPlayingIndex,
+        loopMaster: enabled && index === state.chainLoopMasterIndex,
         next: index === next
     }));
 }
@@ -24,7 +26,7 @@ export function initializePlayChainUI({ state, actions, document = globalThis.do
         previous = signature;
         container.replaceChildren(...occurrences.map(occurrence => {
             const element = document.createElement("span");
-            element.className = `chain-occurrence${occurrence.playing ? " is-playing" : ""}`;
+            element.className = `chain-occurrence${occurrence.playing || occurrence.selected ? " is-playing" : ""}${occurrence.loopMaster ? " is-loop-master" : ""}`;
             element.textContent = occurrence.label;
             return element;
         }));
