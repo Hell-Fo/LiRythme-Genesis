@@ -1,5 +1,7 @@
 ﻿# DELETE — Action → Target
 
+Référence normative actuelle pour NORMAL / CHAIN / FOCUS : [Grammaire contextuelle](CONTEXTUAL-GRAMMAR.md).
+
 DELETE est un mode temporaire du contrôleur Launchpad, disponible sur MOTIF.
 Un appui arme l'action ; un deuxième appui l'annule. Les releases et répétitions
 d'un bouton maintenu ne sont pas de nouveaux appuis.

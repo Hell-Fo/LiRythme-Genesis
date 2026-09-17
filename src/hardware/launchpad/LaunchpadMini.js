@@ -115,6 +115,8 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.focusNavigationHeld?.clear();
+        this.focusNavigationConsumed = false;
         clearTimeout(this.chainNavigationFlashTimer);
         this.chainNavigationFlashTimer = null;
         this.chainNavigationFlashColor = null;
@@ -285,6 +287,11 @@ export class LaunchpadMini {
         const next = this.mapping.TOP_CONTROLS.NEXT;
 
         const isMotif = this.state.currentTimeline === "MOTIF";
+        if (this.state.chainFocus) {
+            this.setTopLed(previous, isMotif ? this.colors.GREEN : this.colors.DIM_GREEN);
+            this.setTopLed(next, isMotif ? this.colors.DIM_GREEN : this.colors.GREEN);
+            return;
+        }
 
         // LOCK + FREEZE
         if (
@@ -457,10 +464,11 @@ export class LaunchpadMini {
                 ? (id === this.state.currentMotifId ? "GREEN" : "DIM_GREEN") : "OFF";
         }
         if (this.state.chainEnabled) {
+            if (this.state.chainFocus && id === this.state.currentMotifId) return "YELLOW";
             if (this.chainConfirmations.has(id)) return "GREEN";
             const master = this.state.chainLoopMasterIndex;
             // Shared pads represent PLAYING first, including an identical NEXT.
-            if (this.state.transportState !== "STOP" && id === this.state.playingMotifId) {
+            if ((this.state.chainFocus || this.state.transportState !== "STOP") && id === this.state.playingMotifId) {
                 if (this.state.transportState === "PLAY" && master !== null &&
                     !this.state.chainPlayingDetached && this.state.chainPlayingIndex === master) {
                     return this.nextMotifLit ? "GREEN" : "DIM_RED";
@@ -471,10 +479,11 @@ export class LaunchpadMini {
                 if (master !== null && this.state.getChainNextIndex() === master) {
                     return this.nextMotifLit ? "RED" : "DIM_RED";
                 }
-                return this.nextMotifLit ? "YELLOW" : "DIM_AMBER";
+                return this.state.chainFocus ? (this.nextMotifLit ? "GREEN" : "DIM_GREEN")
+                    : (this.nextMotifLit ? "YELLOW" : "DIM_AMBER");
             }
             if (master !== null && id === this.state.chain[master]) return "DIM_RED";
-            if (this.state.chain.includes(id)) return "YELLOW";
+            if (this.state.chain.includes(id)) return this.state.chainFocus ? "DIM_GREEN" : "YELLOW";
         } else {
             if (id === this.state.currentMotifId) return this.layout.BOOKS.MOTIF_LIBRARY;
             if (id === this.state.nextMotifId) return this.nextMotifLit ? "GREEN" : "DIM_GREEN";
@@ -663,6 +672,8 @@ export class LaunchpadMini {
     }
 
     drawPlayhead(step = this.state.playheadPosition) {
+        if (this.state.transportState === "PLAY" && this.state.chainFocus &&
+            this.state.currentMotifId !== this.state.playingMotifId) return;
         // The physical timeline has 32 pads, even when the global LCM is longer.
         step %= this.mapping.MOTIF.length;
         this.lastPlayheadStep = step;
@@ -994,6 +1005,7 @@ export class LaunchpadMini {
             if (value === 0) {
                 clearTimeout(chainHold.timer);
                 this.chainMotifHolds.delete(inputKey);
+                if (!chainHold.fired && this.state.chainFocus) this.actions.selectFocusMotif(chainHold.id);
             }
             return;
         }
@@ -1016,6 +1028,43 @@ export class LaunchpadMini {
             status,
             number
         );
+        // Resolve navigation on release so the exclusive FOCUS chord never leaks an action.
+        if (["PREVIOUS", "NEXT"].includes(controlName) &&
+            !this.deleteArmed && !this.playStopPressed) {
+            this.focusNavigationHeld ??= new Set();
+            if (value > 0) {
+                this.focusNavigationHeld.add(controlName);
+                if (controlName === "PREVIOUS") this.previousPressed = true;
+                else this.nextPressed = true;
+                if (this.focusNavigationHeld.size === 2 && !this.focusNavigationConsumed) {
+                    this.focusNavigationConsumed = true;
+                    clearTimeout(this.chainNavigationFlashTimer);
+                    this.chainNavigationFlashTimer = null;
+                    this.chainNavigationFlashColor = null;
+                    this.actions.toggleChainFocus();
+                    this.drawTimelineSelection();
+                    this.drawBooks();
+                }
+            } else {
+                if (controlName === "PREVIOUS") this.previousPressed = false;
+                else this.nextPressed = false;
+                const wasHeld = this.focusNavigationHeld.delete(controlName);
+                if (wasHeld && !this.focusNavigationConsumed) {
+                    if (this.shiftPressed && !this.state.chainEnabled && this.state.transportState !== "PLAY") {
+                        if (controlName === "PREVIOUS") this.actions.selectMotifTimeline();
+                        else this.actions.selectModulationTimeline();
+                    } else this.actions.navigate(controlName === "PREVIOUS" ? -1 : 1);
+                    if (this.actions.resolveContext().navigation === "CHAIN_OCCURRENCE") this.flashChainNavigationBoundary(controlName);
+                    this.drawMotif();
+                    this.drawPlayhead();
+                    this.drawInstruments();
+                    this.swapBuffers();
+                    this.drawTimelineSelection();
+                }
+                if (!this.focusNavigationHeld.size) this.focusNavigationConsumed = false;
+            }
+            return;
+        }
         if (controlName === "PLAY_STOP" && value > 0 && this.shiftPressed) {
             this.deleteConsumedInputs.add(inputKey);
             for (const hold of this.chainMotifHolds.values()) {
@@ -1079,7 +1128,7 @@ export class LaunchpadMini {
                         this.drawBooks();
                     }
                 } else if (this.deleteArmed) {
-                    if (this.actions.deleteMotif(controlPosition)) {
+                    if (this.actions.deleteTarget("BOOK", controlPosition)) {
                         this.setDeleteArmed(false);
                         this.drawBooks();
                     }
@@ -1126,14 +1175,12 @@ export class LaunchpadMini {
         }
         if (this.deleteArmed && value > 0) {
             this.deleteConsumedInputs.add(inputKey);
-            if (this.state.chainEnabled && ["NEXT", "PLAY_STOP"].includes(controlName)) {
-                if ((controlName === "NEXT" && this.actions.deleteChainNext()) ||
-                    (controlName === "PLAY_STOP" && this.actions.clearChain())) this.setDeleteArmed(false);
-                return;
-            }
             const performance = ["SOLO", "MUTE"].includes(controlName);
             const valid = performance || controlType === "INSTRUMENT" || controlName === "PLAY_STOP";
-            if (valid && (performance ? this.actions.clearPerformanceSelection(controlName.toLowerCase()) : this.actions.clearMotifEvents(controlType === "INSTRUMENT" ? controlPosition : null))) {
+            if ((valid || controlName === "NEXT") && (performance
+                    ? this.actions.clearPerformanceSelection(controlName.toLowerCase())
+                    : this.actions.deleteTarget(controlType === "INSTRUMENT" ? "INSTRUMENT"
+                        : controlName === "PLAY_STOP" ? "PLAY" : "NEXT", controlPosition))) {
                 if (performance) {
                     this.performanceHolds.delete(controlName.toLowerCase());
                     this.drawPerformanceStatus(controlName.toLowerCase());
@@ -1235,7 +1282,7 @@ export class LaunchpadMini {
                     }
 
                     // [<<] = recule immédiatement
-                    this.actions.previousStep({ preview: true });
+                    this.actions.navigate(-1);
                     this.drawMotif();
                     this.drawPlayhead();
                     this.drawInstruments();
@@ -1245,7 +1292,7 @@ export class LaunchpadMini {
 
                     this.previousHoldTimer = setTimeout(() => {
                         this.previousRepeatTimer = setInterval(() => {
-                            this.actions.previousStep({ preview: true });
+                            this.actions.navigate(-1);
                             this.drawMotif();
                             this.drawPlayhead();
                             this.drawInstruments();
@@ -1330,7 +1377,7 @@ export class LaunchpadMini {
                     }
 
                     // [>>] = avance immédiatement
-                    this.actions.nextStep({ preview: true });
+                    this.actions.navigate(1);
                     this.drawMotif();
                     this.drawPlayhead();
                     this.drawInstruments();
@@ -1340,7 +1387,7 @@ export class LaunchpadMini {
 
                     this.nextHoldTimer = setTimeout(() => {
                         this.nextRepeatTimer = setInterval(() => {
-                            this.actions.nextStep({ preview: true });
+                            this.actions.navigate(1);
                             this.drawMotif();
                             this.drawPlayhead();
                             this.drawInstruments();

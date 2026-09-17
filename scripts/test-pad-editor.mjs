@@ -65,6 +65,7 @@ test("PLAY rejects every editable parameter synchronously; STOP/PAUSE accept cha
 
 test("edited note/channel drives playback, old Note Off survives edit and NONE stays silent", async () => {
     const state = stateFor(); state.transportState = "PAUSE"; state.motif[12][0] = true;
+    state.getMotif = () => ({ events: state.motif });
     editPadVoice(state, 12, "note", 42);
     const source = await fs.readFile(new URL("../src/app.js", import.meta.url), "utf8");
     const triggerSource = source.slice(source.indexOf("function triggerMotifStep(step) {"), source.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));

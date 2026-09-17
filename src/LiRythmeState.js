@@ -51,13 +51,16 @@ export class LiRythmeState {
         this.chainPlayingDetached = true;
         // Session-only occurrence reference, shifted by structural edits.
         this.chainLoopMasterIndex = null;
-        // Phase B: visible/editable motif follows PLAYING; no independent VIEW yet.
+        this.chainFocus = false;
+        this.viewMotifId = 0;
+        this.chainViewIndex = -1;
         Object.defineProperty(this, "currentMotifId", {
             enumerable: true,
-            get: () => this.playingMotifId,
+            get: () => this.chainFocus ? this.viewMotifId : this.playingMotifId,
             set: id => {
-                if (id === this.playingMotifId) return;
-                this.playingMotifId = id;
+                if (id === this.currentMotifId) return;
+                if (this.chainFocus) this.viewMotifId = id;
+                else this.playingMotifId = id;
                 this.onBankChange?.();
             }
         });
@@ -99,13 +102,14 @@ export class LiRythmeState {
             (!this.muteActive || !this.muteSelection.has(voiceId));
     }
 
-    getVoiceLength(voiceId) {
-        return this.voiceLengths[voiceId] ?? 32;
+    getVoiceLength(voiceId, motifId = this.currentMotifId) {
+        return this.getMotif(motifId).voiceLengths[voiceId] ?? 32;
     }
 
-    getMotifDuration() {
-        if (this.motifLength !== null) return this.motifLength;
-        const lengths = this.voiceLengths.filter(length => length !== null);
+    getMotifDuration(motifId = this.currentMotifId) {
+        const motif = this.getMotif(motifId);
+        if (motif.motifLength !== null) return motif.motifLength;
+        const lengths = motif.voiceLengths.filter(length => length !== null);
         if (lengths.length === 0) return 32;
         const gcd = (a, b) => {
             while (b !== 0) [a, b] = [b, a % b];
@@ -119,13 +123,13 @@ export class LiRythmeState {
         if (this.liveLengthCycle && position === this.playheadPosition) {
             return this.liveLengthCycle.steps[voiceId];
         }
-        return position % this.getVoiceLength(voiceId);
+        return position % this.getVoiceLength(voiceId, this.playingMotifId);
     }
 
     advanceLiveLengthCycle() {
         const cycle = this.liveLengthCycle;
         if (!cycle) {
-            this.playheadPosition = (this.playheadPosition + 1) % this.getMotifDuration();
+            this.playheadPosition = (this.playheadPosition + 1) % this.getMotifDuration(this.playingMotifId);
             return;
         }
         this.playheadPosition++;
@@ -139,7 +143,7 @@ export class LiRythmeState {
             cycle.steps[id]++;
             if (cycle.steps[id] >= cycle.lengths[id]) {
                 cycle.steps[id] = 0;
-                cycle.lengths[id] = this.getVoiceLength(id);
+                if (!cycle.untilEntry) cycle.lengths[id] = this.getVoiceLength(id, this.playingMotifId);
             }
         }
     }
@@ -152,17 +156,20 @@ export class LiRythmeState {
         if (id !== null && (!Number.isInteger(id) || id < 0 || id >= 16)) return false;
         const previous = id === null ? this.motifLength : this.voiceLengths[id];
         if (previous === length) return false;
+        const editingPlaying = this.currentMotifId === this.playingMotifId;
+        defer = editingPlaying && (defer || this.chainEnabled && this.transportState === "PLAY");
         if (defer && !this.liveLengthCycle) {
             this.liveLengthCycle = {
-                duration: this.getMotifDuration(),
-                lengths: Array.from({ length: 16 }, (_, voice) => this.getVoiceLength(voice)),
+                untilEntry: this.chainEnabled,
+                duration: this.getMotifDuration(this.playingMotifId),
+                lengths: Array.from({ length: 16 }, (_, voice) => this.getVoiceLength(voice, this.playingMotifId)),
                 steps: Array.from({ length: 16 }, (_, voice) => this.getVoiceStep(voice))
             };
         }
         if (id === null) this.motifLength = length;
         else this.voiceLengths[id] = length;
         this.onBankChange?.();
-        if (!defer) {
+        if (!defer && (!this.chainFocus || editingPlaying && this.transportState !== "PLAY")) {
             this.liveLengthCycle = null;
             this.playheadPosition = 0;
         }

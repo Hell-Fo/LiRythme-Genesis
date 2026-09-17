@@ -2833,3 +2833,405 @@ test("CHAIN navigation boundary: empty Chains, normal mode and PLAY have no glob
     assert.equal(controller.chainNavigationFlashTimer, null);
     t.mock.timers.tick(120);assert.equal(controller.chainNavigationFlashColor, null);
 });
+
+
+// CHAIN Phase C: independent editing bench and musical transport.
+function focusSetup() {
+    const context = setup();
+    const { state, actions, controller } = context;
+    state.chainEnabled = true;
+    state.chain = [0, 4, 2];
+    state.chainPlayingIndex = 0;
+    state.chainPlayingDetached = false;
+    state.motifs[11].events[12][0] = true;
+    state.motifs[9].events[1][0] = true;
+    const nav = (name, value = 127) => controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS[name], value]);
+    const chord = () => { nav("PREVIOUS"); nav("NEXT"); nav("PREVIOUS", 0); nav("NEXT", 0); };
+    return { ...context, nav, chord };
+}
+
+test("Phase C chord toggles without occurrence actions in STOP, PAUSE and PLAY", () => {
+    for (const transport of ["STOP", "PAUSE", "PLAY"]) {
+        const { state, actions, controller, chord } = focusSetup();
+        state.transportState = transport;
+        state.playheadPosition = 7;
+        actions.refreshChainNext();
+        const before = [state.playheadPosition, state.chainPlayingIndex, state.nextMotifId];
+        chord();
+        assert.equal(state.chainFocus, true);
+        assert.equal(state.currentMotifId, state.playingMotifId);
+        assert.deepEqual([state.playheadPosition, state.chainPlayingIndex, state.nextMotifId], before);
+        actions.selectFocusMotif(11);
+        state.playingMotifId = 4;
+        chord();
+        assert.equal(state.chainFocus, false);
+        assert.equal(state.currentMotifId, 4);
+        assert.equal(state.freezeMode, false);
+        controller.resetInputState();
+    }
+});
+
+test("Phase C navigation feedback is GREEN/DIM GREEN and individual navigation leaves Chain alone", () => {
+    const { state, actions, controller, nav } = focusSetup();
+    actions.toggleChainFocus();
+    const leds = [];
+    controller.setTopLed = (id, color) => leds.push([id, color]);
+    controller.drawTimelineSelection();
+    assert.deepEqual(leds, [[controller.mapping.TOP_CONTROLS.PREVIOUS, controller.colors.GREEN],
+        [controller.mapping.TOP_CONTROLS.NEXT, controller.colors.DIM_GREEN]]);
+    nav("NEXT"); nav("NEXT", 0);
+    assert.equal(state.chainPlayingIndex, 0);
+    assert.equal(state.currentTimeline, "MOTIF");
+    controller.resetInputState();
+});
+
+test("Phase C BOOK short releases select members and external DATA without structural mutation; holds append", t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const { state, actions, controller } = focusSetup();
+    actions.toggleChainFocus();
+    state.currentView = "MOTIF_LIBRARY";
+    state.transportState = "PLAY";
+    state.playheadPosition = 7;
+    const book = (id, value) => controller.handleMidiMessage([0x90, controller.mapping.BOOKS[id], value]);
+    for (const id of [4, 11]) {
+        book(id, 127); book(id, 0);
+        assert.equal(state.currentMotifId, id);
+        assert.equal(state.playingMotifId, 0);
+        assert.equal(state.playheadPosition, 7);
+        assert.deepEqual(state.chain, [0, 4, 2]);
+    }
+    book(15, 127); book(15, 0);
+    assert.equal(state.currentMotifId, 11);
+    book(4, 127); t.mock.timers.tick(300); book(4, 0);
+    assert.deepEqual(state.chain, [0, 4, 2, 4]);
+    assert.equal(state.currentMotifId, 11);
+    assert.equal(controller.chainConfirmations.has(4), true);
+    t.mock.timers.tick(120);
+    assert.equal(controller.chainConfirmations.has(4), false);
+    controller.resetInputState();
+});
+
+test("Phase C palette priority, restoration and LoopMaster colors", () => {
+    const { state, actions, controller } = focusSetup();
+    state.transportState = "PLAY";
+    actions.refreshChainNext();
+    actions.toggleChainFocus();
+    actions.selectFocusMotif(11);
+    const color = id => controller.getLibraryMotifColor(id);
+    assert.equal(color(15), "OFF"); assert.equal(color(9), "DIM_AMBER");
+    assert.equal(color(2), "DIM_GREEN"); assert.equal(color(0), "GREEN");
+    assert.equal(color(11), "YELLOW");
+    controller.nextMotifLit = false; assert.equal(color(4), "DIM_GREEN");
+    controller.nextMotifLit = true; assert.equal(color(4), "GREEN");
+    actions.selectFocusMotif(0); assert.equal(color(0), "YELLOW");
+    actions.selectFocusMotif(4); assert.equal(color(0), "GREEN"); assert.equal(color(4), "YELLOW");
+    state.chainLoopMasterIndex = 1;
+    assert.equal(color(4), "YELLOW");
+    actions.selectFocusMotif(11);
+    assert.equal(color(4), "RED"); controller.nextMotifLit = false; assert.equal(color(4), "DIM_RED");
+    state.chainPlayingIndex = 1; state.playingMotifId = 4; actions.refreshChainNext();
+    assert.equal(color(4), "DIM_RED"); controller.nextMotifLit = true; assert.equal(color(4), "GREEN");
+    actions.selectFocusMotif(4); assert.equal(color(4), "YELLOW");
+    state.chainPlayingIndex = 0; state.playingMotifId = 0; state.nextMotifId = 2;
+    actions.selectFocusMotif(11); assert.equal(color(4), "DIM_RED");
+    controller.resetInputState();
+});
+
+test("Phase C transitions and Loop Point wrap preserve VIEW; exit restores normal palette", () => {
+    const { state, actions, controller } = focusSetup();
+    state.transportState = "PLAY";
+    state.chainLoopMasterIndex = 1;
+    actions.toggleChainFocus(); actions.selectFocusMotif(11);
+    const ids = [];
+    for (let cycle = 0; cycle < 4; cycle++) {
+        for (let tick = 0; tick < 32; tick++) actions.nextStep();
+        ids.push(state.playingMotifId);
+        assert.equal(state.currentMotifId, 11);
+        assert.equal(readPlayMotif(state).title, "MOTIF 12");
+    }
+    assert.deepEqual(ids, [4, 0, 4, 0]);
+    actions.toggleChainFocus(); assert.equal(state.currentMotifId, 0);
+    assert.equal(controller.getLibraryMotifColor(2), "YELLOW");
+    controller.resetInputState();
+});
+
+test("Phase C Step, Voice copy/delete and historical Instrument Focus edit VIEW", () => {
+    const { state, actions, controller } = focusSetup();
+    state.transportState = "PLAY"; state.playheadPosition = 7;
+    actions.toggleChainFocus(); actions.selectFocusMotif(11);
+    actions.enterFocusMode(); actions.toggleInstrumentFilter(12); state.selectedInstrument = 12;
+    actions.toggleInstrumentStep(3);
+    assert.equal(state.motifs[11].events[12][3], true);
+    assert.equal(state.motifs[0].events[12][3], false);
+    const copy = actions.captureMusicalCopy("VOICE", 12);
+    actions.applyVoiceCopy(copy, 1);
+    assert.equal(state.motifs[11].events[1][3], true);
+    actions.clearMotifEvents(1);
+    assert.equal(state.motifs[11].events[1][3], false);
+    assert.equal(state.playheadPosition, 7);
+    actions.nextBook(); assert.equal(state.currentMotifId, 11);
+    actions.selectFocusMotif(0); actions.toggleInstrumentStep(3);
+    assert.equal(state.getMotif(state.playingMotifId).events[12][3], true);
+    controller.resetInputState();
+});
+
+test("Phase C temporal geometry is stored now and activated at next entry for both clock sources", () => {
+    for (const source of ["INTERNAL", "EXTERNAL"]) {
+        const { state, actions, clock, controller } = focusSetup();
+        clock.source = source;
+        state.motifs[0].voiceLengths[12] = 8;
+        state.motifs[0].motifLength = 16;
+        state.transportState = "PLAY"; state.playheadPosition = 5;
+        actions.toggleChainFocus();
+        actions.setSelectedLength(3);
+        assert.equal(state.motifs[0].voiceLengths[12], 3);
+        assert.equal(state.playheadPosition, 5);
+        actions.nextStep(); assert.equal(state.getVoiceStep(12), 6);
+        actions.nextStep(); assert.equal(state.getVoiceStep(12), 7);
+        actions.nextStep(); assert.equal(state.getVoiceStep(12), 0);
+        actions.nextStep(); assert.equal(state.getVoiceStep(12), 1);
+        actions.selectFocusMotif(11);
+        const pending = state.liveLengthCycle;
+        actions.setSelectedLength(4);
+        assert.equal(state.liveLengthCycle, pending);
+        assert.equal(state.playheadPosition, 9);
+        for (let tick = 0; tick < 7; tick++) actions.nextStep();
+        assert.equal(state.playingMotifId, 4);
+        for (let tick = 0; tick < 64; tick++) actions.nextStep();
+        assert.equal(state.playingMotifId, 0);
+        assert.equal(state.currentMotifId, 11);
+        for (let tick = 0; tick < 3; tick++) actions.nextStep();
+        assert.equal(state.getVoiceStep(12), 0);
+        controller.resetInputState();
+    }
+});
+
+test("Phase C PAUSE, STOP and restart retain explicit VIEW until toggle", () => {
+    const { state, actions, controller } = focusSetup();
+    state.transportState = "PLAY";
+    actions.toggleChainFocus(); actions.selectFocusMotif(11);
+    actions.pausePlayback(); assert.equal(state.chainFocus, true); assert.equal(state.currentMotifId, 11);
+    actions.stop(); assert.equal(state.chainFocus, true); assert.equal(state.currentMotifId, 11);
+    actions.startPlayback(); assert.equal(state.currentMotifId, 11); assert.equal(state.playingMotifId, 0);
+    actions.toggleChainFocus(); assert.equal(state.currentMotifId, 0);
+    controller.resetInputState();
+});
+
+
+test("Phase C MIDI dispatch reads PLAYING while VIEW edits immediately and Note Off survives", async () => {
+    const { state, actions, controller } = focusSetup();
+    state.transportState = "PLAY";
+    state.motifs[0].events[12][0] = true;
+    actions.toggleChainFocus(); actions.selectFocusMotif(11);
+    const source = await fs.readFile(new URL("../src/app.js", import.meta.url), "utf8");
+    const body = source.slice(source.indexOf("function triggerMotifStep(step) {"), source.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    const messages = [], pending = [];
+    const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", body + "; return triggerMotifStep;")(
+        state, { options: [{ textContent: "Default" }], selectedIndex: 0 },
+        { send: (output, data) => messages.push(data), findOutput: () => 0 },
+        { pulseInstrument() {} }, callback => pending.push(callback));
+    actions.toggleInstrumentStep(0); // VIEW becomes silent; PLAYING stays audible.
+    trigger(0); assert.equal(messages.length, 1);
+    actions.selectFocusMotif(0); actions.toggleInstrumentStep(0);
+    pending.shift()(); assert.equal(messages[1][2], 0);
+    trigger(0); assert.equal(messages.length, 2);
+    actions.toggleInstrumentStep(0); trigger(0); assert.equal(messages.length, 3);
+    pending.shift()(); assert.equal(messages[3][2], 0);
+    controller.resetInputState();
+});
+
+test("Phase C STOP/PAUSE long BOOK inserts while keeping VIEW and loop occurrence deterministic", t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    for (const transport of ["STOP", "PAUSE"]) {
+        const { state, actions, controller } = focusSetup();
+        state.transportState = transport; state.currentView = "MOTIF_LIBRARY";
+        state.chainLoopMasterIndex = 2;
+        actions.toggleChainFocus(); actions.selectFocusMotif(11);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[9], 127]);
+        t.mock.timers.tick(300);
+        controller.handleMidiMessage([0x90, controller.mapping.BOOKS[9], 0]);
+        assert.deepEqual(state.chain, [0, 9, 4, 2]);
+        assert.equal(state.chainLoopMasterIndex, 3);
+        assert.equal(state.currentMotifId, 11);
+        controller.resetInputState();
+    }
+});
+
+
+test("Phase C reverse chord clears a pending boundary flash and consumes staggered releases", t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const { state, controller, nav } = focusSetup();
+    nav("PREVIOUS"); nav("PREVIOUS", 0);
+    assert.equal(controller.chainNavigationFlashColor, "YELLOW");
+    nav("NEXT"); nav("PREVIOUS");
+    assert.equal(state.chainFocus, true);
+    assert.equal(controller.chainNavigationFlashColor, null);
+    nav("NEXT", 0); nav("NEXT"); nav("NEXT", 0); nav("PREVIOUS", 0);
+    assert.equal(state.chainFocus, true);
+    assert.equal(state.chainPlayingIndex, 0);
+    controller.resetInputState();
+});
+
+
+test("FOCUS DELETE+PLAY is local VIEW deletion, never structural CHAIN deletion", t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    for (const transport of ["STOP", "PAUSE", "PLAY"]) {
+        for (const view of [4, 11, 0]) {
+            const { state, actions, clock, controller } = focusSetup();
+            state.transportState = transport;
+            state.chainLoopMasterIndex = 1;
+            state.playheadPosition = 5;
+            state.motifs[view].motifLength = 16;
+            state.motifs[view].voiceLengths[12] = 8;
+            state.motifs[view].events[12][0] = true;
+            actions.refreshChainNext(); actions.toggleChainFocus(); actions.selectFocusMotif(view);
+            const bank = structuredClone(state.motifs);
+            const before = [state.playingMotifId, state.nextMotifId, state.chainLoopMasterIndex,
+                state.chainPlayingIndex, state.chainPlayingDetached, state.transportState,
+                state.playheadPosition, clock.transportRevision, clock.midiPulseCount];
+            controller.handleMidiMessage([0x90, controller.mapping.VALUE_CONTROLS.DELETE, 127]);
+            controller.handleMidiMessage([0x90, controller.mapping.VALUE_CONTROLS.DELETE, 0]);
+            controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.PLAY_STOP, 127]);
+            t.mock.timers.tick(500);
+            controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.PLAY_STOP, 0]);
+            assert.deepEqual(state.chain, [0, 4, 2]);
+            assert.deepEqual([state.playingMotifId, state.nextMotifId, state.chainLoopMasterIndex,
+                state.chainPlayingIndex, state.chainPlayingDetached, state.transportState,
+                state.playheadPosition, clock.transportRevision, clock.midiPulseCount], before);
+            assert.equal(state.chainFocus, true); assert.equal(state.currentMotifId, view);
+            assert.equal(controller.deleteArmed, false);
+            assert.equal(state.motifs[view].events.some(row => row.some(Boolean)), false);
+            assert.equal(state.motifs[view].motifLength, null);
+            assert.deepEqual(state.motifs[view].voiceLengths, new Array(16).fill(null));
+            for (let id = 0; id < 16; id++) if (id !== view) assert.deepEqual(state.motifs[id], bank[id]);
+            if (view === 0 && transport === "PLAY") {
+                assert.equal(state.liveLengthCycle.duration, 16);
+                actions.nextStep(); assert.equal(state.getVoiceStep(12), 6);
+                for (let tick = 0; tick < 10; tick++) actions.nextStep();
+                assert.equal(state.playingMotifId, 4);
+                for (let tick = 0; tick < 32; tick++) actions.nextStep(); // master wraps to 0
+                assert.equal(state.playingMotifId, 0);
+                assert.equal(state.getMotifDuration(0), 32);
+                assert.equal(state.liveLengthCycle, null);
+            }
+            controller.resetInputState();
+        }
+    }
+});
+
+test("FOCUS DELETE+PLAY live suppression preserves scheduled Note Off and existing deferred cycle", async () => {
+    const { state, actions, controller } = focusSetup();
+    state.transportState = "PLAY";
+    state.motifs[0].events[12][0] = true;
+    state.motifs[0].voiceLengths[12] = 8;
+    state.motifs[0].motifLength = 16;
+    actions.toggleChainFocus();
+    const source = await fs.readFile(new URL("../src/app.js", import.meta.url), "utf8");
+    const body = source.slice(source.indexOf("function triggerMotifStep(step) {"), source.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    const messages = [], pending = [];
+    const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", body + "; return triggerMotifStep;")(
+        state, { options: [{ textContent: "Default" }], selectedIndex: 0 },
+        { send: (output, data) => messages.push(data), findOutput: () => 0 },
+        { pulseInstrument() {} }, callback => pending.push(callback));
+    trigger(0); assert.equal(messages.length, 1);
+    state.playheadPosition = 5;
+    actions.setSelectedLength(3);
+    const cycle = state.liveLengthCycle;
+    controller.handleMidiMessage([0x90, controller.mapping.VALUE_CONTROLS.DELETE, 127]);
+    controller.handleMidiMessage([0x90, controller.mapping.VALUE_CONTROLS.DELETE, 0]);
+    controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.PLAY_STOP, 127]);
+    controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.PLAY_STOP, 0]);
+    assert.equal(state.liveLengthCycle, cycle);
+    assert.equal(state.playheadPosition, 5);
+    assert.equal(pending.length, 1);
+    trigger(0); assert.equal(messages.length, 1);
+    pending.shift()(); assert.equal(messages.length, 2);
+    assert.deepEqual(messages[1], [messages[0][0], messages[0][1], 0]);
+    controller.resetInputState();
+});
+
+for (const mode of ["NORMAL", "CHAIN", "CHAIN_FOCUS"]) {
+    for (const transport of ["STOP", "PAUSE", "PLAY"]) {
+        for (const target of ["PLAY", "INSTRUMENT", "BOOK"]) {
+            test(`GRAMMAR DELETE ${mode} ${transport} ${target}`, t => {
+                t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+                const { state, actions, controller: c } = setup();
+                state.chainEnabled = mode !== "NORMAL";
+                state.chain = [0, 4, 4, 2]; state.chainPlayingIndex = 0; state.chainPlayingDetached = false;
+                state.transportState = transport;
+                if (mode === "CHAIN_FOCUS") { actions.toggleChainFocus(); actions.selectFocusMotif(4); }
+                const edited = state.currentMotifId;
+                for (const id of [edited, 2]) { state.motifs[id].events[1][0] = true; state.motifs[id].events[2][0] = true; }
+                state.currentView = target === "BOOK" ? "MOTIF_LIBRARY" : "PLAY";
+                const tap = (status, number) => { c.handleMidiMessage([status, number, 127]); c.handleMidiMessage([status, number, 0]); };
+                tap(0x90, c.mapping.VALUE_CONTROLS.DELETE);
+                if (target === "BOOK") tap(0x90, c.mapping.BOOKS[2]);
+                else if (target === "INSTRUMENT") tap(0x90, c.mapping.INSTRUMENTS[1]);
+                else tap(0xB0, c.mapping.TOP_CONTROLS.PLAY_STOP);
+                assert.equal(c.deleteArmed, false);
+                assert.equal(state.transportState, transport);
+                if (mode === "CHAIN" && target !== "INSTRUMENT") {
+                    assert.deepEqual(state.chain, target === "PLAY" ? [] : [0, 4, 4]);
+                    assert.equal(state.motifs[edited].events[1][0], true);
+                    assert.equal(state.motifs[2].events[1][0], true);
+                } else {
+                    assert.deepEqual(state.chain, [0, 4, 4, 2]);
+                    const id = target === "BOOK" ? 2 : edited;
+                    assert.equal(state.motifs[id].events[1][0], false);
+                    assert.equal(state.motifs[id].events[2][0], target === "INSTRUMENT");
+                }
+                c.resetInputState();
+            });
+        }
+        test(`GRAMMAR navigation ${mode} ${transport}`, () => {
+            const { state, actions, controller: c } = setup();
+            state.chainEnabled = mode !== "NORMAL"; state.chain = [0, 4, 4, 2];
+            state.chainPlayingIndex = 0; state.chainPlayingDetached = false;
+            state.transportState = transport;
+            state.motifs[0].motifLength = 16; state.motifs[4].motifLength = 3;
+            if (mode === "CHAIN_FOCUS") actions.toggleChainFocus();
+            actions.refreshChainNext();
+            const next = () => { c.handleMidiMessage([0xB0, c.mapping.TOP_CONTROLS.NEXT, 127]); c.handleMidiMessage([0xB0, c.mapping.TOP_CONTROLS.NEXT, 0]); };
+            if (mode === "CHAIN_FOCUS" && transport === "PLAY") {
+                const before = [state.playingMotifId, state.chainPlayingIndex, state.nextMotifId, state.playheadPosition];
+                next(); assert.equal(state.chainViewIndex, 1); assert.equal(state.currentMotifId, 4);
+                next(); assert.equal(state.chainViewIndex, 2); assert.equal(state.currentMotifId, 4);
+                next(); assert.equal(state.chainViewIndex, 3); assert.equal(state.currentMotifId, 2);
+                assert.deepEqual([state.playingMotifId, state.chainPlayingIndex, state.nextMotifId, state.playheadPosition], before);
+            } else if (mode === "CHAIN" && transport !== "PLAY") {
+                next(); assert.equal(state.chainPlayingIndex, 1);
+                next(); assert.equal(state.chainPlayingIndex, 2);
+            } else if (transport !== "PLAY") {
+                if (mode === "CHAIN_FOCUS") actions.selectFocusMotif(4);
+                state.playheadPosition = mode === "CHAIN_FOCUS" ? 2 : 15;
+                next(); assert.equal(state.playheadPosition, 0);
+                assert.equal(state.chainPlayingIndex, 0);
+            } else {
+                const before = [state.currentMotifId, state.chainPlayingIndex, state.playheadPosition];
+                next(); assert.deepEqual([state.currentMotifId, state.chainPlayingIndex, state.playheadPosition], before);
+                assert.equal(state.currentTimeline, "MOTIF");
+            }
+            c.resetInputState();
+        });
+    }
+}
+
+for (const mode of ["NORMAL", "CHAIN", "CHAIN_FOCUS"]) for (const transport of ["STOP", "PAUSE", "PLAY"]) {
+    test(`GRAMMAR exclusive chord ${mode} ${transport} both orders`, () => {
+        for (const names of [["PREVIOUS", "NEXT"], ["NEXT", "PREVIOUS"]]) {
+            const { state, actions, controller: c } = setup();
+            state.chainEnabled = mode !== "NORMAL"; state.chain = [0, 4, 4, 2];
+            state.chainPlayingIndex = 0; state.chainPlayingDetached = false; state.transportState = transport;
+            if (mode === "CHAIN_FOCUS") actions.toggleChainFocus();
+            state.playheadPosition = 7; actions.refreshChainNext();
+            const before = [state.playingMotifId, state.chainPlayingIndex, state.nextMotifId, state.playheadPosition, state.currentTimeline];
+            const nav = (name, value) => c.handleMidiMessage([0xB0, c.mapping.TOP_CONTROLS[name], value]);
+            nav(names[0], 127); assert.deepEqual([state.playingMotifId, state.chainPlayingIndex, state.nextMotifId, state.playheadPosition, state.currentTimeline], before);
+            nav(names[1], 127); nav(names[0], 0); nav(names[1], 0);
+            assert.equal(state.chainFocus, mode === "CHAIN");
+            assert.deepEqual([state.playingMotifId, state.chainPlayingIndex, state.nextMotifId, state.playheadPosition, state.currentTimeline], before);
+            assert.equal(state.freezeMode, false); assert.equal(state.lockMode, false);
+            c.resetInputState();
+        }
+    });
+}

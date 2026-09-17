@@ -625,7 +625,7 @@ updateSoundCheck();
 
 function triggerMotifStep(step) {
     const triggeredInstruments = [];
-    for (const [voiceId, steps] of state.motif.entries()) {
+    for (const [voiceId, steps] of state.getMotif(state.playingMotifId).events.entries()) {
         const localStep = state.getVoiceStep?.(voiceId, step) ?? step;
         if (!steps[localStep] || state.isVoiceAudible?.(voiceId) === false) {
             continue;

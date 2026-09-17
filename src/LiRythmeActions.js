@@ -30,6 +30,37 @@ export class LiRythmeActions {
         this.onChainOccurrence = null;
         this.chainOccurrencePending = false;
     }
+    // Normative grammar shared by editing commands and hardware routing.
+    resolveContext() {
+        const mode = !this.state.chainEnabled ? "NORMAL" : this.state.chainFocus ? "CHAIN_FOCUS" : "CHAIN";
+        const playing = this.state.transportState === "PLAY";
+        return { mode, editingMotifId: this.state.currentMotifId, structural: mode === "CHAIN",
+            navigation: mode === "CHAIN_FOCUS" ? (playing ? "VIEW_OCCURRENCE" : "STEP")
+                : mode === "CHAIN" && !playing ? "CHAIN_OCCURRENCE" : playing ? "FUTURE" : "STEP" };
+    }
+    deleteTarget(kind, id = null) {
+        const context = this.resolveContext();
+        if (kind === "BOOK") return this.deleteMotif(id);
+        if (kind === "INSTRUMENT") return this.clearMotifEvents(id);
+        if (kind === "PLAY") return context.structural ? this.clearChain()
+            : context.mode === "CHAIN_FOCUS" ? this.deleteViewMotif() : this.clearMotifEvents();
+        if (kind === "NEXT" && context.structural) return this.deleteChainNext();
+        return false;
+    }
+    navigate(direction) {
+        const { navigation } = this.resolveContext();
+        if (navigation === "FUTURE") return false;
+        if (navigation === "STEP") {
+            if (direction < 0) this.previousStep({ preview: true });
+            else {
+                this.state.liveLengthCycle = null;
+                this.state.playheadPosition = (this.state.playheadPosition + 1) % this.state.getMotifDuration();
+                this.onStepPreview?.(this.state.playheadPosition);
+            }
+            return true;
+        }
+        return this.navigateContext(direction);
+    }
     setClockStepHandler(handler) {
         this.clock.setClockStepHandler(() => {
             handler();
@@ -53,6 +84,7 @@ export class LiRythmeActions {
         this.onMotifChange = handler;
     }
     selectMotif(id) {
+        if (this.state.chainFocus) return this.selectFocusMotif(id);
         if (!["STOP", "PAUSE"].includes(this.state.transportState) ||
             !this.state.getMotif(id) || id === this.state.currentMotifId) return false;
         this.state.currentMotifId = id;
@@ -61,10 +93,31 @@ export class LiRythmeActions {
         this.onMotifChange?.(id);
         return true;
     }
+    toggleChainFocus() {
+        if (!this.state.chainEnabled) return false;
+        this.state.viewMotifId = this.state.playingMotifId;
+        this.state.chainFocus = !this.state.chainFocus;
+        this.state.chainViewIndex = this.state.chainPlayingDetached ? -1 : this.state.chainPlayingIndex;
+        this.onMotifChange?.(this.state.currentMotifId);
+        this.onChainChange?.();
+        return true;
+    }
+    selectFocusMotif(id) {
+        const motif = this.state.getMotif(id);
+        if (!this.state.chainFocus || !motif || !(this.state.chain.includes(id) ||
+            motif.motifLength !== null || motif.voiceLengths.some(n => n !== null) ||
+            motif.events.some(row => row.some(Boolean)))) return false;
+        this.state.chainViewIndex = this.state.chain.indexOf(id);
+        this.state.currentMotifId = id;
+        this.onMotifChange?.(id);
+        this.onChainChange?.();
+        return true;
+    }
     setNextMotifChangeHandler(handler) {
         this.onNextMotifChange = handler;
     }
     requestMotif(id) {
+        if (this.state.chainFocus) return this.selectFocusMotif(id);
         if (this.state.chainEnabled) return this.appendChainMotif(id);
         if (!this.state.getMotif(id)) return false;
         if (this.state.transportState !== "PLAY") return this.selectMotif(id);
@@ -93,11 +146,11 @@ export class LiRythmeActions {
     replaceMotif(id, motif) {
         this.state.motifs[id] = motif;
         this.state.onBankChange?.();
-        if (id === this.state.currentMotifId) {
+        if (id === this.state.playingMotifId) {
             this.state.liveLengthCycle = null;
             this.state.playheadPosition = 0;
-            this.onMotifChange?.(id);
         }
+        if (id === this.state.currentMotifId) this.onMotifChange?.(id);
     }
     applyMotifCopy(copy, id) {
         if (copy?.kind !== "BANK_MOTIF" || !this.state.getMotif(copy.sourceId) ||
@@ -116,7 +169,8 @@ export class LiRythmeActions {
         return true;
     }
     deleteMotif(id) {
-        if (this.state.chainEnabled) return this.removeChainOccurrence(this.state.chain.lastIndexOf(id));
+        if (this.resolveContext().structural) return this.removeChainOccurrence(this.state.chain.lastIndexOf(id));
+        if (this.resolveContext().mode === "CHAIN_FOCUS" && id === this.state.currentMotifId) return this.deleteViewMotif();
         // Explicit deletion of CURRENT is allowed; COPY destination guards and
         // the protection of a different prepared NEXT remain unchanged.
         if (!this.state.getMotif(id) || (id !== this.state.currentMotifId && !this.canWriteMotif(id))) return false;
@@ -128,6 +182,7 @@ export class LiRythmeActions {
         this.clock.setClockBeatHandler(handler);
     }
     toggleChain() {
+        if (this.state.chainFocus) this.toggleChainFocus();
         this.state.chainEnabled = !this.state.chainEnabled;
         this.state.chainPlayingIndex = -1;
         this.state.chainPlayingDetached = true;
@@ -148,6 +203,7 @@ export class LiRythmeActions {
         if (!this.state.chainEnabled || !this.state.getMotif(id)) return false;
         const index = afterPlaying ? this.state.chainPlayingIndex + 1 : this.state.chain.length;
         this.state.chain.splice(index, 0, id);
+        if (this.state.chainViewIndex >= index) this.state.chainViewIndex++;
         if (this.state.chainLoopMasterIndex !== null && index <= this.state.chainLoopMasterIndex) {
             this.state.chainLoopMasterIndex++;
         }
@@ -155,7 +211,18 @@ export class LiRythmeActions {
         return true;
     }
     navigateContext(direction) {
-        if (!this.state.chainEnabled || this.state.transportState === "PLAY") return false;
+        const { navigation } = this.resolveContext();
+        if (navigation === "VIEW_OCCURRENCE") {
+            if (!this.state.chain.length) return true;
+            const index = this.state.chainViewIndex < 0 ? 0 : Math.max(0,
+                Math.min(this.state.chain.length - 1, this.state.chainViewIndex + direction));
+            this.state.chainViewIndex = index;
+            this.state.currentMotifId = this.state.chain[index];
+            this.onMotifChange?.(this.state.currentMotifId);
+            this.onChainChange?.();
+            return true;
+        }
+        if (navigation !== "CHAIN_OCCURRENCE") return false;
         if (!this.state.chain.length) return true;
         const index = this.state.chainPlayingIndex < 0 ? 0
             : Math.max(0, Math.min(this.state.chain.length - 1, this.state.chainPlayingIndex + direction));
@@ -190,6 +257,8 @@ export class LiRythmeActions {
     removeChainOccurrence(index) {
         if (!this.state.chainEnabled || index < 0 || index >= this.state.chain.length) return false;
         this.state.chain.splice(index, 1);
+        if (this.state.chainViewIndex === index) this.state.chainViewIndex = -1;
+        else if (this.state.chainViewIndex > index) this.state.chainViewIndex--;
         if (index === this.state.chainLoopMasterIndex) this.state.chainLoopMasterIndex = null;
         else if (this.state.chainLoopMasterIndex !== null && index < this.state.chainLoopMasterIndex) {
             this.state.chainLoopMasterIndex--;
@@ -211,6 +280,7 @@ export class LiRythmeActions {
     clearChain() {
         if (!this.state.chainEnabled) return false;
         this.state.chain = [];
+        this.state.chainViewIndex = -1;
         this.state.chainLoopMasterIndex = null;
         this.state.chainPlayingIndex = -1;
         this.state.chainPlayingDetached = true;
@@ -230,7 +300,7 @@ export class LiRythmeActions {
         this.state.chainPlayingDetached = !this.state.chain.length;
         this.chainOccurrencePending = Boolean(this.state.chain.length);
         if (this.state.chain.length) {
-            this.state.currentMotifId = this.state.chain[0];
+            this.state.playingMotifId = this.state.chain[0];
             this.state.playheadPosition = 0;
             this.state.liveLengthCycle = null;
             this.onMotifChange?.(this.state.currentMotifId);
@@ -452,12 +522,13 @@ export class LiRythmeActions {
     }
     captureMusicalCopy(kind, voiceId) {
         if (this.state.currentTimeline !== "MOTIF") return null;
+        const motif = this.state.getMotif(this.resolveContext().editingMotifId);
         if (kind === "MOTIF") {
-            return { kind, events: this.state.motif.map(row => row.slice()),
-                voiceLengths: this.state.voiceLengths.slice(), motifLength: this.state.motifLength };
+            return { kind, events: motif.events.map(row => row.slice()),
+                voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength };
         }
         if (kind !== "VOICE" || !Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return null;
-        return { kind, events: this.state.motif[voiceId].slice(), length: this.state.voiceLengths[voiceId] };
+        return { kind, events: motif.events[voiceId].slice(), length: motif.voiceLengths[voiceId] };
     }
 
     applyVoiceCopy(copy, target) {
@@ -489,6 +560,25 @@ export class LiRythmeActions {
         return true;
     }
 
+    deleteViewMotif() {
+        if (!this.state.chainFocus || this.state.currentTimeline !== "MOTIF") return false;
+        const motif = this.state.getMotif(this.state.currentMotifId);
+        // Keep the engaged geometry until its natural boundary, exactly as
+        // other live temporal edits do. Scheduled Note Offs remain untouched.
+        if (this.state.currentMotifId === this.state.playingMotifId && this.state.transportState === "PLAY") {
+            this.state.setTargetLength(null, { target: null, defer: true });
+            for (let voice = 0; voice < 16; voice++) {
+                this.state.setTargetLength(null, { target: voice, defer: true });
+            }
+        } else {
+            motif.motifLength = null;
+            motif.voiceLengths.fill(null);
+        }
+        for (const row of motif.events) row.fill(false);
+        this.state.onBankChange?.();
+        return true;
+    }
+
     clearMotifEvents(voiceId = null) {
         if (this.state.currentTimeline !== "MOTIF") return false;
         if (voiceId !== null && (!Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16)) return false;
@@ -501,7 +591,7 @@ export class LiRythmeActions {
 
     setSelectedLength(length) {
         return this.state.setTargetLength(length, {
-            defer: this.clock.source === "INTERNAL" && this.state.transportState === "PLAY"
+            defer: (this.state.chainEnabled || this.clock.source === "INTERNAL") && this.state.transportState === "PLAY"
         });
     }
 
