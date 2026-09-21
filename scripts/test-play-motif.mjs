@@ -5,7 +5,7 @@ import { readPlayMotif, initializePlayMotifUI } from "../src/PlayMotifUI.mjs";
 import { initializePlayStatusUI } from "../src/PlayStatusUI.mjs";
 
 const source = file => fs.readFile(new URL(`../${file}`, import.meta.url), "utf8");
-const url = text => `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
+const url = text => `data:text/javascript;base64,${Buffer.from(text.replace('"./ATTransaction.mjs"', JSON.stringify(new URL("../src/ATTransaction.mjs", import.meta.url).href))).toString("base64")}`;
 const pad = url(await source("src/PadConfiguration.js"));
 const { LiRythmeState } = await import(url((await source("src/LiRythmeState.js")).replace('"./PadConfiguration.js"', JSON.stringify(pad))));
 const { LiRythmeClock } = await import(url(await source("src/LiRythmeClock.js")));

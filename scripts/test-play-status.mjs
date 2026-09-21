@@ -5,7 +5,7 @@ import { readPlayStatus, initializePlayStatusUI } from "../src/PlayStatusUI.mjs"
 import { initializePlayFooterUI } from "../src/PlayFooterUI.mjs";
 
 const source = file => fs.readFile(new URL(`../${file}`, import.meta.url), "utf8");
-const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
+const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text.replace('"./ATTransaction.mjs"', JSON.stringify(new URL("../src/ATTransaction.mjs", import.meta.url).href))).toString("base64")}`;
 const padURL = moduleURL(await source("src/PadConfiguration.js"));
 const { LiRythmeState } = await import(moduleURL((await source("src/LiRythmeState.js"))
     .replace('"./PadConfiguration.js"', JSON.stringify(padURL))));
@@ -81,7 +81,7 @@ test("footer observes all independent active flags and COPY stages through the e
     ui.dispose();
     assert.doesNotMatch(await source("src/PlayFooterUI.mjs"), /addEventListener|setTimeout|setInterval|requestAnimationFrame|innerHTML/);
     assert.match(await source("src/app.js"), /initializePlayFooterUI\(\{ state, controller: launchpad \}\)/);
-    assert.match(await source("src/app.js"), /renderFooter: \(\) => footerUI\?\.render\(\)/);
+    assert.match(await source("src/app.js"), /renderFooter: \(\) => \{ footerUI\?\.render\(\); atUI\.render\(\); \}/);
 });
 
 test("BPM reads the Clock's real internal tempo and never substitutes it for external BPM", () => {

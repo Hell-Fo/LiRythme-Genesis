@@ -4,6 +4,10 @@ Cette référence prévaut sur les descriptions historiques Phase A/B/C. CHAIN P
 
 ## Contexte commun
 
+Extension A/T Phase A : voir [AT-PHASE-A-VELOCITY.md](AT-PHASE-A-VELOCITY.md).
+Elle définit la transaction VELOCITY et la réaffectation exclusive de VALUE
+pendant celle-ci ; les matrices historiques ci-dessous restent normatives.
+
 `LiRythmeActions.resolveContext()` expose le mode NORMAL / CHAIN / CHAIN_FOCUS, le Motif édité, le caractère structurel et la navigation applicable. DELETE et navigation interrogent cette résolution ; COPY utilise les projections du même Motif édité. Les futures commandes doivent interroger ce contexte plutôt qu'ajouter une décision hardware indépendante.
 
 - NORMAL : édition du Motif courant.

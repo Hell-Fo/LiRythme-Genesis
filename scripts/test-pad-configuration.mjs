@@ -8,7 +8,7 @@ import storage from "../src/PadConfigurationStorage.cjs";
 import { PadConfigurationPreferences } from "../src/PadConfigurationPreferences.cjs";
 
 // Renderer .js files are browser ESM inside a CommonJS Electron package.
-const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
+const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source.replace('"./ATTransaction.mjs"', JSON.stringify(new URL("../src/ATTransaction.mjs", import.meta.url).href))).toString("base64")}`;
 const padURL = moduleURL(await fs.readFile(new URL("../src/PadConfiguration.js", import.meta.url), "utf8"));
 const { PadConfiguration } = await import(padURL);
 const stateSource = await fs.readFile(new URL("../src/LiRythmeState.js", import.meta.url), "utf8");

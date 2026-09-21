@@ -1,5 +1,14 @@
 # GENESIS — THE GATE
 
+Extension actuelle : [A/T Phase A](AT-PHASE-A-VELOCITY.md) peuple le Livre A/T
+préexistant dans la zone BOOK de PLAY. THE GATE conserve `PLAY ↔ MOTIF_LIBRARY`.
+VELOCITY est RED fixe, puis RED clignotant pendant sa transaction ; les sept
+Attributs EMPTY restent DIM RED et les huit Transformations EMPTY DIM AMBER.
+VALUE est exclusivement réaffectée pendant une transaction. SWITCH reste note
+120, en bas de la colonne. Les paragraphes suivants décrivent la phase initiale
+THE GATE avant activation de VELOCITY ; la grammaire A/T liée ci-dessus prévaut
+pour ses LEDs et ses gestes.
+
 `LiRythmeState.currentView` démarre à `PLAY`. L’action indépendante du matériel
 `LiRythmeActions.toggleView()` bascule entre `PLAY` et `MOTIF_LIBRARY`.
 La future Bibliothèque pourra utiliser cet état sans modifier le transport,

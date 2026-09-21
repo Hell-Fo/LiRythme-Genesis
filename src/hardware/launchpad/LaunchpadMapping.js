@@ -39,6 +39,9 @@ export const LaunchpadMapping = {
         56, 40, 24, 8
     ],
 
+    // Physical top to bottom during an A/T transaction.
+    AT_VALUE: [8, 24, 40, 56, 72, 88, 104, 120],
+
     VALUE_CONTROLS: {
         DELETE: 88,
         COPY: 104,

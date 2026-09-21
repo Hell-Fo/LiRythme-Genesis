@@ -1,5 +1,10 @@
 # Bibliothèque Motif — Phase C.1 : persistance automatique
 
+Extension [A/T Phase A](AT-PHASE-A-VELOCITY.md) : les motifs v1 peuvent aussi
+contenir `velocities`, matrice facultative de 16 × 32 entiers 1–127. Sans ce
+champ, la vélocité reste 100. Les valeurs provisoires A/T sont exclues du
+snapshot disque jusqu'à COMMIT ; aucun état de transaction n'est sérialisé.
+
 ## Emplacement et format
 
 Banque de travail : `path.join(app.getPath("userData"), "motif-bank.json")`.

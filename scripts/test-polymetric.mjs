@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import { readPlayMotif, initializePlayMotifUI } from "../src/PlayMotifUI.mjs";
 
 const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), "utf8");
-const url = text => `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
+const url = text => `data:text/javascript;base64,${Buffer.from(text.replace('"./ATTransaction.mjs"', JSON.stringify(new URL("../src/ATTransaction.mjs", import.meta.url).href))).toString("base64")}`;
 async function load(file, imports = {}) {
     let text = await source(file);
     for (const [name, value] of Object.entries(imports)) text = text.replace(JSON.stringify(name), JSON.stringify(value));
@@ -1030,7 +1030,7 @@ test("THE GATE redraws BOOK on view changes and restores PLAY reservations", () 
         status === 0x90 && controller.mapping.BOOKS.includes(note));
     const expected = library => controller.mapping.BOOKS.map((note, i) => [0x90, note,
         ((library ? (i === 0 ? controller.colors.GREEN : controller.colors.OFF)
-            : i < 8 ? controller.colors.DIM_RED : controller.colors.DIM_AMBER) & 0x33) | 4]);
+            : i === 0 ? controller.colors.RED : i < 8 ? controller.colors.DIM_RED : controller.colors.DIM_AMBER) & 0x33) | 4]);
     const check = library => {
         assert.deepEqual(bookMessages(), expected(library));
         assert.ok(messages.every(([status, note]) => status === 0x90 &&
@@ -2786,7 +2786,7 @@ for (const transport of ["STOP", "PAUSE"]) {
                 t.mock.timers.tick(120);
                 const restored = controller.mapping.BOOKS.map((_, id) => value(view === "MOTIF_LIBRARY"
                     ? controller.getLibraryMotifColor(id)
-                    : id < 8 ? controller.layout.BOOKS.ATTRIBUTES : controller.layout.BOOKS.TRANSFORMATIONS));
+                    : id === 0 ? "RED" : id < 8 ? controller.layout.BOOKS.ATTRIBUTES : controller.layout.BOOKS.TRANSFORMATIONS));
                 assert.deepEqual(colors(), restored);
                 assert.equal(JSON.stringify(state), before);
                 assert.equal(state.chainLoopMasterIndex, 0);

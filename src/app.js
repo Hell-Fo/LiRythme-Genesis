@@ -11,6 +11,7 @@ import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
 import { initializePlayMotifUI } from "./PlayMotifUI.mjs";
 import { initializePlayChainUI } from "./PlayChainUI.mjs";
 import { initializePlayFooterUI } from "./PlayFooterUI.mjs";
+import { initializePlayATUI } from "./PlayATUI.mjs";
 import { initializeMotifBankAutosave } from "./MotifBankAutosave.mjs";
 
 
@@ -55,9 +56,10 @@ window.motifBankFiles.onClose(() => motifBankAutosave.flush());
 window.motifBankFiles.ready();
 const clock = new LiRythmeClock(state);
 const motifUI = initializePlayMotifUI({ state });
+const atUI = initializePlayATUI({ state });
 let footerUI = null;
 const playStatusUI = initializePlayStatusUI({ state, clock, midiManager,
-    renderMotif: motifUI.render, renderFooter: () => footerUI?.render() });
+    renderMotif: motifUI.render, renderFooter: () => { footerUI?.render(); atUI.render(); } });
 
 state.filterMode =
     focusStartupCheckbox.checked;
@@ -645,7 +647,7 @@ function triggerMotifStep(step) {
             ]?.textContent;
         midiManager.send(
             midiOutputName,
-            [status, note, 100]
+            [status, note, state.getMotif(state.playingMotifId).velocities?.[voiceId]?.[localStep] ?? 100]
         );
 
         setTimeout(() => {

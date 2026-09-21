@@ -15,6 +15,7 @@ Elias (OpenAI)
 
 ===============================================================================
 */
+import { ATTransaction, createVelocities, validVelocities } from "./ATTransaction.mjs";
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
     constructor(state, clock) {
@@ -29,12 +30,13 @@ export class LiRythmeActions {
         this.onChainChange = null;
         this.onChainOccurrence = null;
         this.chainOccurrencePending = false;
+        this.at = new ATTransaction(state, () => this.resolveContext(), reason => this.onATChange?.(reason));
     }
     // Normative grammar shared by editing commands and hardware routing.
     resolveContext() {
         const mode = !this.state.chainEnabled ? "NORMAL" : this.state.chainFocus ? "CHAIN_FOCUS" : "CHAIN";
         const playing = this.state.transportState === "PLAY";
-        return { mode, editingMotifId: this.state.currentMotifId, structural: mode === "CHAIN",
+        return { mode, editingMotifId: this.state.currentMotifId, atActive: Boolean(this.state.atTransaction), structural: mode === "CHAIN",
             navigation: mode === "CHAIN_FOCUS" ? (playing ? "VIEW_OCCURRENCE" : "STEP")
                 : mode === "CHAIN" && !playing ? "CHAIN_OCCURRENCE" : playing ? "FUTURE" : "STEP" };
     }
@@ -72,8 +74,9 @@ export class LiRythmeActions {
         });
     }
     toggleView() {
-        this.state.currentView = this.state.currentView === "PLAY"
-            ? "MOTIF_LIBRARY" : "PLAY";
+        if (this.resolveContext().atActive) return this.state.currentView;
+        const views = ["PLAY", "MOTIF_LIBRARY"];
+        this.state.currentView = views[(views.indexOf(this.state.currentView) + 1) % views.length];
         this.onViewChange?.(this.state.currentView);
         return this.state.currentView;
     }
@@ -135,6 +138,7 @@ export class LiRythmeActions {
     captureMotifCopy(id) {
         const motif = this.state.getMotif(id);
         return motif ? { kind: "BANK_MOTIF", sourceId: id,
+            ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
             events: motif.events.map(row => row.slice()),
             voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength } : null;
     }
@@ -163,8 +167,10 @@ export class LiRythmeActions {
         if (!Array.isArray(copy.events) || copy.events.length !== 16 ||
             !copy.events.every(row => Array.isArray(row) && row.length === 32 && row.every(v => typeof v === "boolean")) ||
             !Array.isArray(copy.voiceLengths) || copy.voiceLengths.length !== 16 ||
-            !copy.voiceLengths.every(validLength) || !validLength(copy.motifLength)) return false;
+            !copy.voiceLengths.every(validLength) || !validLength(copy.motifLength) ||
+            (copy.velocities !== undefined && !validVelocities(copy.velocities))) return false;
         this.replaceMotif(id, { events: copy.events.map(row => row.slice()),
+            ...(copy.velocities ? { velocities: copy.velocities.map(row => row.slice()) } : {}),
             voiceLengths: copy.voiceLengths.slice(), motifLength: copy.motifLength });
         return true;
     }
@@ -465,6 +471,8 @@ export class LiRythmeActions {
 
         this.state.motif[voiceId][stepIndex] =
             !this.state.motif[voiceId][stepIndex];
+        const velocities = this.state.getMotif(this.state.currentMotifId).velocities;
+        if (velocities) velocities[voiceId][stepIndex] = 100;
         this.state.onBankChange?.();
 
         console.log(
@@ -525,10 +533,12 @@ export class LiRythmeActions {
         const motif = this.state.getMotif(this.resolveContext().editingMotifId);
         if (kind === "MOTIF") {
             return { kind, events: motif.events.map(row => row.slice()),
+                ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
                 voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength };
         }
         if (kind !== "VOICE" || !Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return null;
-        return { kind, events: motif.events[voiceId].slice(), length: motif.voiceLengths[voiceId] };
+        return { kind, events: motif.events[voiceId].slice(), length: motif.voiceLengths[voiceId],
+            ...(motif.velocities ? { velocities: motif.velocities[voiceId].slice() } : {}) };
     }
 
     applyVoiceCopy(copy, target) {
@@ -536,10 +546,17 @@ export class LiRythmeActions {
             !Number.isInteger(target) || target < 0 || target >= 16 ||
             !Array.isArray(copy.events) || copy.events.length !== 32 ||
             !copy.events.every(event => typeof event === "boolean") ||
-            !(copy.length === null || Number.isInteger(copy.length) && copy.length >= 1 && copy.length <= 32)) return false;
+            !(copy.length === null || Number.isInteger(copy.length) && copy.length >= 1 && copy.length <= 32) ||
+            (copy.velocities !== undefined && (!Array.isArray(copy.velocities) || copy.velocities.length !== 32 ||
+                !copy.velocities.every(n => Number.isInteger(n) && n >= 1 && n <= 127)))) return false;
         // COPY preserves live phase for either clock source, using the existing transition.
         this.state.setTargetLength(copy.length, { target, defer: this.state.transportState === "PLAY" });
         this.state.motif[target] = copy.events.slice();
+        const motif = this.state.getMotif(this.state.currentMotifId);
+        if (copy.velocities || motif.velocities) {
+            motif.velocities ??= createVelocities();
+            motif.velocities[target] = copy.velocities?.slice() ?? Array(32).fill(100);
+        }
         this.state.onBankChange?.();
         // Scheduled Note Offs remain owned by the existing dispatch callbacks.
         return true;
@@ -575,6 +592,7 @@ export class LiRythmeActions {
             motif.voiceLengths.fill(null);
         }
         for (const row of motif.events) row.fill(false);
+        delete motif.velocities;
         this.state.onBankChange?.();
         return true;
     }
@@ -585,6 +603,9 @@ export class LiRythmeActions {
         const rows = voiceId === null ? this.state.motif : [this.state.motif[voiceId]];
         // Existing scheduled Note Offs own active notes and remain untouched.
         for (const row of rows) row.fill(false);
+        const motif = this.state.getMotif(this.state.currentMotifId);
+        if (voiceId === null) delete motif.velocities;
+        else motif.velocities?.[voiceId].fill(100);
         this.state.onBankChange?.();
         return true;
     }
