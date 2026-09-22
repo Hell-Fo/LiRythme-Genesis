@@ -245,16 +245,16 @@ for (const transport of ["PLAY", "PAUSE", "STOP"]) test(`CHAIN/FOCUS ${transport
     assert.deepEqual(musicalContext(state, clock), before); assert.deepEqual(state.motifs[0], playing);
 });
 
-test("live CHAIN change and FOCUS navigation use current context; CANCEL restores every edited motif", t => {
+test("live CHAIN change and FOCUS navigation preserve the captured A/T motif", t => {
     const { state, actions, begin } = setup(t);
     state.chainEnabled = true; state.chain = [0, 1, 2]; state.chainPlayingIndex = 0; state.chainPlayingDetached = false;
     state.motifs.forEach(m => m.events[12][0] = true);
     const original = structuredClone(state.motifs);
     begin(); actions.at.apply(0);
     state.playingMotifId = 1; state.chainPlayingIndex = 1; // natural playback boundary
-    actions.at.apply(1); assert.equal(velocity(state, 12, 0, 0), 127); assert.equal(velocity(state, 12, 0, 1), 111);
+    actions.at.apply(1); assert.equal(velocity(state, 12, 0, 0), 111); assert.equal(velocity(state, 12, 0, 1), 100);
     state.chainFocus = true; state.viewMotifId = 2; state.chainViewIndex = 2;
-    actions.at.apply(7); assert.equal(velocity(state, 12, 0, 2), 16);
+    actions.at.apply(7); assert.equal(velocity(state, 12, 0, 0), 16); assert.equal(velocity(state, 12, 0, 2), 100);
     actions.at.finish(false); assert.deepEqual(state.motifs, original);
     assert.equal(state.playingMotifId, 1); assert.equal(state.viewMotifId, 2);
 });
@@ -269,10 +269,10 @@ test("FOCUS chord and occurrence navigation retain their grammar during VELOCITY
     press(110, 0xB0); press(111, 0xB0); release(110, 0xB0); release(111, 0xB0);
     assert.equal(state.chainFocus, true); assert.equal(state.chainViewIndex, 0);
     tap(111, 0xB0); assert.equal(state.chainViewIndex, 1);
-    tap(8); assert.equal(velocity(state, 12, 0, 1), 127); assert.equal(velocity(state, 12, 0, 0), 100);
+    tap(8); assert.equal(velocity(state, 12, 0, 1), 100); assert.equal(velocity(state, 12, 0, 0), 127);
     tap(111, 0xB0); assert.equal(state.chainViewIndex, 2); assert.equal(state.currentMotifId, 1);
     tap(111, 0xB0); assert.equal(state.chainViewIndex, 3); assert.equal(state.currentMotifId, 2);
-    tap(120); assert.equal(velocity(state, 12, 0, 2), 16);
+    tap(120); assert.equal(velocity(state, 12, 0, 0), 16); assert.equal(velocity(state, 12, 0, 2), 100);
     assert.equal(state.playheadPosition, 7); assert.equal(state.playingMotifId, 0);
     const context = musicalContext(state, clock);
     actions.at.finish(false); assert.deepEqual(musicalContext(state, clock), context);
@@ -288,7 +288,7 @@ test("natural CHAIN boundary continues during VELOCITY and rollback preserves de
     state.transportState = "PLAY"; state.playheadPosition = 1;
     begin(); actions.at.apply(0); actions.nextStep();
     assert.equal(state.playingMotifId, 1); assert.equal(state.chainPlayingIndex, 1);
-    actions.at.apply(7); assert.equal(velocity(state, 12, 0, 1), 16);
+    actions.at.apply(7); assert.equal(velocity(state, 12, 0, 0), 16); assert.equal(velocity(state, 12, 0, 1), 100);
     state.liveLengthCycle = { duration: 2, lengths: Array(16).fill(2), steps: Array(16).fill(0), untilEntry: true };
     const cycle = state.liveLengthCycle, before = musicalContext(state, clock);
     actions.at.finish(false);
@@ -436,4 +436,131 @@ for (const mode of ["INTERNAL", "MIDI"]) test(`audible live velocity and unchang
     const ons = notes.slice(); pending.forEach(fn => fn());
     assert.deepEqual(notes.slice(ons.length), ons.map(([s, n]) => [s, n, 0]));
     c.resetInputState();
+});
+
+for (const focus of [false, true]) test(`A/T Instrument visibility is independent of Steps (FOCUS ${focus})`, t => {
+    const { state, clock, actions, c, leds, begin } = setup(t);
+    state.chainEnabled = true;
+    state.chainFocus = focus;
+    state.playingMotifId = 0;
+    state.currentMotifId = focus ? 3 : 0;
+    state.motif[0][1] = true;
+    state.motif[1][2] = true;
+    state.motif[2][3] = true;
+    state.getMotif(focus ? 0 : 3).events[0][8] = true;
+    state.filterMode = focus;
+    state.visibleInstrumentFilter.add(2);
+    state.selectedInstrument = 2;
+    const bank = structuredClone(state.motifs);
+    const context = musicalContext(state, clock);
+    begin();
+    assert.equal(state.chainFocus, focus);
+    assert.equal(state.filterMode, focus);
+    assert.deepEqual([...state.visibleInstrumentFilter], [2]);
+    assert.deepEqual([0, 1, 2, 3].map(i => c.getInstrumentColor(i)),
+        [c.colors.GREEN, c.colors.GREEN, c.colors.GREEN, c.colors.DIM_GREEN]);
+    const colors = () => [1, 2, 3, 8, 9].map(step => c.getMotifStepColor(step));
+    const { DIM_AMBER: event, OFF: off, YELLOW: selected } = c.colors;
+    assert.deepEqual(colors(), [event, event, event, off, off]);
+    actions.at.select("instruments", 0);
+    assert.deepEqual(colors(), [event, off, off, off, off]);
+    drainAT(t, c);
+    assert.equal(leds.get('144:' + c.mapping.MOTIF[2]), (off & 0x33) | 4);
+    assert.equal(c.getInstrumentColor(0), selected);
+    assert.equal(c.getInstrumentColor(1), c.colors.GREEN);
+    actions.at.select("instruments", 1, true);
+    assert.deepEqual(colors(), [event, event, off, off, off]);
+    actions.at.select("steps", 3);
+    actions.at.select("steps", 9, true);
+    assert.deepEqual(colors(), [event, event, selected, off, selected]);
+    actions.at.select("instruments", 0);
+    actions.at.select("instruments", 1);
+    assert.deepEqual(colors(), [event, event, selected, off, selected]);
+    actions.at.select("steps", 3);
+    actions.at.select("steps", 9);
+    assert.deepEqual(colors(), [event, event, event, off, off]);
+    actions.at.select("instruments", 3);
+    assert.deepEqual(colors(), [off, off, off, off, off]);
+    assert.equal(c.getInstrumentColor(3), selected);
+    actions.at.select("instruments", 3);
+    drainAT(t, c);
+    assert.deepEqual(state.motifs, bank);
+    assert.deepEqual(musicalContext(state, clock), context);
+    actions.at.finish(false);
+    assert.equal(c.getMotifStepColor(1), focus ? 0 : event);
+    assert.equal(c.getMotifStepColor(3), selected);
+});
+
+for (const focus of [false, true]) for (const commit of [false, true])
+test(`CHAIN A/T EDIT VIEW stays on 05 while PLAYING advances 03/08 (FOCUS ${focus}, commit ${commit})`, t => {
+    const { state, actions, clock, c, leds, begin } = setup(t);
+    state.chainEnabled = true;
+    state.chain = [4, 2, 7];
+    state.selectedInstrument = null;
+    state.chainPlayingIndex = 0;
+    state.chainPlayingDetached = false;
+    state.chainLoopMasterIndex = 2;
+    state.playingMotifId = 4;
+    state.chainFocus = focus;
+    state.viewMotifId = 4;
+    state.chainViewIndex = 0;
+    for (const id of state.chain) state.getMotif(id).motifLength = 2;
+    state.getMotif(4).events[12][0] = true;
+    state.getMotif(4).events[13][1] = true;
+    state.getMotif(2).events[14][0] = true;
+    state.getMotif(7).events[15][0] = true;
+    state.transportState = "PLAY";
+    state.playheadPosition = 1;
+    const revision = clock.transportRevision;
+    begin();
+    assert.equal(state.atTransaction.editingMotifId, 4);
+    const colors = () => Array.from({ length: 32 }, (_, i) => c.getMotifStepColor(i));
+    const instruments = () => Array.from({ length: 16 }, (_, i) => c.getInstrumentColor(i));
+    const timeline = colors(), pads = instruments();
+    for (const [id, next, value] of [[2, 7, 0], [7, 4, 7]]) {
+        for (let tick = 0; tick < 2 && state.playingMotifId !== id; tick++) actions.nextStep();
+        assert.equal(state.playingMotifId, id);
+        assert.equal(state.nextMotifId, next);
+        assert.equal(state.chainLoopMasterIndex, 2);
+        assert.equal(state.transportState, "PLAY");
+        assert.equal(clock.transportRevision, revision);
+        assert.equal(state.chainFocus, focus);
+        assert.equal(state.atTransaction.editingMotifId, 4);
+        assert.deepEqual(colors(), timeline);
+        assert.deepEqual(instruments(), pads);
+        actions.at.apply(value);
+        assert.equal(velocity(state, 12, 0, 4), value === 0 ? 127 : 16);
+        assert.equal(velocity(state, id === 2 ? 14 : 15, 0, id), 100);
+        drainAT(t, c);
+        assert.equal(leds.get('144:' + c.mapping.INSTRUMENTS[12]), (c.colors.GREEN & 0x33) | 4);
+    }
+    actions.at.select("instruments", 12);
+    actions.at.select("steps", 1);
+    assert.equal(c.getMotifStepColor(0), c.colors.DIM_AMBER);
+    assert.equal(c.getMotifStepColor(1), c.colors.YELLOW);
+    actions.at.finish(commit);
+    drainAT(t, c);
+    assert.equal(state.atTransaction, null);
+    assert.equal(actions.at.getEditingMotifId(), focus ? 4 : 7);
+    assert.equal(state.chainFocus, focus);
+    assert.equal(velocity(state, 12, 0, 4), commit ? 16 : 100);
+    assert.equal(c.getMotifStepColor(0), c.colors.DIM_AMBER);
+    assert.equal(c.getMotifStepColor(1), focus ? c.colors.RED : c.colors.DIM_RED);
+});
+
+test("A/T outside CHAIN retains contextual editing without capturing a motif", t => {
+    const { state, actions, begin } = setup(t);
+    state.getMotif(0).events[12][0] = true;
+    state.getMotif(1).events[13][1] = true;
+    begin();
+    assert.equal(state.atTransaction.editingMotifId, null);
+    actions.at.apply(0);
+    state.currentMotifId = 1;
+    assert.equal(actions.at.getEditingMotifId(), 1);
+    actions.at.apply(7);
+    assert.equal(velocity(state, 12, 0, 0), 127);
+    assert.equal(velocity(state, 13, 1, 1), 16);
+    actions.at.finish(false);
+    assert.equal(velocity(state, 12, 0, 0), 100);
+    assert.equal(velocity(state, 13, 1, 1), 100);
 });

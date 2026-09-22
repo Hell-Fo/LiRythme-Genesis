@@ -36,12 +36,17 @@ export class ATTransaction {
         state.atTransaction = null;
     }
     definition(slot) { return AT_SLOTS[slot]; }
+    getEditingMotifId() {
+        return this.state.atTransaction?.editingMotifId ?? this.context().editingMotifId;
+    }
     begin(slot = 0) {
         const definition = AT_SLOTS[slot];
         if (!definition || this.state.atTransaction || this.state.currentView !== "PLAY") return false;
         this.state.atTransaction = {
             slot, instruments: new Set(), steps: new Set(), valueIndex: null,
-            // Capture before any edit, including motifs reached later by CHAIN/VIEW.
+            // CHAIN playback and FOCUS navigation remain independent of A/T's view.
+            editingMotifId: this.state.chainEnabled ? this.context().editingMotifId : null,
+            // Capture before any edit for CANCEL.
             snapshots: this.state.motifs.map(m => definition.capture(m)),
             touched: new Set()
         };
@@ -63,7 +68,7 @@ export class ATTransaction {
         const tx = this.state.atTransaction;
         if (!tx || !Number.isInteger(index) || index < 0 || index > 7) return false;
         const definition = AT_SLOTS[tx.slot];
-        const id = this.context().editingMotifId;
+        const id = this.getEditingMotifId();
         const motif = this.state.getMotif(id);
         if (definition.apply(motif, tx, definition.values[index])) tx.touched.add(id);
         tx.valueIndex = index;

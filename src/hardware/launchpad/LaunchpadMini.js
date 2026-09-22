@@ -281,25 +281,26 @@ export class LaunchpadMini {
     }
 
     getMotifStepColor(step) {
-        if (this.state.atTransaction) return this.state.atTransaction.steps.has(step)
-            ? this.colors.YELLOW : this.state.motif.some(row => row[step]) ? this.colors.DIM_AMBER : this.colors.OFF;
-        const selectedVoiceId = this.state.selectedInstrument;
+        const target = this.state.atTransaction;
+        const selectedVoiceId = target ? null : this.state.selectedInstrument;
 
         const filter =
-            this.state.visibleInstrumentFilter;
+            target ? target.instruments : this.state.visibleInstrumentFilter;
 
         let hasAnyVoice = false;
         let hasSelectedVoice = false;
 
-        for (const [voiceId, steps] of this.state.motif.entries()) {
+        const motif = this.state.getMotif(this.actions.at.getEditingMotifId()).events;
+        for (const [voiceId, steps] of motif.entries()) {
             const isInFilter = filter.has(voiceId);
             const isSelectedInstrument = voiceId === selectedVoiceId;
 
-            const isVisible =
-                this.filterSelectionMode
+            const selecting = !target && this.filterSelectionMode;
+            const filtering = target ? filter.size > 0 : this.state.filterMode;
+            const isVisible = selecting
                     ? isInFilter
                     : (
-                        !this.state.filterMode ||
+                        !filtering ||
                         isInFilter ||
                         isSelectedInstrument
                     );
@@ -313,6 +314,10 @@ export class LaunchpadMini {
                 if (isSelectedInstrument) hasSelectedVoice = true;
             }
         }
+
+        // A/T shares Focus visibility and retains its Step selection feedback.
+        if (target) return target.steps.has(step) ? this.colors.YELLOW
+            : hasAnyVoice ? this.colors.DIM_AMBER : this.colors.OFF;
 
         const explicitLength = selectedVoiceId === null
             ? this.state.motifLength : this.state.voiceLengths?.[selectedVoiceId];
@@ -412,7 +417,8 @@ export class LaunchpadMini {
 
     getInstrumentColor(i) {
         if (this.state.atTransaction) return this.state.atTransaction.instruments.has(i)
-            ? this.colors.YELLOW : this.colors.DIM_GREEN;
+            ? this.colors.YELLOW : this.state.getMotif(this.actions.at.getEditingMotifId()).events[i]?.some(Boolean)
+                ? this.colors.GREEN : this.colors.DIM_GREEN;
         const hold = [...this.performanceHolds.values()].at(-1);
         if (hold) return hold.selection.has(i) ? this.colors.YELLOW : this.colors.DIM_GREEN;
         const isSelected =
@@ -1094,7 +1100,10 @@ export class LaunchpadMini {
         this.collectATLEDs = true;
         try {
             this.drawATValues();
-            if (reason === "instruments") this.drawInstruments();
+            if (reason === "instruments") {
+                this.drawInstruments();
+                this.drawMotif();
+            }
             else if (reason === "steps") this.drawMotif();
             else if (reason !== "value") this.drawSelectedMotif();
         } finally { this.collectATLEDs = false; }

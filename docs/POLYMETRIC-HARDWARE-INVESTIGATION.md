@@ -106,3 +106,61 @@ Ce test et ses artefacts Field Build restent hors du commit A/T.
 Step et sélections, A–H, CANCEL/COMMIT, panneau PLAY, transfert vers le Livre
 A/T préexistant et correction du burst LED/timing. Le blocage hardware est
 levé ; le commit est limité à A/T Phase A, ses tests et sa documentation.
+
+### Correction A/T — représentation PLAY (STOP hardware)
+
+Clarification Dan : FOCUS choisit le Motif édité ; la sélection Instruments
+filtre les Voices visibles ; la sélection Steps définit où agit A/T.
+Entrer en A/T ne modifie ni FOCUS ni Instrument Focus. En FOCUS, la source
+reste VIEW. Aucun Instrument sélectionné affiche le Motif complet ; une
+sélection affiche l'union des événements des Instruments sélectionnés.
+Les Steps conservent leur feedback et leur rôle dans TARGET, sans filtrer
+les événements visibles.
+
+Le rendu Timeline réutilise le parcours de visibilité Instrument Focus.
+Une modification de sélection Instruments redessine aussi la Timeline via
+la file LED existante. Les pads présents dans le Motif sont GREEN, les
+sélectionnés YELLOW, les absents non sélectionnés inactifs (DIM_GREEN).
+Aucune modification de la grammaire ou du calcul musical A/T ; CHAIN NEXT
+reste hors de cette correction.
+
+Validation logicielle : `npm.cmd test` **271/271**, syntaxe **47 fichiers**
+JS/MJS/CJS, `git diff --check` réussi. Tests avec FOCUS actif et inactif,
+VIEW distinct de PLAYING, union Instruments, Steps indépendants et sortie
+A/T. Validation hardware finale : voir ci-dessous.
+
+### A/T EDIT VIEW figé en CHAIN (STOP hardware)
+
+Retour hardware Dan : représentation Instruments/Timeline validée à 99 %.
+Dernière correction : BEGIN capture le motif contextuel dans la transaction
+A/T en CHAIN (PLAYING sans FOCUS, VIEW avec FOCUS). Le même résolveur fournit
+ce motif aux opérations A–H et au rendu Timeline + Instruments. Les Steps
+restent TARGET/feedback ; le filtre Instruments et les couleurs sont conservés.
+Ni FOCUS ni le contexte général du transport ne sont modifiés.
+
+Les transitions CHAIN continuent de changer PLAYING/NEXT normalement, sans
+déplacer A/T EDIT VIEW. CANCEL/COMMIT libèrent la capture et redessinent la
+source normale du contexte courant via la file LED existante. Hors CHAIN,
+le comportement reste contextuel comme auparavant. Aucun changement CHAIN NEXT.
+
+Les anciens tests autorisant les valeurs A–H à suivre les changements de
+PLAYING/VIEW sont adaptés à cette règle. Nouveau scénario : BEGIN sur 05,
+transitions naturelles vers 03 puis 08, édition et représentation maintenues
+sur 05, avec FOCUS actif/inactif et CANCEL/COMMIT. Vérification du transport,
+de NEXT, du Loop Point, du filtre Instruments et du feedback Steps.
+
+Validation : `npm.cmd test` **275/275**, syntaxe **47 fichiers** JS/MJS/CJS,
+`git diff --check` réussi. **Aucun commit/push. STOP hardware : validation
+physique Dan encore attendue.**
+
+### Stabilisation Phase A ? approbation hardware finale
+
+Dan confirme **100 % APPROUV? hardware**. Le contexte A/T fig?, le rendu
+Instruments/Timeline, les s?lections, A?H et CANCEL/COMMIT sont valid?s.
+La correction burst LED/clock est d?j? pr?sente dans `44790f1`.
+Le commit `fix(at): stabilize contextual editing feedback` exclut Field Build
+et le tweak CHAIN NEXT ? 500 ms ainsi que ses tests.
+
+Validation finale : suite compl?te du working tree **276/276** ; p?rim?tre
+exact du commit **275/275**, dont un test de conservation du contexte hors
+CHAIN ; syntaxe JS/MJS/CJS et `git diff --check` r?ussis. Aucun push.
