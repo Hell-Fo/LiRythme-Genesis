@@ -1,4 +1,4 @@
-import { AT_SLOTS, validVelocities } from "./ATTransaction.mjs";
+import { AT_SLOTS, validVelocities, validColors } from "./ATTransaction.mjs";
 
 export function validateMotifBank(value) {
     const length = n => n === null || Number.isInteger(n) && n >= 1 && n <= 32;
@@ -9,13 +9,15 @@ export function validateMotifBank(value) {
             m.events.every(row => Array.isArray(row) && row.length === 32 && row.every(v => typeof v === "boolean")) &&
             Array.isArray(m.voiceLengths) && m.voiceLengths.length === 16 &&
             m.voiceLengths.every(length) && length(m.motifLength) &&
-            (m.velocities === undefined || validVelocities(m.velocities)))) {
+            (m.velocities === undefined || validVelocities(m.velocities)) &&
+            (m.colors === undefined || validColors(m.colors)))) {
         throw new Error("Invalid or unsupported Motif Bank (expected version 1, 16 valid motifs)");
     }
     // Whitelist and clone; neither transient state nor shared rows cross this boundary.
     return { format: "lirythme-motif-bank", version: 1, currentMotifId: value.currentMotifId,
         motifs: value.motifs.map(m => ({ events: m.events.map(row => row.slice()),
             ...(m.velocities ? { velocities: m.velocities.map(row => row.slice()) } : {}),
+            ...(m.colors ? { colors: m.colors.map(row => row.slice()) } : {}),
             voiceLengths: m.voiceLengths.slice(), motifLength: m.motifLength })) };
 }
 export function snapshotMotifBank(state) {

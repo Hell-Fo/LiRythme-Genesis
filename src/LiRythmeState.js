@@ -35,6 +35,7 @@ export class LiRythmeState {
         this.modulationChainMode = false;
 
         this.freezeMode = false;
+        this.colorEnabled = false;
         this.lockMode = false;
 
         this.selectedInstrument = 12;
@@ -143,9 +144,36 @@ export class LiRythmeState {
             cycle.steps[id]++;
             if (cycle.steps[id] >= cycle.lengths[id]) {
                 cycle.steps[id] = 0;
-                if (!cycle.untilEntry) cycle.lengths[id] = this.getVoiceLength(id, this.playingMotifId);
+                if (!cycle.doubleMotif && (!cycle.untilEntry || cycle.doubleVoices?.has(id))) {
+                    cycle.lengths[id] = this.getVoiceLength(id, this.playingMotifId);
+                    cycle.doubleVoices?.delete(id);
+                }
             }
         }
+    }
+
+    getPlaybackMotifForVoice(voiceId) {
+        return this.liveLengthCycle?.doubleVoices?.get(voiceId) ?? this.getMotif(this.playingMotifId);
+    }
+
+    // Snapshot only temporal playback; the bank remains immediately editable.
+    deferDouble(voices, wholeMotif) {
+        this.liveLengthCycle ??= {
+            untilEntry: this.chainEnabled,
+            duration: this.getMotifDuration(this.playingMotifId),
+            lengths: Array.from({ length: 16 }, (_, id) => this.getVoiceLength(id, this.playingMotifId)),
+            steps: Array.from({ length: 16 }, (_, id) => this.getVoiceStep(id))
+        };
+        const cycle = this.liveLengthCycle;
+        cycle.doubleVoices ??= new Map();
+        let snapshot;
+        for (const id of wholeMotif ? Array.from({ length: 16 }, (_, id) => id) : voices) {
+            if (!cycle.doubleVoices.has(id)) {
+                snapshot ??= structuredClone(this.getMotif(this.playingMotifId));
+                cycle.doubleVoices.set(id, snapshot);
+            }
+        }
+        cycle.doubleMotif ||= wholeMotif;
     }
 
     setTargetLength(length, { defer = false, target = this.selectedInstrument } = {}) {

@@ -77,6 +77,7 @@ export class LaunchpadMini {
         this.deleteBlinkGeneration = 0;
         this.deleteConsumedInputs = new Set();
         this.shiftPressed = false;
+        this.doubleNavigationHeld = false;
         this.previousPressed = false;
         this.nextPressed = false;
         this.navigationCombo = false;
@@ -108,6 +109,7 @@ export class LaunchpadMini {
         this.filterSelectionChanged = false;
         this.filterWasActive = false;
 
+        this.instrumentFeedbackPending = false;
         this.atLEDQueue = new Map();
         this.atLEDKnown = new Map();
         this.atLEDTimer = null;
@@ -119,7 +121,7 @@ export class LaunchpadMini {
         this.actions.onATChange = reason => this.drawATChange(reason);
     }
 
-    // Only A/T visual work is deferred. Musical MIDI never passes through here.
+    // Derived selection/A/T LEDs only. Musical MIDI never passes through here.
     sendController(device, message) {
         const [status, note, value] = message;
         const key = status + ':' + note;
@@ -137,9 +139,24 @@ export class LaunchpadMini {
         this.midiManager.send(device, message);
     }
 
+    requestInstrumentFeedback() {
+        this.instrumentFeedbackPending = true;
+        this.scheduleATLEDs();
+    }
+
     scheduleATLEDs() {
-        if (this.atLEDTimer !== null || !this.atLEDQueue.size) return;
+        if (this.atLEDTimer !== null || (!this.atLEDQueue.size && !this.instrumentFeedbackPending)) return;
         this.atLEDTimer = setTimeout(() => {
+            if (this.instrumentFeedbackPending) {
+                this.instrumentFeedbackPending = false;
+                this.collectATLEDs = true;
+                try {
+                    this.drawInstruments();
+                    this.drawMotif();
+                    this.drawPlayhead();
+                    if (this.state.atTransaction) this.drawATValues();
+                } finally { this.collectATLEDs = false; }
+            }
             this.atLEDTimer = null;
             // Bound controller traffic per turn; never enqueue a whole redraw in IPC.
             for (let n = 0; n < 4 && this.atLEDQueue.size; n++) {
@@ -154,6 +171,7 @@ export class LaunchpadMini {
     setDeviceName(deviceName) {
         clearTimeout(this.atLEDTimer);
         this.atLEDTimer = null;
+        this.instrumentFeedbackPending = false;
         this.atLEDQueue.clear();
         this.atLEDKnown.clear();
         this.deviceName = deviceName;
@@ -168,8 +186,12 @@ export class LaunchpadMini {
         this.actions.at.finish(false);
         clearTimeout(this.atLEDTimer);
         this.atLEDTimer = null;
+        this.instrumentFeedbackPending = false;
         this.atLEDQueue.clear();
         this.atLEDKnown.clear();
+        this.cancelStepNavigationHold();
+        this.stepNavigationRepeated = false;
+        this.stepInstrumentFeedback = false;
         this.focusNavigationHeld?.clear();
         this.focusNavigationConsumed = false;
         clearTimeout(this.chainNavigationFlashTimer);
@@ -210,6 +232,7 @@ export class LaunchpadMini {
         this.previousTempoMode = false;
         this.nextTempoMode = false;
         this.shiftPressed = false;
+        this.doubleNavigationHeld = false;
         this.previousPressed = false;
         this.nextPressed = false;
         this.navigationCombo = false;
@@ -280,6 +303,33 @@ export class LaunchpadMini {
         }
     }
 
+    cancelStepNavigationHold() {
+        clearTimeout(this.stepNavigationTimer);
+        this.stepNavigationTimer = null;
+    }
+
+    startStepNavigationHold(controlName) {
+        this.cancelStepNavigationHold();
+        this.stepNavigationRepeated = false;
+        const tick = () => {
+            this.stepNavigationTimer = null;
+            if (this.focusNavigationConsumed || this.focusNavigationHeld?.size !== 1 ||
+                !this.focusNavigationHeld.has(controlName) || this.state.transportState === "PLAY" ||
+                this.actions.resolveContext().navigation !== "STEP") return;
+            this.stepNavigationRepeated = true;
+            this.stepInstrumentFeedback = true;
+            this.cancelInstrumentPulses();
+            this.actions.navigate(controlName === "PREVIOUS" ? -1 : 1);
+            this.drawMotif();
+            this.drawPlayhead();
+            this.drawInstruments();
+            this.swapBuffers();
+            // One UI step per callback: never catch up missed ticks or enqueue music.
+            this.stepNavigationTimer = setTimeout(tick, this.state.getStepDurationMs());
+        };
+        this.stepNavigationTimer = setTimeout(tick, this.state.getStepDurationMs());
+    }
+
     getMotifStepColor(step) {
         const target = this.state.atTransaction;
         const selectedVoiceId = target ? null : this.state.selectedInstrument;
@@ -315,8 +365,9 @@ export class LaunchpadMini {
             }
         }
 
-        // A/T shares Focus visibility and retains its Step selection feedback.
-        if (target) return target.steps.has(step) ? this.colors.YELLOW
+        // Selection remains visible on empty Steps without implying a note.
+        // Occupancy is resolved within the selected Voices, not hidden Voices.
+        if (target) return target.steps.has(step) ? (hasAnyVoice ? this.colors.YELLOW : this.colors.DIM_GREEN)
             : hasAnyVoice ? this.colors.DIM_AMBER : this.colors.OFF;
 
         const explicitLength = selectedVoiceId === null
@@ -416,9 +467,12 @@ export class LaunchpadMini {
     }
 
     getInstrumentColor(i) {
-        if (this.state.atTransaction) return this.state.atTransaction.instruments.has(i)
-            ? this.colors.YELLOW : this.state.getMotif(this.actions.at.getEditingMotifId()).events[i]?.some(Boolean)
-                ? this.colors.GREEN : this.colors.DIM_GREEN;
+        if (this.state.atTransaction) {
+            const selected = this.state.atTransaction.instruments.has(i);
+            const event = this.state.getMotif(this.actions.at.getEditingMotifId()).events[i]?.[this.state.playheadPosition % 32];
+            return selected ? (event ? this.colors.YELLOW : this.colors.DIM_AMBER)
+                : event ? this.colors.GREEN : this.colors.DIM_GREEN;
+        }
         const hold = [...this.performanceHolds.values()].at(-1);
         if (hold) return hold.selection.has(i) ? this.colors.YELLOW : this.colors.DIM_GREEN;
         const isSelected =
@@ -428,6 +482,10 @@ export class LaunchpadMini {
             this.state.visibleInstrumentFilter.has(i);
 
         if (this.filterSelectionMode && isInFilter) return this.colors.YELLOW;
+        if (this.stepInstrumentFeedback && this.state.transportState !== "PLAY") {
+            return this.state.getMotif(this.actions.at.getEditingMotifId()).events[i]?.[this.state.playheadPosition]
+                ? this.colors.GREEN : this.colors.DIM_GREEN;
+        }
         const hasEvent = this.instrumentPulses.get(i)?.timer != null;
         if (isSelected) return hasEvent ? this.colors.YELLOW : this.colors.DIM_AMBER;
         return hasEvent ? this.colors.GREEN : this.colors.DIM_GREEN;
@@ -480,6 +538,9 @@ export class LaunchpadMini {
     }
 
     pulseInstrument(position) {
+        // A/T holds the current Step's feedback until the next cursor update.
+        if (this.state.atTransaction) return;
+        if (this.stepInstrumentFeedback && this.state.transportState !== "PLAY") return;
         if (this.performanceHolds.size) return;
         if (!Number.isInteger(position) || position < 0 || position >= 16 ||
             this.state.padConfiguration.voices[position]?.type !== "MIDI DRUM") {
@@ -598,7 +659,7 @@ export class LaunchpadMini {
                 this.nextMotifBlinkTimer = null;
                 this.nextMotifLit = !this.nextMotifLit;
                 this.drawBooks();
-            }, 160);
+            }, this.state.chainEnabled ? 500 : 160);
         }
         const books = this.mapping.BOOKS;
 
@@ -614,6 +675,7 @@ export class LaunchpadMini {
     }
     getATBookColor(slot) {
         const implemented = Boolean(this.actions.at.definition(slot));
+        if (slot === 1 && !this.state.colorEnabled) return "DIM_RED";
         const familyColor = slot < 8 ? "RED" : "YELLOW";
         if (!implemented) return slot < 8 ? "DIM_RED" : "DIM_AMBER";
         return this.state.atTransaction?.slot === slot && !this.atLit ? "OFF" : familyColor;
@@ -633,6 +695,11 @@ export class LaunchpadMini {
     }
 
     drawTransport() {
+        if (this.state.transportState === "PLAY") {
+            this.cancelStepNavigationHold();
+            if (this.focusNavigationHeld?.size) this.focusNavigationConsumed = true;
+            this.stepInstrumentFeedback = false;
+        }
         const playStop = this.mapping.TOP_CONTROLS.PLAY_STOP;
 
         if (this.state.transportState === "PLAY") {
@@ -742,7 +809,22 @@ export class LaunchpadMini {
     }
 
     drawPlayhead(step = this.state.playheadPosition) {
-        if (this.state.atTransaction) return;
+        if (this.state.atTransaction) {
+            step %= this.mapping.MOTIF.length;
+            const collecting = this.collectATLEDs;
+            this.collectATLEDs = true;
+            try {
+                if (this.lastPlayheadStep !== undefined && this.lastPlayheadStep !== step) this.drawMotifStep(this.lastPlayheadStep);
+                this.lastPlayheadStep = step;
+                const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
+                const voices = this.state.atTransaction.instruments;
+                const occupied = motif.events.some((row, id) => (!voices.size || voices.has(id)) && row[step]);
+                this.setLed(this.mapping.MOTIF[step], occupied ? this.colors.GREEN : this.colors.DIM_GREEN);
+                this.drawInstruments();
+                this.drawATValues();
+            } finally { this.collectATLEDs = collecting; }
+            return;
+        }
         if (this.state.transportState === "PLAY" && this.state.chainFocus &&
             this.state.currentMotifId !== this.state.playingMotifId) return;
         // The physical timeline has 32 pads, even when the global LCM is longer.
@@ -1023,6 +1105,9 @@ export class LaunchpadMini {
     }
 
     setDeleteArmed(armed) {
+        if (!armed) for (const hold of this.chainMotifHolds.values()) {
+            if (hold.deleteIntent) { clearTimeout(hold.timer); hold.fired = true; }
+        }
         clearTimeout(this.deleteBlinkTimer);
         this.deleteBlinkTimer = null;
         const generation = ++this.deleteBlinkGeneration;
@@ -1070,15 +1155,38 @@ export class LaunchpadMini {
     }
 
     drawATValues() {
+        const tx = this.state.atTransaction;
+        const velocities = new Set();
+        let colorCount = 0;
+        if (tx) {
+            const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
+            const step = this.state.playheadPosition % 32;
+            if (!tx.steps.size || tx.steps.has(step)) {
+                for (let voice = 0; voice < 16; voice++) {
+                    if ((!tx.instruments.size || tx.instruments.has(voice)) &&
+                        motif.events[voice][step]) {
+                        if (motif.colors?.[voice]?.[step]) colorCount++;
+                        if (motif.velocities?.[voice]?.[step] !== undefined) velocities.add(motif.velocities[voice][step]);
+                    }
+                }
+            }
+        }
         for (const [index, note] of this.mapping.AT_VALUE.entries()) {
-            const color = this.state.atTransaction
-                ? (this.state.atTransaction.valueIndex === index ? this.colors.YELLOW : this.colors.DIM_AMBER)
+            const color = tx?.slot === 1
+                ? index !== 0 || !colorCount ? this.colors.OFF : this.colors.RED
+                : tx ? (velocities.has(this.actions.at.definition(tx.slot).values[index]) ? this.colors.RED : this.colors.DIM_AMBER)
                 : this.colors.OFF;
             this.sendController(this.deviceName, [0x90, note, (color & 0x33) | 4]);
         }
     }
 
     drawATChange(reason) {
+        if (reason === "availability") {
+            this.collectATLEDs = true;
+            try { this.drawBooks(); }
+            finally { this.collectATLEDs = false; }
+            return;
+        }
         const active = Boolean(this.state.atTransaction);
         // VALUE/TARGET must not restart the blink phase on every press.
         if (active && this.atBlinkTimer === null) {
@@ -1097,14 +1205,14 @@ export class LaunchpadMini {
             this.atBlinkTimer = null;
             this.atLit = true;
         }
+        if (reason === "instruments") {
+            this.requestInstrumentFeedback();
+            return;
+        }
         this.collectATLEDs = true;
         try {
             this.drawATValues();
-            if (reason === "instruments") {
-                this.drawInstruments();
-                this.drawMotif();
-            }
-            else if (reason === "steps") this.drawMotif();
+            if (reason === "steps") { this.drawMotif(); this.drawPlayhead(); }
             else if (reason !== "value") this.drawSelectedMotif();
         } finally { this.collectATLEDs = false; }
     }
@@ -1138,7 +1246,7 @@ export class LaunchpadMini {
             if (!context.atActive && this.shiftPressed && this.state.chainEnabled) return false;
             if (value > 0) {
                 this.atHeld.add(key);
-                if (this.actions.at.definition(slot) && !this.atPadHold) {
+                if ((context.atActive ? this.state.atTransaction.slot === slot : this.actions.at.isEnabled(slot)) && !this.atPadHold) {
                     const hold = { key, slot, active: context.atActive, fired: false, timer: null };
                     this.atPadHold = hold;
                     hold.timer = setTimeout(() => {
@@ -1174,7 +1282,14 @@ export class LaunchpadMini {
             if (value === 0) {
                 clearTimeout(chainHold.timer);
                 this.chainMotifHolds.delete(inputKey);
-                if (!chainHold.fired && this.state.chainFocus) this.actions.selectFocusMotif(chainHold.id);
+                if (chainHold.deleteIntent) {
+                    if (!chainHold.fired && this.deleteArmed && this.actions.resolveContext().structural &&
+                        this.state.chain[chainHold.index] === chainHold.id &&
+                        this.actions.removeChainOccurrence(chainHold.index)) {
+                        this.setDeleteArmed(false);
+                        this.drawBooks();
+                    }
+                } else if (!chainHold.fired && this.state.chainFocus) this.actions.selectFocusMotif(chainHold.id);
             }
             return;
         }
@@ -1198,32 +1313,52 @@ export class LaunchpadMini {
             status,
             number
         );
-        // Resolve navigation on release so the exclusive FOCUS chord never leaks an action.
+        if (controlName === "PLAY_STOP" && value > 0) {
+            this.cancelStepNavigationHold();
+            if (this.focusNavigationHeld?.size) this.focusNavigationConsumed = true;
+        }
+        // Short taps resolve on release; a lone Step hold resolves at UI tempo ticks.
         if (["PREVIOUS", "NEXT"].includes(controlName) &&
             (!this.deleteArmed || atActive) && !this.playStopPressed) {
             this.focusNavigationHeld ??= new Set();
             if (value > 0) {
+                if (this.focusNavigationHeld.has(controlName)) return;
                 this.focusNavigationHeld.add(controlName);
+                if (controlName === "NEXT") this.doubleNavigationHeld = this.shiftPressed && !atActive;
                 if (controlName === "PREVIOUS") this.previousPressed = true;
                 else this.nextPressed = true;
                 if (this.focusNavigationHeld.size === 2 && !this.focusNavigationConsumed) {
                     this.focusNavigationConsumed = true;
+                    this.cancelStepNavigationHold();
                     clearTimeout(this.chainNavigationFlashTimer);
                     this.chainNavigationFlashTimer = null;
                     this.chainNavigationFlashColor = null;
                     this.actions.toggleChainFocus();
                     this.drawTimelineSelection();
                     this.drawBooks();
+                } else if (!this.focusNavigationConsumed && this.state.transportState !== "PLAY" &&
+                    this.actions.resolveContext().navigation === "STEP" &&
+                    !this.doubleNavigationHeld && !(this.shiftPressed && !this.state.chainEnabled)) {
+                    this.startStepNavigationHold(controlName);
                 }
             } else {
+                this.cancelStepNavigationHold();
                 if (controlName === "PREVIOUS") this.previousPressed = false;
                 else this.nextPressed = false;
                 const wasHeld = this.focusNavigationHeld.delete(controlName);
-                if (wasHeld && !this.focusNavigationConsumed) {
-                    if (this.shiftPressed && !this.state.chainEnabled && this.state.transportState !== "PLAY") {
+                if (wasHeld && !this.focusNavigationConsumed && !this.stepNavigationRepeated) {
+                    if (controlName === "NEXT" && this.doubleNavigationHeld) {
+                        if (this.actions.doubleSelected()) this.requestInstrumentFeedback();
+                        this.doubleNavigationHeld = false;
+                        return;
+                    } else if (this.shiftPressed && !this.state.chainEnabled && this.state.transportState !== "PLAY") {
                         if (controlName === "PREVIOUS") this.actions.selectMotifTimeline();
                         else this.actions.selectModulationTimeline();
-                    } else this.actions.navigate(controlName === "PREVIOUS" ? -1 : 1);
+                    } else {
+                        this.stepInstrumentFeedback = this.actions.resolveContext().navigation === "STEP";
+                        if (this.stepInstrumentFeedback) this.cancelInstrumentPulses();
+                        this.actions.navigate(controlName === "PREVIOUS" ? -1 : 1);
+                    }
                     if (this.actions.resolveContext().navigation === "CHAIN_OCCURRENCE") this.flashChainNavigationBoundary(controlName);
                     this.drawMotif();
                     this.drawPlayhead();
@@ -1231,7 +1366,11 @@ export class LaunchpadMini {
                     this.swapBuffers();
                     this.drawTimelineSelection();
                 }
-                if (!this.focusNavigationHeld.size) this.focusNavigationConsumed = false;
+                if (!this.focusNavigationHeld.size) {
+                    this.doubleNavigationHeld = false;
+                    this.focusNavigationConsumed = false;
+                    this.stepNavigationRepeated = false;
+                }
             }
             return;
         }
@@ -1263,6 +1402,20 @@ export class LaunchpadMini {
             return;
         }
         if (controlType === "BOOK" && this.state.currentView === "MOTIF_LIBRARY") {
+            if (value > 0 && this.deleteArmed && this.actions.resolveContext().structural) {
+                const hold = { id: controlPosition, index: this.actions.getDeleteOccurrenceIndex(controlPosition),
+                    deleteIntent: true, fired: false, timer: null };
+                this.chainMotifHolds.set(inputKey, hold);
+                hold.timer = setTimeout(() => {
+                    hold.fired = true;
+                    if (this.deleteArmed && this.actions.resolveContext().structural &&
+                        this.actions.deleteChainMotif(hold.id)) {
+                        this.setDeleteArmed(false);
+                        this.drawBooks();
+                    }
+                }, TEMPO_HOLD_DELAY_MS);
+                return;
+            }
             if (this.state.chainEnabled && !this.copyStage && !this.deleteArmed && !this.performanceHolds.size && value > 0) {
                 const hold = { id: controlPosition, fired: false, timer: null };
                 this.chainMotifHolds.set(inputKey, hold);
@@ -1646,10 +1799,7 @@ export class LaunchpadMini {
 
                 this.filterSelectionChanged = true;
 
-                this.drawMotif();
-                this.drawPlayhead();
-                this.drawInstruments();
-                this.swapBuffers();
+                this.requestInstrumentFeedback();
 
                 return;
             }
@@ -1659,15 +1809,7 @@ export class LaunchpadMini {
                 controlPosition
             );
 
-            console.log(
-                "INSTRUMENT:",
-                this.state.selectedInstrument
-            );
-
-            this.drawInstruments();
-            this.drawMotif();
-            this.drawPlayhead();
-            this.swapBuffers();
+            this.requestInstrumentFeedback();
 
             return;
         }

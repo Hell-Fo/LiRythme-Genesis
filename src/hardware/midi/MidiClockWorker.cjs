@@ -63,6 +63,7 @@ let nativeStepSequence = 0;
 let nativeStepPhase = 0;
 let stepTransportRunning = false;
 let transportRevision = 0;
+let previewEpoch = 0;
 
 function post(message) {
     parentPort.postMessage(message);
@@ -280,7 +281,7 @@ function validateShortMidiMessage(message) {
     return [...message];
 }
 
-function enqueueMidiMessage(message) {
+function enqueueMidiMessage(message, preview = {}) {
     let validatedMessage;
 
     try {
@@ -291,6 +292,11 @@ function enqueueMidiMessage(message) {
     }
 
     const noteOff = isNoteOff(validatedMessage);
+    if (!noteOff && preview.previewEpoch !== undefined) {
+        if (preview.previewEpoch !== previewEpoch || Date.now() >= preview.previewExpiresAt) return;
+        validatedMessage.previewEpoch = preview.previewEpoch;
+        validatedMessage.previewExpiresAt = preview.previewExpiresAt;
+    }
 
     if (getPendingMidiCount() >= MAX_PENDING_MIDI_MESSAGES) {
         if (noteOff && pendingMidiMessages.length > 0) {
@@ -334,9 +340,12 @@ function sendOnePendingMidiMessage() {
     if (!message) {
         return false;
     }
+    // Expired previews must never catch up later; ordinary notes and Note Offs
+    // retain their existing queue and priority.
+    if (message.previewExpiresAt !== undefined && Date.now() >= message.previewExpiresAt) return true;
 
     try {
-        output.sendMessage(message);
+        output.sendMessage(message.previewEpoch !== undefined ? Array.from(message) : message);
     } catch (error) {
         recordMidiDrop();
         post({
@@ -602,7 +611,12 @@ function handleCommand(command) {
             break;
 
         case "SEND_MIDI":
-            enqueueMidiMessage(command.message);
+            enqueueMidiMessage(command.message, command);
+            break;
+
+        case "INVALIDATE_PREVIEWS":
+            previewEpoch = command.epoch;
+            pendingMidiMessages = pendingMidiMessages.filter(message => message.previewEpoch === undefined);
             break;
 
         case "SHUTDOWN":

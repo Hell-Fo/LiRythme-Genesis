@@ -30,6 +30,7 @@ export class MidiManager {
         this.controllerOutputName = null;
         this.clockOutputName = null;
         this.notesOutputName = null;
+        this.previewEpoch = 0;
         this.removeNativeStatusListener = null;
 
         this.controllerSelector =
@@ -182,7 +183,14 @@ export class MidiManager {
         };
     }
 
-    send(outputName, message, timestamp) {
+    invalidatePreviews() {
+        this.previewEpoch++;
+        if (this.backend === "NATIVE_MIDI") this.nativeBridge.send({
+            type: "INVALIDATE_PREVIEWS", epoch: this.previewEpoch
+        });
+    }
+
+    send(outputName, message, timestamp, { preview = false } = {}) {
         const output = this.findOutput(outputName);
 
         if (!output) {
@@ -196,7 +204,8 @@ export class MidiManager {
                         ? "SEND_CONTROLLER"
                         : "SEND_NOTES",
                 name: outputName,
-                message: Array.from(message)
+                message: Array.from(message),
+                ...(preview ? { previewEpoch: this.previewEpoch, previewExpiresAt: Date.now() + 50 } : {})
             });
             return;
         }

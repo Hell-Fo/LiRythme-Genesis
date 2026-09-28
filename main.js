@@ -43,6 +43,9 @@ const {
     utilityProcess
 } = require("electron");
 const path = require("node:path");
+// Chromium otherwise places debug.log beside the Windows executable.
+app.setAppLogsPath();
+app.commandLine.appendSwitch("log-file", path.join(app.getPath("userData"), "electron.log"));
 const { PadConfigurationPreferences } = require("./src/PadConfigurationPreferences.cjs");
 const { PadConfigurationLibrary } = require("./src/PadConfigurationLibrary.cjs");
 let padPreferences;

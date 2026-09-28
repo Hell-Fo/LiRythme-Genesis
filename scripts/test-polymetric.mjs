@@ -2137,8 +2137,8 @@ test("CHAIN BOOK: emitted LEDs keep PLAYING green while NEXT blinks amber/yellow
  for(const [playing,next,other] of [[0,4,2],[4,2,0],[2,0,4]]) {
   c.drawBooks();assert.equal(color(playing),value("GREEN"));assert.equal(color(next),value("YELLOW"));assert.equal(color(other),value("YELLOW"));
   const before=JSON.stringify(state),revision=clock.transportRevision;
-  t.mock.timers.tick(160);assert.equal(color(playing),value("GREEN"));assert.equal(color(next),value("DIM_AMBER"));
-  t.mock.timers.tick(160);assert.equal(color(playing),value("GREEN"));assert.equal(color(next),value("YELLOW"));
+  t.mock.timers.tick(500);assert.equal(color(playing),value("GREEN"));assert.equal(color(next),value("DIM_AMBER"));
+  t.mock.timers.tick(500);assert.equal(color(playing),value("GREEN"));assert.equal(color(next),value("YELLOW"));
   assert.equal(JSON.stringify(state),before);assert.equal(clock.transportRevision,revision);
   c.copyDeniedPads.add(playing);assert.equal(c.getLibraryMotifColor(playing),"RED");c.copyDeniedPads.clear();
   c.copySuccessPad=next;assert.equal(c.getLibraryMotifColor(next),"YELLOW");c.copySuccessPad=null;
@@ -2306,7 +2306,7 @@ for (const transport of ["STOP", "PAUSE"]) {
                 controller.handleMidiMessage([status, note, 127]);
                 controller.handleMidiMessage([status, note, 0]);
             };
-            const next = () => tap(0xB0, controller.mapping.TOP_CONTROLS.NEXT);
+            const next = () => { state.currentView = "MOTIF_LIBRARY"; tap(0xB0, controller.mapping.TOP_CONTROLS.NEXT); state.currentView = view; };
             if (transport === "STOP") next(); // Select the head before moving to 05b.
             next();next();
             assert.equal(state.chainPlayingIndex, 2);
@@ -2478,23 +2478,23 @@ test("LOOP POINT: emitted LEDs show idle DIM RED, NEXT DIM RED/RED blink, PLAYIN
     assert.equal(color(2), value("DIM_RED"));assert.equal(color(0), value("GREEN"));
     advance(2); // NEXT is now LoopMaster.
     assert.equal(color(2), value("RED"));
-    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_RED"));assert.equal(color(4), value("GREEN"));
-    t.mock.timers.tick(160);assert.equal(color(2), value("RED"));
+    t.mock.timers.tick(500);assert.equal(color(2), value("DIM_RED"));assert.equal(color(4), value("GREEN"));
+    t.mock.timers.tick(500);assert.equal(color(2), value("RED"));
     shiftBook(2); // Remove while NEXT: restore the same temporal grammar in amber/yellow.
     assert.equal(color(2), value("YELLOW"));
-    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_AMBER"));
+    t.mock.timers.tick(500);assert.equal(color(2), value("DIM_AMBER"));
     advance(2); // Current 03 can become master on-the-fly.
     shiftBook(2);assert.equal(color(2), value("GREEN"));
-    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_RED"));
-    t.mock.timers.tick(160);assert.equal(color(2), value("GREEN"));
+    t.mock.timers.tick(500);assert.equal(color(2), value("DIM_RED"));
+    t.mock.timers.tick(500);assert.equal(color(2), value("GREEN"));
     advance(2); // Master leaves PLAYING: its role becomes DIM RED again.
     assert.equal(color(2), value("DIM_RED"));assert.equal(color(0), value("GREEN"));
     advance(2); // Next tour: master is NEXT, so only it blinks red.
     assert.equal(color(2), value("RED"));
-    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_RED"));
+    t.mock.timers.tick(500);assert.equal(color(2), value("DIM_RED"));
     advance(2);assert.equal(color(2), value("GREEN"));
-    t.mock.timers.tick(160);assert.equal(color(2), value("DIM_RED"));
-    t.mock.timers.tick(160);assert.equal(color(2), value("GREEN"));
+    t.mock.timers.tick(500);assert.equal(color(2), value("DIM_RED"));
+    t.mock.timers.tick(500);assert.equal(color(2), value("GREEN"));
     shiftBook(2);assert.equal(color(2), value("GREEN"));assert.equal(state.nextMotifId, 7);
     controller.resetInputState();
 });
@@ -2695,13 +2695,13 @@ test("LOOP POINT LED: LOOP OFF during the dim phase restores fixed GREEN immedia
     const value = name => (controller.colors[name] & 0x33) | 4;
     advance(4);
     const before = loopPhase(state, clock);
-    t.mock.timers.tick(160);
+    t.mock.timers.tick(500);
     assert.equal(leds.get(controller.mapping.BOOKS[2]), value("DIM_RED"));
     assert.deepEqual(loopPhase(state, clock), before);
     shiftBook(2);
     assert.equal(leds.get(controller.mapping.BOOKS[2]), value("GREEN"));
     assert.deepEqual(loopPhase(state, clock), before);
-    t.mock.timers.tick(160);assert.equal(leds.get(controller.mapping.BOOKS[2]), value("GREEN"));
+    t.mock.timers.tick(500);assert.equal(leds.get(controller.mapping.BOOKS[2]), value("GREEN"));
     controller.resetInputState();
 });
 
@@ -2770,9 +2770,9 @@ for (const transport of ["STOP", "PAUSE"]) {
         controller.resetInputState();
     });
 
-    test(`CHAIN navigation boundary: ${transport} single occurrence uses gesture direction and restores every BOOK in both views`, t => {
+    test(`CHAIN navigation boundary: ${transport} single occurrence uses gesture direction in MOTIFS`, t => {
         t.mock.timers.enable({ apis: ["setTimeout"] });
-        for (const view of ["PLAY", "MOTIF_LIBRARY"]) {
+        for (const view of ["MOTIF_LIBRARY"]) {
             const { state, actions, controller } = setup();
             state.currentView = view;actions.toggleChain();actions.requestMotif(4);
             if (transport === "PAUSE") { actions.startPlayback();actions.pausePlayback(); }
@@ -2806,7 +2806,9 @@ test("CHAIN navigation boundary: repeated press restarts 120 ms and leaving a bo
     assert.deepEqual(colors(), Array(16).fill(value("YELLOW")));
     t.mock.timers.tick(59);assert.equal(controller.chainNavigationFlashColor, "YELLOW");
     t.mock.timers.tick(1);assert.equal(controller.chainNavigationFlashColor, null);
-    assert.equal(controller.nextMotifLit, false); // NEXT's visual timer continued beneath the flash.
+    assert.equal(controller.nextMotifLit, true); // The 500 ms NEXT phase outlasts the 180 ms flash.
+    t.mock.timers.tick(320);
+    assert.equal(controller.nextMotifLit, false);
     assert.equal(colors()[4], value("DIM_AMBER"));
     assert.deepEqual(colors(), controller.mapping.BOOKS.map((_, id) => value(controller.getLibraryMotifColor(id))));
     tap("PREVIOUS");tap("NEXT");assert.equal(state.chainPlayingIndex, 1);
@@ -3061,6 +3063,7 @@ test("Phase C STOP/PAUSE long BOOK inserts while keeping VIEW and loop occurrenc
 test("Phase C reverse chord clears a pending boundary flash and consumes staggered releases", t => {
     t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
     const { state, controller, nav } = focusSetup();
+    state.currentView = "MOTIF_LIBRARY";
     nav("PREVIOUS"); nav("PREVIOUS", 0);
     assert.equal(controller.chainNavigationFlashColor, "YELLOW");
     nav("NEXT"); nav("PREVIOUS");
@@ -3185,6 +3188,7 @@ for (const mode of ["NORMAL", "CHAIN", "CHAIN_FOCUS"]) {
         }
         test(`GRAMMAR navigation ${mode} ${transport}`, () => {
             const { state, actions, controller: c } = setup();
+            state.currentView = "MOTIF_LIBRARY";
             state.chainEnabled = mode !== "NORMAL"; state.chain = [0, 4, 4, 2];
             state.chainPlayingIndex = 0; state.chainPlayingDetached = false;
             state.transportState = transport;
@@ -3235,3 +3239,206 @@ for (const mode of ["NORMAL", "CHAIN", "CHAIN_FOCUS"]) for (const transport of [
         }
     });
 }
+
+function doubleFixture() {
+    const fixture = setup(), { state } = fixture;
+    state.motifLength = 8;
+    state.voiceLengths[12] = 4; state.voiceLengths[13] = 5; state.voiceLengths[14] = 7;
+    state.motif[12][0] = true; state.motif[13][2] = true; state.motif[14][6] = true;
+    state.getMotif(0).velocities = Array.from({ length: 16 }, () => Array(32).fill(100));
+    state.getMotif(0).velocities[12][0] = 48;
+    return fixture;
+}
+
+test("DOUBLE: whole polymetric motif copies periods, rests and attributes; repeated doubling and persistence", async () => {
+    const { state, actions } = doubleFixture();
+    state.selectedInstrument = null;
+    state.motif[12][5] = true; // dormant destination is replaced by a rest
+    state.motif[12][20] = true; // beyond the new period remains stored
+    state.getMotif(0).future = Array.from({ length: 16 }, () => Array.from({ length: 32 }, () => ({ amount: 3 })));
+    assert.equal(actions.doubleSelected(), true);
+    assert.equal(state.motifLength, 16);
+    assert.deepEqual(state.voiceLengths.slice(12, 15), [8, 10, 14]);
+    assert.deepEqual(state.voiceLengths.slice(0, 12), Array(12).fill(null));
+    assert.equal(state.motif[12][4], true); assert.equal(state.motif[12][5], false);
+    assert.equal(state.motif[12][20], true); assert.equal(state.motif[13][7], true);
+    assert.equal(state.motif[14][13], true);
+    assert.equal(state.getMotif(0).velocities[12][4], 48);
+    assert.deepEqual(state.getMotif(0).future[12][4], { amount: 3 });
+    assert.notEqual(state.getMotif(0).future[12][0], state.getMotif(0).future[12][4]);
+    assert.equal(actions.doubleSelected(), true);
+    assert.equal(state.motifLength, 32);
+    assert.deepEqual(state.voiceLengths.slice(12, 15), [16, 20, 28]);
+    assert.equal(state.motif[12][12], true);
+    const before = structuredClone(state.motifs);
+    assert.equal(actions.doubleSelected(), false); assert.deepEqual(state.motifs, before);
+    const { snapshotMotifBank, restoreMotifBank } = await import("../src/MotifBankFormat.mjs");
+    const bank = snapshotMotifBank(state), restored = new LiRythmeState();
+    restoreMotifBank(restored, bank);
+    assert.deepEqual(snapshotMotifBank(restored), bank);
+});
+
+test("DOUBLE: individual target leaves motif break and other voices intact; validation is atomic", () => {
+    const { state, actions } = doubleFixture();
+    const other = structuredClone(state.motif[13]);
+    assert.equal(actions.doubleSelected(), true);
+    assert.equal(state.motifLength, 8);
+    assert.deepEqual(state.voiceLengths.slice(12, 15), [8, 5, 7]);
+    assert.deepEqual(state.motif[13], other);
+    for (const kind of ["no motif end", "free voice", "free populated voice", "too long voice", "too long motif", "AT"]) {
+        const { state, actions, controller } = doubleFixture();
+        state.selectedInstrument = kind === "free voice" ? 0 : null;
+        if (kind === "no motif end") state.motifLength = null;
+        if (kind === "free populated voice") state.motif[0][31] = true;
+        if (kind === "too long voice") state.voiceLengths[14] = 17;
+        if (kind === "too long motif") state.motifLength = 17;
+        if (kind === "AT") actions.at.begin();
+        state.transportState = "PLAY"; state.playheadPosition = 2;
+        const before = structuredClone(state.motifs);
+        assert.equal(actions.doubleSelected(), false, kind);
+        assert.deepEqual(state.motifs, before, kind);
+        assert.equal(state.playheadPosition, 2); assert.equal(state.liveLengthCycle, null);
+        controller.resetInputState();
+    }
+});
+
+test("DOUBLE: local activation in both clocks and CHAIN; motif break cuts incomplete cycles", () => {
+    for (const source of ["INTERNAL", "MIDI"]) for (const chain of [false, true]) {
+        const { state, actions, clock } = doubleFixture();
+        clock.setSource(source); state.chainEnabled = chain;
+        state.transportState = "PLAY"; state.playheadPosition = 2;
+        const revision = clock.transportRevision;
+        assert.equal(actions.doubleSelected(), true);
+        state.motif[12][3] = true; // edit NOW, still absent from engaged temporal content
+        actions.nextStep();
+        assert.equal(state.getVoiceStep(12), 3);
+        assert.equal(state.getPlaybackMotifForVoice(12).events[12][3], false);
+        actions.nextStep();
+        assert.equal(state.playheadPosition, 4); assert.equal(state.getVoiceStep(12), 0);
+        assert.equal(state.liveLengthCycle.lengths[12], 8);
+        assert.equal(state.getPlaybackMotifForVoice(12), state.getMotif(0));
+        assert.equal(state.getVoiceStep(13), 4); assert.equal(state.getVoiceStep(14), 4);
+        for (let i = 0; i < 4; i++) actions.nextStep();
+        assert.equal(state.playheadPosition, 0); assert.equal(state.getVoiceStep(12), 0);
+        assert.equal(state.liveLengthCycle, null); assert.equal(clock.transportRevision, revision);
+    }
+});
+
+test("DOUBLE: whole motif retains all temporal content until motif entry, repeated pending edits coalesce", () => {
+    const { state, actions } = doubleFixture();
+    state.selectedInstrument = null; state.transportState = "PLAY"; state.playheadPosition = 2;
+    assert.equal(actions.doubleSelected(), true); assert.equal(actions.doubleSelected(), true);
+    state.motif[12][0] = false;
+    for (let i = 0; i < 5; i++) {
+        actions.nextStep();
+        assert.equal(state.getVoiceStep(12), state.playheadPosition % 4);
+        assert.equal(state.liveLengthCycle.duration, 8);
+        assert.equal(state.getPlaybackMotifForVoice(12).events[12][0], true);
+    }
+    actions.nextStep();
+    assert.equal(state.playheadPosition, 0); assert.equal(state.liveLengthCycle, null);
+    assert.equal(state.getMotifDuration(), 32); assert.equal(state.getVoiceLength(12), 16);
+    assert.equal(state.getPlaybackMotifForVoice(12).events[12][0], false);
+});
+
+test("DOUBLE: VIEW target and SHIFT release order, hold and exclusive FOCUS chord", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const transport of ["PLAY", "PAUSE", "STOP"]) for (const mode of ["NORMAL", "CHAIN", "FOCUS"]) {
+        const { state, actions, controller: c } = doubleFixture();
+        state.transportState = transport; state.chainEnabled = mode !== "NORMAL"; state.chainFocus = mode === "FOCUS";
+        if (state.chainFocus) { state.viewMotifId = 1; state.motifs[1] = structuredClone(state.motifs[0]); }
+        const beforePlaying = structuredClone(state.motifs[0]);
+        const press = (key, value = 127) => c.handleMidiMessage([0xB0, c.mapping.TOP_CONTROLS[key], value]);
+        press("SHIFT"); press("NEXT"); t.mock.timers.tick(1000);
+        assert.equal(state.voiceLengths[12], 4); assert.equal(state.playheadPosition, 0);
+        press("SHIFT", 0); press("NEXT", 0);
+        assert.equal(state.voiceLengths[12], 8); assert.equal(state.currentTimeline, "MOTIF");
+        if (state.chainFocus) assert.deepEqual(state.motifs[0], beforePlaying);
+        assert.equal(state.playingMotifId, 0);
+        for (const order of [["PREVIOUS", "NEXT"], ["NEXT", "PREVIOUS"]]) {
+            const before = structuredClone(state.motifs);
+            press("SHIFT"); order.forEach(key => press(key));
+            order.forEach(key => press(key, 0)); press("SHIFT", 0);
+            assert.deepEqual(state.motifs, before);
+        }
+        c.resetInputState();
+    }
+});
+
+test("DOUBLE: real dispatch snapshots velocity and preserves Note Offs at natural activation", async () => {
+    const app = await source("app.js");
+    const dispatch = app.slice(app.indexOf("function triggerMotifStep(step) {"), app.indexOf("actions.setStepPreviewHandler(triggerMotifStep)"));
+    for (const source of ["INTERNAL", "MIDI"]) {
+        const { state, actions, clock, controller } = doubleFixture();
+        state.motif[12].fill(false); state.motif[12][3] = true;
+        state.getMotif(0).velocities[12][3] = 48;
+        const notes = [], offs = [];
+        const trigger = new Function("state", "midiOutputSelector", "midiManager", "launchpad", "setTimeout", `${dispatch}; return triggerMotifStep;`)(state,
+            { options: [{ textContent: "Drums" }], selectedIndex: 0 },
+            { send: (_, msg) => notes.push(msg), findOutput: () => ({}) }, { pulseInstrument() {} }, fn => offs.push(fn));
+        clock.setSource(source); actions.startPlayback(); state.playheadPosition = 2;
+        actions.setClockStepHandler(() => trigger(state.playheadPosition));
+        const revision = clock.transportRevision;
+        actions.doubleSelected(); state.getMotif(0).velocities[12][3] = 111;
+        for (let tick = 1; tick <= 6; tick++) {
+            if (source === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
+            else clock.receiveInternalClockStep({ sequence: tick, transportRevision: revision });
+        }
+        assert.deepEqual(notes.filter(msg => msg[1] === 36).map(msg => msg[2]), [48, 111]);
+        assert.equal(clock.transportRevision, revision);
+        const ons = notes.slice(); actions.stop(); offs.forEach(fn => fn());
+        assert.deepEqual(notes.slice(ons.length), ons.map(([s, n]) => [s, n, 0]));
+        controller.resetInputState();
+    }
+});
+
+test("DOUBLE: pending local and global geometry compose, pause edits activate directly", () => {
+    for (const whole of [false, true]) {
+        const { state, actions } = doubleFixture();
+        state.transportState = "PLAY"; state.playheadPosition = 2;
+        actions.setSelectedLength(5); // already engaged length is still 4
+        assert.equal(actions.doubleSelected(), true);
+        assert.equal(state.voiceLengths[12], 10);
+        if (whole) { state.selectedInstrument = null; assert.equal(actions.doubleSelected(), true); }
+        actions.nextStep(); actions.nextStep();
+        assert.equal(state.getVoiceStep(12), 0);
+        assert.equal(state.liveLengthCycle.lengths[12], whole ? 4 : 10);
+        for (let i = 0; i < 4; i++) actions.nextStep();
+        assert.equal(state.playheadPosition, 0);
+        assert.equal(state.liveLengthCycle, null);
+        assert.equal(state.getVoiceLength(12), whole ? 20 : 10);
+    }
+    const { state, actions } = doubleFixture();
+    state.transportState = "PLAY"; state.playheadPosition = 2;
+    actions.doubleSelected();
+    state.transportState = "PAUSE";
+    assert.equal(actions.doubleSelected(), true);
+    assert.equal(state.voiceLengths[12], 16); assert.equal(state.liveLengthCycle, null);
+    assert.equal(state.playheadPosition, 0);
+});
+
+test("DOUBLE: preserves events beyond motif break and refuses overflow without bank notification", () => {
+    const { state, actions } = doubleFixture();
+    state.motifLength = 3; state.voiceLengths[12] = 7;
+    state.motif[12][6] = true; state.selectedInstrument = null;
+    let saves = 0; state.onBankChange = () => saves++;
+    assert.equal(actions.doubleSelected(), true);
+    assert.equal(state.motifLength, 6); assert.equal(state.motif[12][13], true);
+    assert.equal(saves, 1);
+    state.voiceLengths[13] = 32;
+    const before = structuredClone(state.motifs);
+    assert.equal(actions.doubleSelected(), false);
+    assert.equal(saves, 1); assert.deepEqual(state.motifs, before);
+});
+
+test("DOUBLE: LED rendering is deferred and fused, no synchronous controller burst", t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, controller: c } = doubleFixture();
+    const sent = []; c.midiManager.send = (_, message) => sent.push(message);
+    const press = (key, value = 127) => c.handleMidiMessage([0xB0, c.mapping.TOP_CONTROLS[key], value]);
+    press("SHIFT"); press("NEXT"); sent.length = 0; press("NEXT", 0);
+    assert.equal(state.voiceLengths[12], 8); assert.equal(sent.length, 0);
+    assert.equal(c.instrumentFeedbackPending, true);
+    t.mock.timers.tick(4); assert.ok(sent.length <= 4);
+    press("SHIFT", 0); c.resetInputState();
+});

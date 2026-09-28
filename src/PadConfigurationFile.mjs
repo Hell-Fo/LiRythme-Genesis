@@ -58,8 +58,11 @@ export function validateDocument(doc) {
             if (!object(v)) { error(key, "objet attendu."); continue; }
             if (typeof v.name !== "string") error(`${key} → name`, "chaîne de caractères obligatoire.");
             if (!["NONE", "MIDI DRUM"].includes(v.type)) { error(`${key} → type`, `type inconnu : ${JSON.stringify(v.type) ?? "champ absent"}.`); continue; }
-            fields(v, v.type === "NONE" ? ["name", "type"] : ["name", "type", "output", "channel", "note"], key);
+            fields(v, v.type === "NONE" ? ["name", "type"] : ["name", "type", "output", "channel", "note", "colorNote"], key);
             if (v.type === "NONE") continue;
+            if (v.colorNote !== undefined && (!Number.isInteger(v.colorNote) || v.colorNote < 0 || v.colorNote > 127)) {
+                error(`${key} → colorNote`, "Un entier de 0 à 127 est requis ; omettre pour aucune note COLOR.");
+            }
             for (const [field, min, max] of [["channel", 1, 16], ["note", 0, 127]]) {
                 if (!Object.hasOwn(v, field)) error(`${key} → ${field}`, "champ obligatoire pour MIDI DRUM.");
                 else if (!Number.isInteger(v[field]) || v[field] < min || v[field] > max) error(`${key} → ${field}`, `valeur reçue : ${JSON.stringify(v[field])}. Un entier de ${min} à ${max} est requis.`);

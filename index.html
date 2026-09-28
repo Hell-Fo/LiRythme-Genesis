@@ -107,6 +107,7 @@
                 </section>
                 <section class="panel wide" aria-labelledby="pads-title">
                     <h2 id="pads-title">PAD CONFIGURATION</h2>
+                    <label><input id="color-enabled" type="checkbox"> COLOR ENABLED</label>
                     <label class="field">Configuration active<select id="pads-library" aria-label="Pad Configuration active"></select></label>
                     <button id="pads-edit" type="button">EDIT</button>
                     <button id="pads-new" type="button">NEW</button>
@@ -141,6 +142,8 @@
                             <p id="voice-output-status" class="muted"></p>
                             <label class="field">CHANNEL<input id="voice-channel" type="number" min="1" max="16" step="1" required aria-describedby="voice-error"></label>
                             <label class="field">NOTE<input id="voice-note" type="number" min="0" max="127" step="1" required aria-describedby="voice-error"></label>
+                            <label class="field">COLOR NOTE (optionnelle)<input id="voice-colorNote" type="number" min="0" max="127" step="1" aria-describedby="voice-error voice-color-help"></label>
+                            <p id="voice-color-help" class="muted">Vide : COLOR utilise la note principale.</p>
                         </div>
                         <p id="voice-error" role="alert" style="white-space:pre-wrap"></p>
                     </section>

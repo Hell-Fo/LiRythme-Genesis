@@ -1,3 +1,4 @@
 node_modules/
 native/node_modules/
 native/timing/build/
+dist/

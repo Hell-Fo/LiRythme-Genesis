@@ -15,7 +15,7 @@ Elias (OpenAI)
 
 ===============================================================================
 */
-import { ATTransaction, createVelocities, validVelocities } from "./ATTransaction.mjs";
+import { ATTransaction, createVelocities, validVelocities, createColors, validColors } from "./ATTransaction.mjs";
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
     constructor(state, clock) {
@@ -37,7 +37,7 @@ export class LiRythmeActions {
         const mode = !this.state.chainEnabled ? "NORMAL" : this.state.chainFocus ? "CHAIN_FOCUS" : "CHAIN";
         const playing = this.state.transportState === "PLAY";
         return { mode, editingMotifId: this.state.currentMotifId, atActive: Boolean(this.state.atTransaction), structural: mode === "CHAIN",
-            navigation: mode === "CHAIN_FOCUS" ? (playing ? "VIEW_OCCURRENCE" : "STEP")
+            navigation: !playing && this.state.atTransaction ? "STEP" : mode === "CHAIN_FOCUS" ? (playing ? "VIEW_OCCURRENCE" : "STEP")
                 : mode === "CHAIN" && !playing ? "CHAIN_OCCURRENCE" : playing ? "FUTURE" : "STEP" };
     }
     deleteTarget(kind, id = null) {
@@ -53,12 +53,11 @@ export class LiRythmeActions {
         const { navigation } = this.resolveContext();
         if (navigation === "FUTURE") return false;
         if (navigation === "STEP") {
-            if (direction < 0) this.previousStep({ preview: true });
-            else {
-                this.state.liveLengthCycle = null;
-                this.state.playheadPosition = (this.state.playheadPosition + 1) % this.state.getMotifDuration();
-                this.onStepPreview?.(this.state.playheadPosition);
-            }
+            const motifId = this.at.getEditingMotifId();
+            const duration = this.state.getMotifDuration(motifId);
+            this.state.liveLengthCycle = null;
+            this.state.playheadPosition = (this.state.playheadPosition + direction + duration) % duration;
+            this.onStepPreview?.(this.state.playheadPosition, motifId);
             return true;
         }
         return this.navigateContext(direction);
@@ -139,6 +138,7 @@ export class LiRythmeActions {
         const motif = this.state.getMotif(id);
         return motif ? { kind: "BANK_MOTIF", sourceId: id,
             ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
+            ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
             events: motif.events.map(row => row.slice()),
             voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength } : null;
     }
@@ -168,10 +168,40 @@ export class LiRythmeActions {
             !copy.events.every(row => Array.isArray(row) && row.length === 32 && row.every(v => typeof v === "boolean")) ||
             !Array.isArray(copy.voiceLengths) || copy.voiceLengths.length !== 16 ||
             !copy.voiceLengths.every(validLength) || !validLength(copy.motifLength) ||
-            (copy.velocities !== undefined && !validVelocities(copy.velocities))) return false;
+            (copy.velocities !== undefined && !validVelocities(copy.velocities)) ||
+            (copy.colors !== undefined && !validColors(copy.colors))) return false;
         this.replaceMotif(id, { events: copy.events.map(row => row.slice()),
             ...(copy.velocities ? { velocities: copy.velocities.map(row => row.slice()) } : {}),
+            ...(copy.colors ? { colors: copy.colors.map(row => row.slice()) } : {}),
             voiceLengths: copy.voiceLengths.slice(), motifLength: copy.motifLength });
+        return true;
+    }
+    getDeleteOccurrenceIndex(id) {
+        const index = this.state.chainPlayingIndex;
+        return !this.state.chainPlayingDetached && this.state.chain[index] === id
+            ? index : this.state.chain.lastIndexOf(id);
+    }
+    deleteChainMotif(id) {
+        if (!this.resolveContext().structural || !this.state.getMotif(id)) return false;
+        const motif = this.state.getMotif(id);
+        // Preserve the engaged geometry, using the same deferred cycle as FOCUS.
+        if (id === this.state.playingMotifId && this.state.transportState === "PLAY") {
+            this.state.setTargetLength(null, { target: null, defer: true });
+            for (let voice = 0; voice < 16; voice++) {
+                this.state.setTargetLength(null, { target: voice, defer: true });
+            }
+        } else {
+            motif.motifLength = null;
+            motif.voiceLengths.fill(null);
+        }
+        for (const row of motif.events) row.fill(false);
+        delete motif.velocities;
+        delete motif.colors;
+        for (let index = this.state.chain.length - 1; index >= 0; index--) {
+            if (this.state.chain[index] === id) this.removeChainOccurrence(index);
+        }
+        this.state.onBankChange?.();
+        if (id === this.state.currentMotifId) this.onMotifChange?.(id);
         return true;
     }
     deleteMotif(id) {
@@ -217,7 +247,8 @@ export class LiRythmeActions {
         return true;
     }
     navigateContext(direction) {
-        const { navigation } = this.resolveContext();
+        const { navigation: resolved, mode } = this.resolveContext();
+        const navigation = mode === "CHAIN" && this.state.transportState !== "PLAY" ? "CHAIN_OCCURRENCE" : resolved;
         if (navigation === "VIEW_OCCURRENCE") {
             if (!this.state.chain.length) return true;
             const index = this.state.chainViewIndex < 0 ? 0 : Math.max(0,
@@ -473,6 +504,8 @@ export class LiRythmeActions {
             !this.state.motif[voiceId][stepIndex];
         const velocities = this.state.getMotif(this.state.currentMotifId).velocities;
         if (velocities) velocities[voiceId][stepIndex] = 100;
+        const colors = this.state.getMotif(this.state.currentMotifId).colors;
+        if (colors) colors[voiceId][stepIndex] = false;
         this.state.onBankChange?.();
 
         console.log(
@@ -534,11 +567,13 @@ export class LiRythmeActions {
         if (kind === "MOTIF") {
             return { kind, events: motif.events.map(row => row.slice()),
                 ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
+                ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
                 voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength };
         }
         if (kind !== "VOICE" || !Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return null;
         return { kind, events: motif.events[voiceId].slice(), length: motif.voiceLengths[voiceId],
-            ...(motif.velocities ? { velocities: motif.velocities[voiceId].slice() } : {}) };
+            ...(motif.velocities ? { velocities: motif.velocities[voiceId].slice() } : {}),
+            ...(motif.colors ? { colors: motif.colors[voiceId].slice() } : {}) };
     }
 
     applyVoiceCopy(copy, target) {
@@ -548,7 +583,9 @@ export class LiRythmeActions {
             !copy.events.every(event => typeof event === "boolean") ||
             !(copy.length === null || Number.isInteger(copy.length) && copy.length >= 1 && copy.length <= 32) ||
             (copy.velocities !== undefined && (!Array.isArray(copy.velocities) || copy.velocities.length !== 32 ||
-                !copy.velocities.every(n => Number.isInteger(n) && n >= 1 && n <= 127)))) return false;
+                !copy.velocities.every(n => Number.isInteger(n) && n >= 1 && n <= 127))) ||
+            (copy.colors !== undefined && (!Array.isArray(copy.colors) || copy.colors.length !== 32 ||
+                !copy.colors.every(n => typeof n === "boolean")))) return false;
         // COPY preserves live phase for either clock source, using the existing transition.
         this.state.setTargetLength(copy.length, { target, defer: this.state.transportState === "PLAY" });
         this.state.motif[target] = copy.events.slice();
@@ -556,6 +593,10 @@ export class LiRythmeActions {
         if (copy.velocities || motif.velocities) {
             motif.velocities ??= createVelocities();
             motif.velocities[target] = copy.velocities?.slice() ?? Array(32).fill(100);
+        }
+        if (copy.colors || motif.colors) {
+            motif.colors ??= createColors();
+            motif.colors[target] = copy.colors?.slice() ?? Array(32).fill(false);
         }
         this.state.onBankChange?.();
         // Scheduled Note Offs remain owned by the existing dispatch callbacks.
@@ -593,6 +634,7 @@ export class LiRythmeActions {
         }
         for (const row of motif.events) row.fill(false);
         delete motif.velocities;
+        delete motif.colors;
         this.state.onBankChange?.();
         return true;
     }
@@ -606,6 +648,46 @@ export class LiRythmeActions {
         const motif = this.state.getMotif(this.state.currentMotifId);
         if (voiceId === null) delete motif.velocities;
         else motif.velocities?.[voiceId].fill(100);
+        if (voiceId === null) delete motif.colors;
+        else motif.colors?.[voiceId].fill(false);
+        this.state.onBankChange?.();
+        return true;
+    }
+
+    doubleSelected() {
+        const context = this.resolveContext();
+        if (context.atActive || this.state.currentTimeline !== "MOTIF") return false;
+        const motif = this.state.getMotif(context.editingMotifId);
+        const target = this.state.selectedInstrument;
+        const whole = target === null;
+        const canDouble = n => Number.isInteger(n) && n >= 1 && n <= 16;
+        if (!motif || !whole && (!Number.isInteger(target) || target < 0 || target >= 16)) return false;
+        if (whole && !canDouble(motif.motifLength)) return false;
+        const voices = whole ? motif.voiceLengths.flatMap((length, id) =>
+            length !== null || motif.events[id].some(Boolean) ? [id] : []) : [target];
+        if (voices.some(id => !canDouble(motif.voiceLengths[id]))) return false;
+        // Prepare the entire replacement before touching the bank or live cycle.
+        // Step-indexed attribute matrices share the event geometry, including future attributes.
+        const next = structuredClone(motif);
+        const matrices = Object.keys(next).filter(key => Array.isArray(next[key]) &&
+            next[key].length === 16 && next[key].every(row => Array.isArray(row) && row.length === 32));
+        for (const id of voices) {
+            const length = motif.voiceLengths[id];
+            for (const key of matrices) {
+                for (let step = 0; step < length; step++) {
+                    next[key][id][step + length] = structuredClone(motif[key][id][step]);
+                }
+            }
+            next.voiceLengths[id] = length * 2;
+        }
+        if (whole) next.motifLength *= 2;
+        const playing = context.editingMotifId === this.state.playingMotifId;
+        if (playing && this.state.transportState === "PLAY") this.state.deferDouble(voices, whole);
+        this.state.motifs[context.editingMotifId] = next;
+        if (playing && this.state.transportState !== "PLAY") {
+            this.state.liveLengthCycle = null;
+            this.state.playheadPosition = 0;
+        }
         this.state.onBankChange?.();
         return true;
     }

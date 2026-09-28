@@ -5,6 +5,8 @@ Cette référence prévaut sur les descriptions historiques Phase A/B/C. CHAIN P
 ## Contexte commun
 
 Extension A/T Phase A : voir [AT-PHASE-A-VELOCITY.md](AT-PHASE-A-VELOCITY.md).
+Extension COLOR : voir [AT-COLOR.md](AT-COLOR.md) pour le deuxième pad A/T,
+la commande collective A, son feedback de lecture et la cible capturée au BEGIN.
 Elle définit la transaction VELOCITY et la réaffectation exclusive de VALUE
 pendant celle-ci ; les matrices historiques ci-dessous restent normatives.
 
@@ -48,6 +50,12 @@ En FOCUS+STOP/PAUSE, les Steps utilisent la durée du VIEW et bouclent localemen
 
 ## Chord FOCUS
 
+Extension DOUBLE : `SHIFT + >>` double la cible musicale contextuelle au
+relâchement, sans navigation ni répétition. Ce geste est disponible dans les
+trois contextes, hors transaction A/T, et reste subordonné au chord FOCUS.
+Les règles, limites et frontières d'activation sont précisées dans
+[DOUBLE-CONTEXTUEL.md](DOUBLE-CONTEXTUEL.md).
+
 [<<]+[>>] est exclusivement le toggle FOCUS lorsque CHAIN est activé. En NORMAL, il est consommé sans action. Les deux ordres d'appui et les releases décalés sont équivalents. Aucune action individuelle, preview, sélection de Timeline, FREEZE ou LOCK ne doit fuir du chord. Les gestes individuels ordinaires sont résolus au relâchement ; un appui tenu ne déclenche pas de navigation anticipée.
 
 ## Vérification et portée
@@ -55,3 +63,56 @@ En FOCUS+STOP/PAUSE, les Steps utilisent la durée du VIEW et bouclent localemen
 Tests matriciels dans `scripts/test-polymetric.mjs` : 27 cases DELETE, 9 cases navigation et 9 cases chord (chacune dans les deux ordres), en plus des régressions Phase A/B/C : Loop Point, INSERT/APPEND, palette et butées, COPY/DELETE Voice, SOLO/MUTE, Instrument Focus, polymétrie, Leader/Follower, MIDI et Persistence.
 
 Le format Persistence demeure inchangé : FOCUS, VIEW et son index d'occurrence sont des états de session non sérialisés. Validation par suite complète, syntaxe JS/MJS et `git diff --check`. Validation hardware confirmée par Dan ; les vérifications finales avant commit sont logicielles.
+
+### DELETE court/long en CHAIN — amendement hardware
+
+Cet amendement précise DELETE+BOOK en CHAIN sans FOCUS. DELETE armé puis
+PRESS sur le pad Motif commence une intention sans mutation. RELEASE avant
+le seuil existant de 300 ms retire une seule occurrence : celle sélectionnée
+si son Motif correspond au pad, sinon la dernière occurrence correspondante.
+Au seuil, DELETE MOTIF vide événements, vélocités et longueurs dans le Book
+et retire toutes les occurrences du Motif. RELEASE ne déclenche ensuite
+aucune action. Ce geste de confirmation ne répète jamais DELETE occurrence.
+
+CHAIN+FOCUS conserve DELETE local existant, court ou maintenu : le Motif
+ciblé est vidé sans retirer ses occurrences ni modifier LoopMaster/FOCUS.
+Hors CHAIN, DELETE reste inchangé. DELETE+Instrument et DELETE+PLAY gardent
+leur grammaire. Les suppressions structurelles réutilisent removeChainOccurrence.
+Si PLAYING est vidé en PLAY, la géométrie engagée est conservée via le cycle
+différé existant jusqu'à la frontière naturelle ; aucun reset/rephase ajouté.
+
+## Harmonisation d'édition — retour hardware du 28 septembre 2026
+
+Cet amendement remplace les descriptions précédentes de navigation silencieuse
+et de feedback A/T statique.
+
+- CHAIN sans FOCUS, STOP/PAUSE, hors transaction : << >> naviguent les occurrences,
+  même sur la page PLAY. La page affichée ne détourne plus cette grammaire.
+- Motif et transaction A/T, STOP/PAUSE : << >> avancent le curseur et préécoutent
+  les événements de la cellule éditée. A/T conserve son Motif capturé ; FOCUS
+  utilise VIEW. PLAYING n'est pas déplacé pour effectuer cette préécoute.
+- La préécoute lit les cellules de la Timeline, sans modulo de longueur Voice :
+  elle inspecte les données éditées, y compris une cellule hors cycle local.
+  Le playback conserve ses cycles polymétriques et captures temporelles DOUBLE.
+- Chaque déplacement (clic ou répétition tenue) produit au plus une préécoute,
+  sans rattrapage ni queue de ticks. Les Note Off capturent toujours sortie,
+  canal et note réellement jouée. Le chord FOCUS et SHIFT+>> restent exclusifs.
+- En A/T, le curseur est visible : GREEN sur événement ciblé, DIM GREEN sur vide.
+  À son départ, le Step retrouve sa couleur de sélection/événement. Une sélection
+  de Steps restaure également le curseur après le rendu.
+- Les pads Instruments suivent les événements du Step courant dans le Motif
+  édité : GREEN sur événement, DIM GREEN sur vide ; pour une Voice sélectionnée,
+  YELLOW sur événement et DIM AMBER sur vide. Aucun flash de 80 ms pendant A/T.
+- COLOR : A est désormais RED dès qu'au moins un événement ciblé sous le curseur
+  porte COLOR, OFF sinon. Cette consigne remplace le précédent DIM RED pour un
+  seul événement. La commande collective ON/OFF reste indépendante du curseur.
+- VELOCITY : chaque ligne A–H est RED si sa valeur est présente sur un événement
+  ciblé sous le curseur, DIM AMBER sinon. Les valeurs neutres non matérialisées
+  ne signalent aucun attribut. Le panneau PLAY conserve la valeur collective
+  appliquée, indépendamment de cette inspection.
+
+Les retours A/T utilisent le rendu LED différentiel et coalescé existant.
+361 tests : matrice de navigation mise à jour, répétition/préécoute sans tick
+supplémentaire, dispatch réel VIEW/A/T avec vélocité et COLOR, Note Off conservés,
+curseur PLAY et feedback Instruments stable. Validation hardware encore attendue.
+Aucun commit/push ; hardware non sollicité.

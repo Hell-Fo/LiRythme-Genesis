@@ -164,3 +164,192 @@ et le tweak CHAIN NEXT ? 500 ms ainsi que ses tests.
 Validation finale : suite compl?te du working tree **276/276** ; p?rim?tre
 exact du commit **275/275**, dont un test de conservation du contexte hors
 CHAIN ; syntaxe JS/MJS/CJS et `git diff --check` r?ussis. Aucun push.
+
+### Navigation par Book et feedback Step — STOP hardware
+
+En STOP/PAUSE, les flèches du Book A/T parcourent les Steps, y compris en
+CHAIN et CHAIN + FOCUS. MOTIFS conserve la navigation des occurrences en
+CHAIN. Le chord FOCUS reste exclusif. Le bouclage des Steps utilise la durée
+du motif A/T capturé si une transaction existe.
+
+Après navigation Step, les Instruments présents sont GREEN fixes, les
+absents inactifs. Les pulses précédents sont annulés et le preview ne réarme
+pas de pulse LED. Les priorités A/T, performance et sélection Instrument
+Focus sont conservées. La reprise PLAY retrouve les pulses de lecture.
+Aucun changement aux transactions, au filtrage A/T ou à CHAIN NEXT.
+
+Validation : 289/289 tests, syntaxe 47 fichiers JS/MJS/CJS,
+git diff --check réussi. Matrice MOTIFS/A/T × NORMAL/CHAIN × STOP/PAUSE,
+0/1/3 Instruments avec temporisation, chord exclusif, motif capturé et
+priorité YELLOW A/T. Aucun commit/push. STOP hardware : validation Dan attendue.
+
+### Régression hold Step — diagnostic et correction (STOP hardware)
+
+Cause démontrée du hold inopérant : le routage exclusif FOCUS intercepte
+PRESS/RELEASE puis retourne avant les anciens blocs PREVIOUS/NEXT. Ces
+blocs faisaient un déplacement immédiat puis armaient un timeout d'une
+durée Step et un interval de même durée, issu de getStepDurationMs().
+Ce sont des timers UI, pas les ticks du clock musical. Le contournement
+est déjà présent dans 0f67135, avant le dernier tweak non commité.
+Le chemin intercepté n'armait aucun repeat et ne naviguait qu'au release.
+
+STOP rejette les pulses MIDI entrants ; PAUSE ne fait pas avancer le
+pipeline musical. Les événements de Step natif sont rejetés hors PLAY.
+Aucune queue de ticks de navigation n'a été trouvée dans ce chemin.
+En revanche navigate appelait onStepPreview, relié à triggerMotifStep,
+qui émet des Note On et programme des Note Off. Le backend possède une
+file pendingNotesMessages en attente de routage et des files MIDI worker ;
+le worker dispose aussi d'un flush idle. La rafale hardware au PLAY n'a
+pas été reproduite : son attribution à une de ces files reste non prouvée.
+
+Correction : le handler actif gère maintenant les holds STEP par un seul
+timeout UI renouvelé à getStepDurationMs(), sans boucle de rattrapage.
+Le premier déplacement a lieu à la première échéance pour laisser le
+chord simultané exclusif ; un short tap déplace au release. Chaque tick
+rend immédiatement le Step et les Instruments. RELEASE annule le timer
+sans déplacement supplémentaire. Chord, reset et entrée PLAY l'annulent
+également. La navigation Step n'appelle plus le preview musical : aucun
+Note On/Off ni action musicale à mettre en attente. Les previews explicites
+hors de ce chemin restent disponibles. Aucun fichier clock/tempo/backend
+MIDI n'est modifié ; CHAIN NEXT et les occurrences restent inchangés.
+
+Validation : 306/306 tests, syntaxe 47 fichiers JS/MJS/CJS et git diff --check.
+Matrice quatre contextes × STOP/PAUSE × deux directions : huit Steps pendant
+le hold, feedback immédiat, arrêt au release, timer nul, aucune entrée dans
+le callback preview, attente sans navigation différée, PLAY sans dispatch
+supplémentaire puis exactement un dispatch au premier Step natif. Tests du
+chord, reset, PLAY press et absence de repeat sur les occurrences.
+Ces tests logiciels ne constituent pas une capture de la rafale physique.
+Aucun commit/push. STOP hardware : revalidation Dan nécessaire.
+
+### Sélection Instrument rapide en PLAY — diagnostic et correction
+
+Dan confirme le correctif de navigation << / >> hardware OK.
+Nouveau stress : 1 024 frappes sans attente, soit 2 048 messages PRESS/RELEASE.
+Instrumentation de test : entrée pad, mutation, demande de rendu, drawMotif,
+appel sendController, envoi midiManager.send et taille de la Map LED.
+
+Cause logicielle démontrée : chaque sélection normale/Instrument Focus
+redessinait 16 Instruments + 32 Steps + playhead + swap, soit 50 messages
+contrôleur synchrones par frappe. Ce n'est pas un redraw complet des Books,
+mais une surface trop large envoyée intégralement pour chaque état intermédiaire.
+Le chemin Native MIDI transmet ces messages SEND_CONTROLLER au backend ;
+aucune fusion des anciens états n'est alors possible depuis le renderer.
+Le probe ne mesure pas les files internes IPC/driver ni la latence physique :
+il démontre l'amplification à leur entrée, pas leur profondeur exacte.
+
+Mesures avant/après (même rafale, temps simulé) :
+
+| Mode | Mutations | Rendus avant → après | Envois LED avant → après | Pic file LED avant → après |
+| --- | ---: | ---: | ---: | ---: |
+| NORMAL | 1024 | 1024 → 1 | 51200 → 48 | 0 → 48 |
+| Alternance 2 pads | 1024 | 1024 → 1 | 51200 → 48 | 0 → 48 |
+| Instrument Focus | 1024 | 1024 → 1 | 51200 → 48 | 0 → 48 |
+| A/T | 1024 | 1024 → 1 | 48 → 48 | 48 → 48 |
+| CHAIN / CHAIN FOCUS | 1024 | 1024 → 1 | 51200 → 48 | 0 → 48 |
+
+Avant, zéro dans la Map normale signifie envois immédiats au backend,
+aucunement absence de backlog en aval. Après : zéro envoi synchrone pendant
+les frappes, une demande de rendu courante, 48 couleurs au plus dans ce probe,
+quatre envois par lot de 4 ms, convergence en 48 ms simulées, puis file vide.
+Les 1 024 demandes de rendu sont fusionnées ; les 1 024 mutations sont toutes
+exécutées. Le rendu normal génère 49 écritures candidates, sans swap, puis
+48 envois après fusion du playhead. Une sélection suivante entre deux Voices
+vides ne transmet que les deux pads Instruments modifiés.
+
+Stratégie : réutilisation du mécanisme A/T existant, étendu aux sélections
+normales et Instrument Focus. La demande différée lit l'état actuel, ne
+capture aucune ancienne sélection, et remplace les couleurs par pad avant
+chaque lot. Les rendus clock/pulse plus récents supplantent les couleurs en
+attente. Aucun événement d'entrée musical n'est supprimé ; ni clock, ni
+tempo, ni backend MIDI ne sont modifiés. Reset/reconnexion annulent le rendu.
+
+Tests : six probes de 1 024 frappes, remplacement pendant drainage partiel,
+convergence vers l'état final, différentiel de deux pads, reset ; 2 048
+sélections supplémentaires entrelacées avec 32 Steps natifs et vérification
+des Note On/Off immédiats, phase inchangée et absence de notes après drainage.
+Suite complète 314/314, syntaxe 47 fichiers JS/MJS/CJS, git diff --check OK.
+Ces mesures mock MIDI ne prouvent pas un jitter hardware nul.
+Aucun commit/push. STOP hardware : validation Dan attendue.
+
+### DELETE court/long CHAIN — STOP hardware
+
+DELETE+BOOK en CHAIN sans FOCUS est maintenant résolu une seule fois :
+PRESS capture l'intention, RELEASE avant 300 ms retire l'occurrence ciblée,
+seuil atteint vide le Motif du Book et retire toutes ses occurrences.
+Le seuil réutilise TEMPO_HOLD_DELAY_MS, déjà employé pour le hold Motif.
+Un release après confirmation est consommé. Annuler DELETE ou reset annule
+les intentions en attente. Le pad partagé cible l'occurrence sélectionnée
+correspondante, sinon la dernière occurrence selon la règle historique.
+
+FOCUS conserve explicitement sa sémantique locale, sans retrait d'occurrences.
+PLAYING n'est pas rephasé : le cycle différé existant garde sa géométrie
+jusqu'à la transition naturelle. NEXT, indices et LoopMaster sont actualisés
+par la suppression structurelle existante ; supprimer le Motif LoopMaster
+entraîne LOOP OFF. Aucun changement clock/tempo, CHAIN NEXT ou coalescence LED.
+
+Validation : 324/324 tests, syntaxe 47 fichiers JS/MJS/CJS, git diff --check OK.
+Tests [01][05][03][05][08] en STOP/PAUSE/PLAY, seuil 299/300 ms, release sans
+seconde action, FOCUS court/long local, annulation, Chain entièrement supprimée,
+PLAYING supprimé et non supprimé, indices VIEW/PLAYING et LoopMaster décalés.
+Aucun commit/push. STOP hardware : validation Dan attendue.
+
+### Préécoute par flèches puis rafale au PLAY — 28 septembre 2026
+
+Daniel confirme que le symptôme suit l'utilisation des flèches. La préécoute
+sonore a été rétablie à sa demande lors de l'harmonisation précédente ; elle
+empruntait à nouveau les files ordinaires sans durée de validité ni annulation
+à la reprise. Les ticks de navigation ne sont pas une file de clock.
+
+Correction ciblée : les Note On de préécoute portent un numéro de génération
+et une échéance de 50 ms (gate existante). Chaque transition de transport invalide
+les préécoutes encore en attente dans le routage Utility et dans le worker.
+Un ancien message reçu après cette invalidation est rejeté. Une préécoute périmée
+est également rejetée avant routage ou émission ; elle ne peut plus être jouée
+après l'échéance de son propre Note Off.
+
+Les Note Off ne portent pas cette marque : aucun callback de gate n'est annulé,
+aucun Note Off n'est retiré et leur priorité existante reste intacte. Les Note On
+ordinaires du playback ne sont ni invalidés ni soumis à cette expiration.
+La préécoute immédiate demeure disponible. Aucun changement du tempo, des ticks,
+de la phase, du scheduler ou des règles de sélection/navigation.
+
+Tests logiciels : 364 réussis. Régression sur les fonctions réelles du worker
+avec file volontairement retardée, message ancien reçu après PLAY, gate déjà
+émise, expiration en STOP ; routage en attente de destination ; propagation de
+la marque depuis le dispatch de navigation jusqu'à MidiManager et Note Off
+sans marque. Suite existante complète réussie.
+
+Ce scénario retardé démontre le risque logiciel et sa protection ; il ne constitue
+pas une capture de la rafale physique. Validation Launchpad encore nécessaire,
+source de clock hardware non précisée. Aucun commit/push, hardware non sollicité.
+
+### Précision hardware : INTERNAL, flèches silencieuses en STOP
+
+Daniel indique que la rafale persiste en INTERNAL et que les préécoutes des
+flèches ne sont pas audibles en STOP. Le correctif de péremption précédent ne
+peut donc pas être considéré comme une résolution hardware validée.
+
+Ajout d'un test du fichier worker complet en VM, avec temps et sortie MIDI
+simulés : clock INTERNAL active, transport STOP, deux préécoutes et leurs gates,
+puis START. Les quatre messages de notes sont émis avant START ; aucun Step
+musical n'est généré avant PLAY. Ce résultat ne reproduit pas le blocage réel.
+365 tests passent, syntaxe du test et diff --check OK.
+
+Pas de nouveau correctif de production conjectural. À préciser : destination
+des notes et redémarrage complet de LiRythme après modification des fichiers
+Utility/Worker. Un rechargement du renderer seul ne recrée pas le worker.
+Aucun accès hardware, aucun commit/push.
+
+### Validation de la préécoute et préparation Field Build #2
+
+Daniel confirme que la rafale apparaît en redémarrant Bespoke seul, LiRythme
+restant en STOP. La pause de Bespoke suspend son moteur audio ; conserver
+Bespoke en PLAY permet la préécoute immédiate. Daniel valide ensuite les sons
+par flèches en STOP directement sur le DrumBrute (« sans failles »).
+La protection de péremption des préécoutes ne peut pas retirer les notes déjà
+reçues par une application externe dont le moteur audio est suspendu.
+
+Le 28 septembre, Daniel autorise explicitement le commit puis la compilation
+de cette version pour son setup hardware. Aucun push demandé. Field Build #2
+conserve la première distribution et identifie son commit dans le manifeste.

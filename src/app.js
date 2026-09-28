@@ -282,6 +282,7 @@ midiClockOutputSelector.addEventListener(
 actions.setTransportTransitionHandler(
     ({ from, to, origin, transportRevision }) => {
         playStatusUI.render();
+        midiManager.invalidatePreviews();
         if (to === "PAUSE" || to === "STOP") {
             try {
                 launchpad.cancelInstrumentPulses(true);
@@ -626,9 +627,14 @@ updateSoundCheck();
 // ============================================================
 
 function triggerMotifStep(step) {
+    // Navigation supplies the editing Motif; clock calls retain temporal playback.
+    const previewMotifId = arguments[1] ?? null;
     const triggeredInstruments = [];
-    for (const [voiceId, steps] of state.getMotif(state.playingMotifId).events.entries()) {
-        const localStep = state.getVoiceStep?.(voiceId, step) ?? step;
+    for (let voiceId = 0; voiceId < 16; voiceId++) {
+        const playingMotif = previewMotifId !== null ? state.getMotif(previewMotifId)
+            : state.getPlaybackMotifForVoice?.(voiceId) ?? state.getMotif(state.playingMotifId);
+        const steps = playingMotif.events[voiceId];
+        const localStep = previewMotifId !== null ? step % 32 : state.getVoiceStep?.(voiceId, step) ?? step;
         if (!steps[localStep] || state.isVoiceAudible?.(voiceId) === false) {
             continue;
         }
@@ -639,7 +645,9 @@ function triggerMotifStep(step) {
             !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127) {
             continue;
         }
-        const note = voice.note;
+        const note = playingMotif.colors?.[voiceId]?.[localStep] &&
+            Number.isInteger(voice.colorNote) && voice.colorNote >= 0 && voice.colorNote <= 127
+            ? voice.colorNote : voice.note;
         const status = 0x90 | (voice.channel - 1);
         const midiOutputName =
             midiOutputSelector.options[
@@ -647,7 +655,8 @@ function triggerMotifStep(step) {
             ]?.textContent;
         midiManager.send(
             midiOutputName,
-            [status, note, state.getMotif(state.playingMotifId).velocities?.[voiceId]?.[localStep] ?? 100]
+            [status, note, playingMotif.velocities?.[voiceId]?.[localStep] ?? 100],
+            undefined, { preview: previewMotifId !== null }
         );
 
         setTimeout(() => {

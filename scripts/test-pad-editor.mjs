@@ -124,7 +124,8 @@ test("integrated UI: 16 pads, values, immediate names/star, invalid input, SAVE 
     let disk = text, saves = 0, confirmQuit = false, holdSelect, closed = false;
     const result = () => ({ token: "active", file: "library/preset.json", text: disk, name: parseConfiguration(disk).name });
     globalThis.document = { getElementById: get, createElement: element, addEventListener() {}, activeElement: null };
-    globalThis.localStorage = { getItem: () => null };
+    const preferences = new Map();
+    globalThis.localStorage = { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) };
     globalThis.window = { close: () => { closed = true; }, addEventListener: (name, fn) => { lifecycle[name] = fn; }, padConfigurationFiles: {
         confirmDiscard: async () => ({ confirmed: confirmQuit }),
         restore: async () => result(), list: async () => ({ entries: [result()], directory: "library" }), activated: async () => ({}),
@@ -137,8 +138,12 @@ test("integrated UI: 16 pads, values, immediate names/star, invalid input, SAVE 
         let source = await fs.readFile(new URL("../src/SettingsUI.js", import.meta.url), "utf8");
         source = source.replace('"./PadLibraryUI.js"', JSON.stringify(moduleURL(librarySource))).replace('"./PadVoiceEditor.mjs"', JSON.stringify(new URL("../src/PadVoiceEditor.mjs", import.meta.url).href));
         const { initializeSettingsUI } = await import(moduleURL(source));
-        const state = stateFor(); const ui = initializeSettingsUI({ state, clock: { source: "INTERNAL" }, actions: {} });
+        const state = stateFor(); const ui = initializeSettingsUI({ state, clock: { source: "INTERNAL" },
+            actions: { at: { setColorEnabled: enabled => { state.colorEnabled = enabled; } } } });
         await ui.ready;
+        assert.equal(get("color-enabled").checked, false);
+        get("color-enabled").checked = true; get("color-enabled").listeners.change();
+        assert.equal(state.colorEnabled, true); assert.equal(preferences.get("colorEnabled"), "true");
         const choose = id => get("voice-slots").children[id].listeners.click();
         const edit = (field, value) => { const input = get(`voice-${field}`); input.value = String(value); input.listeners[field === "name" ? "input" : "change"](); };
         for (let id = 0; id < 16; id++) {
@@ -164,8 +169,11 @@ test("integrated UI: 16 pads, values, immediate names/star, invalid input, SAVE 
         assert.equal(get("voice-midi-fields").hidden, false);
         assert.equal(get("voice-channel").value, "10"); assert.equal(get("voice-note").value, "36");
         edit("channel", "16"); edit("note", "45");
+        edit("colorNote", "0"); assert.equal(state.padConfiguration.voices[3].colorNote, 0);
+        edit("colorNote", ""); assert.equal(state.padConfiguration.voices[3].colorNote, undefined);
+        edit("colorNote", "127"); assert.equal(state.padConfiguration.voices[3].colorNote, 127);
         assert.equal(state.padConfiguration.voices[3].note, 45);
-        for (const [field, value] of [["channel", "17"], ["note", "128"], ["note", ""], ["note", "1.5"]]) {
+        for (const [field, value] of [["channel", "17"], ["note", "128"], ["note", ""], ["note", "1.5"], ["colorNote", "128"], ["colorNote", "-1"], ["colorNote", "1.5"]]) {
             const previous = state.padConfiguration;
             edit(field, value);
             assert.equal(state.padConfiguration, previous);
@@ -178,8 +186,11 @@ test("integrated UI: 16 pads, values, immediate names/star, invalid input, SAVE 
         await get("pads-save").listeners.click();
         assert.equal(saves, 1); assert.equal(get("pads-dirty").textContent, "");
         assert.equal(parseConfiguration(disk).voices[3].note, 45);
+        assert.equal(parseConfiguration(disk).voices[3].colorNote, 127);
         state.transportState = "PLAY"; choose(3);
         assert.equal(get("voice-note").disabled, true);
+        assert.equal(get("voice-colorNote").disabled, true);
+        edit("colorNote", "60"); assert.equal(state.padConfiguration.voices[3].colorNote, 127);
         edit("note", "42"); assert.equal(state.padConfiguration.voices[3].note, 45);
         assert.match(get("voice-error").textContent, /PLAY/);
         state.transportState = "PAUSE"; choose(3);
@@ -206,4 +217,25 @@ test("integrated UI: 16 pads, values, immediate names/star, invalid input, SAVE 
         lifecycle.pagehide?.();
         for (const [key, value] of Object.entries(savedGlobals)) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
     }
+});
+
+test("COLOR note configuration: optional independent note, strict validation and legacy roundtrip", () => {
+    const state = stateFor();
+    const original = state.padConfiguration.voices[12].note;
+    for (const note of [0, 17, 127]) {
+        editPadVoice(state, 12, "colorNote", note);
+        assert.equal(state.padConfiguration.voices[12].note, original);
+        assert.equal(parseConfiguration(serializeConfiguration(state.padConfiguration)).voices[12].colorNote, note);
+    }
+    for (const value of [-1, 128, 2.5, NaN, true, "60"]) {
+        const before = state.padConfiguration;
+        assert.throws(() => editPadVoice(state, 12, "colorNote", value), /colorNote/);
+        assert.equal(state.padConfiguration, before);
+    }
+    editPadVoice(state, 12, "colorNote", null);
+    assert.equal(state.padConfiguration.voices[12].colorNote, undefined);
+    assert.deepEqual(state.padConfiguration, parseConfiguration(text));
+    const invalid = JSON.parse(serializeConfiguration(state.padConfiguration));
+    invalid.voices["VOICE 13"].colorNote = null;
+    assert.throws(() => parseConfiguration(JSON.stringify(invalid)), /colorNote/);
 });

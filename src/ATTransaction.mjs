@@ -1,4 +1,10 @@
 export const createVelocities = () => Array.from({ length: 16 }, () => Array(32).fill(100));
+export const createColors = () => Array.from({ length: 16 }, () => Array(32).fill(false));
+export const hasTargetEvents = (motif, target) => Boolean(motif && target && motif.events.some((row, voice) =>
+    (!target.instruments.size || target.instruments.has(voice)) &&
+    row.some((event, step) => event && (!target.steps.size || target.steps.has(step)))));
+export const validColors = value => Array.isArray(value) && value.length === 16 &&
+    value.every(row => Array.isArray(row) && row.length === 32 && row.every(n => typeof n === "boolean"));
 // Definitions own their value scale and musical capture/apply/restore operations.
 // Empty slots deliberately have no behavior.
 export const AT_SLOTS = Object.freeze([
@@ -22,7 +28,27 @@ export const AT_SLOTS = Object.freeze([
             return changed;
         }
     }),
-    ...Array(15).fill(null)
+    Object.freeze({ id: "COLOR", values: Object.freeze([true, false]),
+        capture: motif => motif.colors?.map(row => row.slice()),
+        restore(motif, snapshot) {
+            if (snapshot === undefined) delete motif.colors;
+            else motif.colors = snapshot.map(row => row.slice());
+        },
+        apply(motif, { instruments, steps }, value) {
+            let changed = false;
+            for (let voice = 0; voice < 16; voice++) {
+                if (instruments.size && !instruments.has(voice)) continue;
+                for (let step = 0; step < 32; step++) {
+                    if (!motif.events[voice][step] || steps.size && !steps.has(step)) continue;
+                    motif.colors ??= createColors();
+                    motif.colors[voice][step] = value;
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+    }),
+    ...Array(14).fill(null)
 ]);
 export const validVelocities = value => Array.isArray(value) && value.length === 16 &&
     value.every(row => Array.isArray(row) && row.length === 32 &&
@@ -36,16 +62,25 @@ export class ATTransaction {
         state.atTransaction = null;
     }
     definition(slot) { return AT_SLOTS[slot]; }
+    isEnabled(slot) { return Boolean(this.definition(slot)) && (slot !== 1 || this.state.colorEnabled === true); }
+    setColorEnabled(enabled) {
+        // Disable entry only; an existing transaction retains CANCEL/COMMIT.
+        this.state.colorEnabled = Boolean(enabled);
+        this.changed("availability");
+    }
     getEditingMotifId() {
         return this.state.atTransaction?.editingMotifId ?? this.context().editingMotifId;
     }
+    hasTargetEvents() {
+        return hasTargetEvents(this.state.getMotif(this.getEditingMotifId()), this.state.atTransaction);
+    }
     begin(slot = 0) {
         const definition = AT_SLOTS[slot];
-        if (!definition || this.state.atTransaction || this.state.currentView !== "PLAY") return false;
+        if (!this.isEnabled(slot) || this.state.atTransaction || this.state.currentView !== "PLAY") return false;
         this.state.atTransaction = {
             slot, instruments: new Set(), steps: new Set(), valueIndex: null,
             // CHAIN playback and FOCUS navigation remain independent of A/T's view.
-            editingMotifId: this.state.chainEnabled ? this.context().editingMotifId : null,
+            editingMotifId: slot === 1 || this.state.chainEnabled ? this.context().editingMotifId : null,
             // Capture before any edit for CANCEL.
             snapshots: this.state.motifs.map(m => definition.capture(m)),
             touched: new Set()
@@ -68,9 +103,21 @@ export class ATTransaction {
         const tx = this.state.atTransaction;
         if (!tx || !Number.isInteger(index) || index < 0 || index > 7) return false;
         const definition = AT_SLOTS[tx.slot];
+        if (definition.id === "COLOR") {
+            if (index !== 0) return false;
+            // Reset by target changes; mixed states always start with collective ON.
+            index = tx.valueIndex === 0 ? 1 : 0;
+        }
         const id = this.getEditingMotifId();
         const motif = this.state.getMotif(id);
-        if (definition.apply(motif, tx, definition.values[index])) tx.touched.add(id);
+        // A selectable empty Step is not an attribute target. Do not advertise
+        // a successful value, advance COLOR's toggle, or dirty an empty target.
+        if (!definition.apply(motif, tx, definition.values[index])) {
+            tx.valueIndex = null;
+            this.changed("value");
+            return false;
+        }
+        tx.touched.add(id);
         tx.valueIndex = index;
         this.changed("value");
         return true;

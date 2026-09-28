@@ -9,6 +9,13 @@ export function initializeSettingsUI({ state, clock, actions }) {
     const helpPanel = get("help-panel");
     const helpStartup = get("help-startup");
     const tempo = get("settings-tempo");
+    const colorEnabled = get("color-enabled");
+    state.colorEnabled = localStorage.getItem("colorEnabled") === "true";
+    colorEnabled.checked = state.colorEnabled;
+    colorEnabled.addEventListener("change", () => {
+        actions.at.setColorEnabled(colorEnabled.checked);
+        localStorage.setItem("colorEnabled", String(colorEnabled.checked));
+    });
     const output = get("midi-output");
     let page = "SETTINGS";
     let manualNavigation = false;
@@ -99,7 +106,7 @@ export function initializeSettingsUI({ state, clock, actions }) {
         const voice = state.padConfiguration.voices[selectedVoice];
         setText("voice-editor-title", `VOICE ${String(selectedVoice + 1).padStart(2, "0")}`);
         const locked = libraryUI.busy || !libraryUI.hasActivePreset || !["STOP", "PAUSE"].includes(state.transportState);
-        for (const field of ["name", "type", "channel", "note"]) {
+        for (const field of ["name", "type", "channel", "note", "colorNote"]) {
             const input = get(`voice-${field}`);
             input.disabled = locked;
             if (force || locked || document.activeElement !== input) input.value = String(voice[field] ?? "");
@@ -119,7 +126,8 @@ export function initializeSettingsUI({ state, clock, actions }) {
         let rejected = false;
         try {
             if (libraryUI.busy || !libraryUI.hasActivePreset) throw new Error("Édition indisponible pendant une opération de bibliothèque ou sans preset actif.");
-            const value = ["channel", "note"].includes(field) ? input.valueAsNumber : input.value;
+            const value = field === "colorNote" && input.value === "" ? null
+                : ["channel", "note", "colorNote"].includes(field) ? input.valueAsNumber : input.value;
             editPadVoice(state, selectedVoice, field, value);
             setText("voice-error", "");
         } catch (error) { rejected = true; setText("voice-error", error.message); }
@@ -128,7 +136,7 @@ export function initializeSettingsUI({ state, clock, actions }) {
     }
     get("voice-name").addEventListener("input", () => applyVoiceEdit("name"));
     get("voice-name").addEventListener("blur", () => renderVoice(true));
-    for (const field of ["type", "channel", "note"]) {
+    for (const field of ["type", "channel", "note", "colorNote"]) {
         get(`voice-${field}`).addEventListener("change", () => applyVoiceEdit(field));
     }
 

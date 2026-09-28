@@ -26,6 +26,7 @@ let pendingWorkerDestinationName = null;
 let workerDestinationChangePending = false;
 const pendingNotesMessages = [];
 const MAX_PENDING_NOTES_MESSAGES = 256;
+let previewEpoch = 0;
 
 function handleNativeMidiMessage(message) {
     process.parentPort.postMessage(message);
@@ -74,11 +75,16 @@ function syncClockOutputPermission() {
     });
 }
 
-function routeNotesMessage(name, message) {
+function routeNotesMessage(name, message, preview = {}) {
+    if (preview.previewEpoch !== undefined &&
+        (preview.previewEpoch !== previewEpoch || Date.now() >= preview.previewExpiresAt)) return true;
     if (name === workerDestinationName) {
         clockWorker.postMessage({
             type: "SEND_MIDI",
-            message
+            message,
+            ...(preview.previewEpoch !== undefined ? {
+                previewEpoch: preview.previewEpoch, previewExpiresAt: preview.previewExpiresAt
+            } : {})
         });
         return true;
     }
@@ -97,7 +103,7 @@ function flushPendingNotesMessages() {
     for (const entry of pending) {
         if (
             entry.name === notesDestinationName &&
-            !routeNotesMessage(entry.name, entry.message)
+            !routeNotesMessage(entry.name, entry.message, entry)
         ) {
             pendingNotesMessages.push(entry);
         }
@@ -257,11 +263,19 @@ process.parentPort.on("message", event => {
                     clockOutputName: clockDestinationName,
                     notesOutputName: notesDestinationName
                 };
+            } else if (command.command?.type === "INVALIDATE_PREVIEWS") {
+                previewEpoch = command.command.epoch;
+                for (let i = pendingNotesMessages.length - 1; i >= 0; i--) {
+                    if (pendingNotesMessages[i].previewEpoch !== undefined) pendingNotesMessages.splice(i, 1);
+                }
+                clockWorker.postMessage(command.command);
+                result = null;
             } else if (command.command?.type === "SEND_NOTES") {
                 if (
                     !routeNotesMessage(
                         command.command.name,
-                        command.command.message
+                        command.command.message,
+                        command.command
                     )
                 ) {
                     if (
@@ -273,7 +287,11 @@ process.parentPort.on("message", event => {
 
                     pendingNotesMessages.push({
                         name: command.command.name,
-                        message: command.command.message
+                        message: command.command.message,
+                        ...(command.command.previewEpoch !== undefined ? {
+                            previewEpoch: command.command.previewEpoch,
+                            previewExpiresAt: command.command.previewExpiresAt
+                        } : {})
                     });
                 }
                 result = null;
