@@ -89,11 +89,11 @@ test("A/T LED bursts are bounded, coalesced and superseded by current musical fe
     for (let i = 0; i < 32; i++) tap(c.mapping.AT_VALUE[i % 8]);
     assert.equal(c.atBlinkTimer, blink);
     assert.equal(messages.length, 0);
-    assert.equal(c.atLEDQueue.size, 1);
+    assert.equal(c.atLEDQueue.size, 2);
     assert.equal(velocity(state, 0, 0), 16);
     drainAT(t, c);
-    assert.equal(messages.length, 1);
-    assert.deepEqual(messages[0], [0x90, c.mapping.AT_VALUE[7], (c.colors.RED & 0x33) | 4]);
+    assert.equal(messages.length, 2);
+    assert.deepEqual(messages.find(message => message[1] === c.mapping.AT_VALUE[7]), [0x90, c.mapping.AT_VALUE[7], (c.colors.RED & 0x33) | 4]);
     assert.deepEqual(musicalContext(state, clock), before);
 
     const note = c.mapping.MOTIF[0];
@@ -208,11 +208,11 @@ for (const commit of [false, true]) test(`${commit ? "COMMIT" : "CANCEL"} covers
     assert.deepEqual(state.motifs, saved);
 });
 
-test("blink, value LEDs and pending COPY/DELETE feedback survive exit, without held-release leakage", t => {
+test("blink, value LEDs and pending COPY feedback survive exit, without held-release leakage", t => {
     const { state, c, leds, tap, press, release, begin } = setup(t);
     state.motif[12][0] = true;
     const color = n => leds.get(`144:${n}`);
-    for (const command of ["COPY", "DELETE"]) {
+    for (const command of ["COPY"]) {
         tap(command === "COPY" ? 104 : 88);
         const stage = c.copyStage, armed = c.deleteArmed;
         begin(); drainAT(t, c); assert.equal(color(68), (c.colors.RED & 0x33) | 4);
@@ -550,7 +550,8 @@ test(`CHAIN A/T EDIT VIEW stays on 05 while PLAYING advances 03/08 (FOCUS ${focu
         assert.equal(state.chainFocus, focus);
         assert.equal(state.atTransaction.editingMotifId, 4);
         assert.deepEqual(colors(), timeline);
-        assert.deepEqual(instruments(), Array.from({ length: 16 }, (_, i) => i === 12 ? c.colors.GREEN : c.colors.DIM_GREEN));
+        assert.deepEqual(instruments(), Array.from({ length: 16 }, (_, i) =>
+            i === 12 ? c.colors.GREEN : c.colors.DIM_GREEN));
         c.drawPlayhead();
         actions.at.apply(value);
         assert.equal(velocity(state, 12, 0, 4), value === 0 ? 127 : 16);
@@ -1194,7 +1195,7 @@ test("empty COLOR click does not advance collective toggle; selected empty Steps
     assert.equal(c.getMotifStepColor(1), c.colors.DIM_GREEN);
     state.motif[12][1] = true;
     tap(8); assert.equal(colorAt(state, 12, 1), true);
-    assert.equal(c.getMotifStepColor(1), c.colors.YELLOW);
+    assert.equal(c.getMotifStepColor(1), c.colors.DIM_RED);
 });
 
 for (const slot of [null, 0, 1]) test(`STOP preview and cursor render actual editing events and attributes (slot ${slot})`, async t => {
@@ -1220,7 +1221,7 @@ for (const slot of [null, 0, 1]) test(`STOP preview and cursor render actual edi
     assert.deepEqual(messages, [[0x99, 60, 127]]);
     assert.equal(state.playingMotifId, 0); assert.equal(state.playheadPosition, 1);
     assert.equal(c.lastPlayheadStep, 1);
-    assert.equal(leds.get('144:' + c.mapping.MOTIF[1]) & 0x33, c.colors.GREEN & 0x33);
+    assert.equal(leds.get('144:' + c.mapping.MOTIF[1]) & 0x33, (slot === null ? c.colors.GREEN : c.colors.RED) & 0x33);
     assert.equal(c.getInstrumentColor(12), c.colors.GREEN);
     assert.equal(c.getInstrumentColor(13), c.colors.DIM_GREEN);
     if (slot !== null) assert.equal(leds.get('144:8') & 0x33, c.colors.RED & 0x33);
@@ -1371,4 +1372,97 @@ test("complete INTERNAL worker emits arrow previews and gates during STOP before
     assert.equal(sent.filter(entry=>entry.message[0]===0xFA).length,1);
     assert.ok(posted.filter(entry=>entry.type==="STEP").every(entry=>entry.transportRevision===1));
     assert.equal(posted.some(entry=>entry.type==="ERROR"),false);
+});
+
+for (const slot of [0, 1]) for (const destination of ["STEP", "INSTRUMENT", "MOTIF"]) {
+    test(`A/T destination ${destination}, family ${slot}: LEDs, save and cancel`, t => {
+        const { state, actions, c, leds } = setup(t);
+        state.currentView = "PLAY"; state.colorEnabled = true;
+        state.motif[0][0] = state.motif[0][3] = true;
+        actions.at.begin(slot);
+        if (destination !== "MOTIF") actions.at.select("instruments", 0);
+        if (destination === "STEP") {
+            actions.at.select("steps", 0); actions.at.select("steps", 3, true);
+        }
+        actions.at.apply(0); drainAT(t, c);
+        const led = (status, note) => leds.get(status + ':' + note) & 0x33;
+        assert.equal(c.getMotifStepColor(3), destination === "STEP" ? c.colors.DIM_RED : c.colors.DIM_AMBER);
+        assert.equal(led(144, c.mapping.MOTIF[0]), (destination === "STEP" ? c.colors.RED : c.colors.GREEN) & 0x33);
+        assert.equal(c.getInstrumentColor(0), destination === "INSTRUMENT" ? c.colors.RED
+            : destination === "STEP" ? c.colors.YELLOW : c.colors.GREEN);
+        assert.equal(c.hasMotifAT(), destination === "MOTIF");
+        if (destination === "MOTIF") assert.equal(led(176, c.mapping.TOP_CONTROLS.PLAY_STOP), c.colors.DIM_RED & 0x33);
+        state.playheadPosition = 2; c.drawPlayhead(); drainAT(t, c);
+        if (destination === "INSTRUMENT") assert.equal(c.getInstrumentColor(0), c.colors.DIM_RED);
+        if (destination === "MOTIF") {
+            state.transportState = "PLAY"; c.pulseTransport();
+            assert.equal(led(176, c.mapping.TOP_CONTROLS.PLAY_STOP), c.colors.RED & 0x33);
+            t.mock.timers.tick(120); drainAT(t, c);
+            assert.equal(led(176, c.mapping.TOP_CONTROLS.PLAY_STOP), c.colors.DIM_RED & 0x33);
+            state.transportState = "STOP";
+        }
+        assert.equal(snapshotMotifBank(state).motifs[0].atDestinations, undefined);
+        actions.at.finish(true);
+        const bank = snapshotMotifBank(state);
+        const key = actions.at.definition(slot).id;
+        assert.equal(bank.motifs[0].atDestinations[key][0][3], destination);
+        restoreMotifBank(state, bank);
+        actions.at.begin(slot);
+        assert.equal(c.hasMotifAT(), destination === "MOTIF");
+        actions.at.select("steps", 3); actions.at.apply(0);
+        actions.at.finish(false);
+        assert.deepEqual(snapshotMotifBank(state), bank);
+        actions.at.begin(1 - slot);
+        assert.equal(c.hasMotifAT(), false);
+        assert.notEqual(c.getMotifStepColor(3), c.colors.DIM_RED);
+        assert.notEqual(c.getInstrumentColor(0), c.colors.DIM_RED);
+    });
+}
+
+test("BOOK Delete then A/T resets all families only in editing motif, without opening a transaction", t => {
+    const { state, actions, c, tap } = setup(t);
+    state.currentView = "PLAY"; state.colorEnabled = true;
+    state.chainEnabled = true; state.chainFocus = true; state.viewMotifId = 3;
+    state.getMotif(3).events[0][0] = true; state.getMotif(0).events[0][0] = true;
+    state.getMotif(0).velocities = createVelocities(); state.getMotif(0).velocities[0][0] = 16;
+    for (const slot of [0, 1]) { actions.at.begin(slot); actions.at.apply(0); actions.at.finish(true); }
+    const beforeEvents = structuredClone(state.getMotif(3).events);
+    tap(c.mapping.VALUE_CONTROLS.DELETE); assert.equal(c.deleteArmed, true);
+    tap(c.mapping.BOOKS[1]); drainAT(t, c);
+    assert.equal(state.atTransaction, null); assert.equal(c.deleteArmed, false);
+    assert.equal(state.getMotif(3).velocities, undefined);
+    assert.equal(state.getMotif(3).colors, undefined);
+    assert.equal(state.getMotif(3).atDestinations, undefined);
+    assert.deepEqual(state.getMotif(3).events, beforeEvents);
+    assert.equal(state.getMotif(0).velocities[0][0], 16);
+    assert.equal(snapshotMotifBank(state).motifs[3].atDestinations, undefined);
+});
+
+test("A/T destinations survive independent copies and clear with events; malformed data is rejected", t => {
+    const { state, actions } = setup(t);
+    state.currentView = "PLAY"; state.motif[0][3] = true;
+    actions.at.begin(0); actions.at.select("instruments", 0); actions.at.apply(0); actions.at.finish(true);
+    const source = actions.captureMotifCopy(0);
+    assert.equal(actions.applyMotifCopy(source, 1), true);
+    source.atDestinations.VELOCITY[0][3] = "STEP";
+    assert.equal(state.getMotif(1).atDestinations.VELOCITY[0][3], "INSTRUMENT");
+    const voice = actions.captureMusicalCopy("VOICE", 0);
+    assert.equal(actions.applyVoiceCopy(voice, 1), true);
+    voice.atDestinations.VELOCITY[3] = "STEP";
+    assert.equal(state.getMotif(0).atDestinations.VELOCITY[1][3], "INSTRUMENT");
+    actions.clearMotifEvents(1);
+    assert.equal(state.getMotif(0).atDestinations.VELOCITY[1][3], null);
+    assert.equal(state.getMotif(0).atDestinations.VELOCITY[0][3], "INSTRUMENT");
+    state.selectedInstrument = 0; state.getMotif(0).voiceLengths[0] = 4;
+    assert.equal(actions.doubleSelected(), true);
+    assert.equal(state.getMotif(0).atDestinations.VELOCITY[0][7], "INSTRUMENT");
+    const bank = snapshotMotifBank(state);
+    bank.motifs[0].atDestinations.VELOCITY[0][3] = "INVALID";
+    assert.throws(() => validateMotifBank(bank));
+    source.atDestinations.VELOCITY[0][3] = "INVALID";
+    assert.equal(actions.applyMotifCopy(source, 2), false);
+    voice.atDestinations.VELOCITY[3] = "INVALID";
+    assert.equal(actions.applyVoiceCopy(voice, 2), false);
+    actions.clearMotifEvents();
+    assert.equal(state.getMotif(0).atDestinations, undefined);
 });

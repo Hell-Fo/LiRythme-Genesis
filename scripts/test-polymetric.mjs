@@ -573,7 +573,8 @@ test("DELETE arms, blinks RED, cancels and ignores invalid targets", t => {
     assert.equal(controller.deleteBlinkTimer, null);
     state.currentTimeline = "MODULATION";
     press(0x90, del);
-    assert.equal(controller.deleteArmed, false);
+    assert.equal(controller.deleteArmed, true); // PLAY's A/T BOOK also accepts Delete.
+    controller.resetInputState();
 });
 
 test("DELETE Voice/PLAY clears events only in Leader/Follower, consumes held target and release", t => {

@@ -15,7 +15,7 @@ Elias (OpenAI)
 
 ===============================================================================
 */
-import { ATTransaction, createVelocities, validVelocities, createColors, validColors } from "./ATTransaction.mjs";
+import { ATTransaction, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow } from "./ATTransaction.mjs";
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
     constructor(state, clock) {
@@ -139,6 +139,7 @@ export class LiRythmeActions {
         return motif ? { kind: "BANK_MOTIF", sourceId: id,
             ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
             ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
+            ...(motif.atDestinations ? { atDestinations: structuredClone(motif.atDestinations) } : {}),
             events: motif.events.map(row => row.slice()),
             voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength } : null;
     }
@@ -169,10 +170,12 @@ export class LiRythmeActions {
             !Array.isArray(copy.voiceLengths) || copy.voiceLengths.length !== 16 ||
             !copy.voiceLengths.every(validLength) || !validLength(copy.motifLength) ||
             (copy.velocities !== undefined && !validVelocities(copy.velocities)) ||
-            (copy.colors !== undefined && !validColors(copy.colors))) return false;
+            (copy.colors !== undefined && !validColors(copy.colors)) ||
+            (copy.atDestinations !== undefined && !validATDestinations(copy.atDestinations))) return false;
         this.replaceMotif(id, { events: copy.events.map(row => row.slice()),
             ...(copy.velocities ? { velocities: copy.velocities.map(row => row.slice()) } : {}),
             ...(copy.colors ? { colors: copy.colors.map(row => row.slice()) } : {}),
+            ...(copy.atDestinations ? { atDestinations: structuredClone(copy.atDestinations) } : {}),
             voiceLengths: copy.voiceLengths.slice(), motifLength: copy.motifLength });
         return true;
     }
@@ -197,6 +200,7 @@ export class LiRythmeActions {
         for (const row of motif.events) row.fill(false);
         delete motif.velocities;
         delete motif.colors;
+        delete motif.atDestinations;
         for (let index = this.state.chain.length - 1; index >= 0; index--) {
             if (this.state.chain[index] === id) this.removeChainOccurrence(index);
         }
@@ -506,6 +510,7 @@ export class LiRythmeActions {
         if (velocities) velocities[voiceId][stepIndex] = 100;
         const colors = this.state.getMotif(this.state.currentMotifId).colors;
         if (colors) colors[voiceId][stepIndex] = false;
+        for (const rows of Object.values(this.state.getMotif(this.state.currentMotifId).atDestinations ?? {})) rows[voiceId][stepIndex] = null;
         this.state.onBankChange?.();
 
         console.log(
@@ -568,12 +573,15 @@ export class LiRythmeActions {
             return { kind, events: motif.events.map(row => row.slice()),
                 ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
                 ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
+                ...(motif.atDestinations ? { atDestinations: structuredClone(motif.atDestinations) } : {}),
                 voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength };
         }
         if (kind !== "VOICE" || !Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return null;
         return { kind, events: motif.events[voiceId].slice(), length: motif.voiceLengths[voiceId],
             ...(motif.velocities ? { velocities: motif.velocities[voiceId].slice() } : {}),
-            ...(motif.colors ? { colors: motif.colors[voiceId].slice() } : {}) };
+            ...(motif.colors ? { colors: motif.colors[voiceId].slice() } : {}),
+            ...(motif.atDestinations ? { atDestinations: Object.fromEntries(Object.entries(motif.atDestinations)
+                .map(([key, rows]) => [key, rows[voiceId].slice()])) } : {}) };
     }
 
     applyVoiceCopy(copy, target) {
@@ -585,7 +593,10 @@ export class LiRythmeActions {
             (copy.velocities !== undefined && (!Array.isArray(copy.velocities) || copy.velocities.length !== 32 ||
                 !copy.velocities.every(n => Number.isInteger(n) && n >= 1 && n <= 127))) ||
             (copy.colors !== undefined && (!Array.isArray(copy.colors) || copy.colors.length !== 32 ||
-                !copy.colors.every(n => typeof n === "boolean")))) return false;
+                !copy.colors.every(n => typeof n === "boolean"))) ||
+            (copy.atDestinations !== undefined && (!copy.atDestinations || typeof copy.atDestinations !== "object" ||
+                Array.isArray(copy.atDestinations) || !Object.entries(copy.atDestinations).every(([key, row]) =>
+                    ["VELOCITY", "COLOR"].includes(key) && validATDestinationRow(row))))) return false;
         // COPY preserves live phase for either clock source, using the existing transition.
         this.state.setTargetLength(copy.length, { target, defer: this.state.transportState === "PLAY" });
         this.state.motif[target] = copy.events.slice();
@@ -597,6 +608,11 @@ export class LiRythmeActions {
         if (copy.colors || motif.colors) {
             motif.colors ??= createColors();
             motif.colors[target] = copy.colors?.slice() ?? Array(32).fill(false);
+        }
+        for (const key of new Set([...Object.keys(motif.atDestinations ?? {}), ...Object.keys(copy.atDestinations ?? {})])) {
+            motif.atDestinations ??= {};
+            motif.atDestinations[key] ??= Array.from({ length: 16 }, () => Array(32).fill(null));
+            motif.atDestinations[key][target] = copy.atDestinations?.[key]?.slice() ?? Array(32).fill(null);
         }
         this.state.onBankChange?.();
         // Scheduled Note Offs remain owned by the existing dispatch callbacks.
@@ -635,6 +651,7 @@ export class LiRythmeActions {
         for (const row of motif.events) row.fill(false);
         delete motif.velocities;
         delete motif.colors;
+        delete motif.atDestinations;
         this.state.onBankChange?.();
         return true;
     }
@@ -648,6 +665,8 @@ export class LiRythmeActions {
         const motif = this.state.getMotif(this.state.currentMotifId);
         if (voiceId === null) delete motif.velocities;
         else motif.velocities?.[voiceId].fill(100);
+        if (voiceId === null) delete motif.atDestinations;
+        else for (const rows of Object.values(motif.atDestinations ?? {})) rows[voiceId].fill(null);
         if (voiceId === null) delete motif.colors;
         else motif.colors?.[voiceId].fill(false);
         this.state.onBankChange?.();
@@ -677,6 +696,9 @@ export class LiRythmeActions {
                 for (let step = 0; step < length; step++) {
                     next[key][id][step + length] = structuredClone(motif[key][id][step]);
                 }
+            }
+            for (const rows of Object.values(next.atDestinations ?? {})) {
+                for (let step = 0; step < length; step++) rows[id][step + length] = rows[id][step];
             }
             next.voiceLengths[id] = length * 2;
         }

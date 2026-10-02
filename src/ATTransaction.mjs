@@ -1,5 +1,10 @@
 export const createVelocities = () => Array.from({ length: 16 }, () => Array(32).fill(100));
 export const createColors = () => Array.from({ length: 16 }, () => Array(32).fill(false));
+export const validATDestinationRow = row => Array.isArray(row) && row.length === 32 &&
+    row.every(v => v === null || ["STEP", "INSTRUMENT", "MOTIF"].includes(v));
+export const validATDestinations = value => value && typeof value === "object" && !Array.isArray(value) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR"].includes(key) &&
+        Array.isArray(rows) && rows.length === 16 && rows.every(validATDestinationRow));
 export const hasTargetEvents = (motif, target) => Boolean(motif && target && motif.events.some((row, voice) =>
     (!target.instruments.size || target.instruments.has(voice)) &&
     row.some((event, step) => event && (!target.steps.size || target.steps.has(step)))));
@@ -9,6 +14,7 @@ export const validColors = value => Array.isArray(value) && value.length === 16 
 // Empty slots deliberately have no behavior.
 export const AT_SLOTS = Object.freeze([
     Object.freeze({ id: "VELOCITY", values: Object.freeze([127, 111, 96, 80, 64, 48, 32, 16]),
+        isAssigned: (motif, voice, step) => (motif.velocities?.[voice]?.[step] ?? 100) !== 100,
         capture: motif => motif.velocities?.map(row => row.slice()),
         restore(motif, snapshot) {
             if (snapshot === undefined) delete motif.velocities;
@@ -29,6 +35,7 @@ export const AT_SLOTS = Object.freeze([
         }
     }),
     Object.freeze({ id: "COLOR", values: Object.freeze([true, false]),
+        isAssigned: (motif, voice, step) => motif.colors?.[voice]?.[step] === true,
         capture: motif => motif.colors?.map(row => row.slice()),
         restore(motif, snapshot) {
             if (snapshot === undefined) delete motif.colors;
@@ -83,6 +90,7 @@ export class ATTransaction {
             editingMotifId: slot === 1 || this.state.chainEnabled ? this.context().editingMotifId : null,
             // Capture before any edit for CANCEL.
             snapshots: this.state.motifs.map(m => definition.capture(m)),
+            destinationSnapshots: this.state.motifs.map(m => structuredClone(m.atDestinations)),
             touched: new Set()
         };
         this.changed("begin");
@@ -118,6 +126,15 @@ export class ATTransaction {
             return false;
         }
         tx.touched.add(id);
+        motif.atDestinations ??= {};
+        const destinations = motif.atDestinations[definition.id] ??=
+            Array.from({ length: 16 }, () => Array(32).fill(null));
+        for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
+            if (!motif.events[voice][step] || (tx.instruments.size && !tx.instruments.has(voice)) ||
+                (tx.steps.size && !tx.steps.has(step))) continue;
+            destinations[voice][step] = definition.isAssigned(motif, voice, step)
+                ? tx.steps.size ? "STEP" : tx.instruments.size ? "INSTRUMENT" : "MOTIF" : null;
+        }
         tx.valueIndex = index;
         this.changed("value");
         return true;
@@ -128,10 +145,23 @@ export class ATTransaction {
         const definition = AT_SLOTS[tx.slot];
         if (!commit) for (const id of tx.touched) {
             definition.restore(this.state.motifs[id], tx.snapshots[id]);
+            if (tx.destinationSnapshots[id] === undefined) delete this.state.motifs[id].atDestinations;
+            else this.state.motifs[id].atDestinations = structuredClone(tx.destinationSnapshots[id]);
         }
         this.state.atTransaction = null;
         if (commit && tx.touched.size) this.state.onBankChange?.();
         this.changed("finish");
+        return true;
+    }
+    resetMotif() {
+        if (this.state.atTransaction) return false;
+        const motif = this.state.getMotif(this.getEditingMotifId());
+        if (!motif) return false;
+        delete motif.velocities;
+        delete motif.colors;
+        delete motif.atDestinations;
+        this.state.onBankChange?.();
+        this.changed("reset");
         return true;
     }
 }

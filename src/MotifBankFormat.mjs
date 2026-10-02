@@ -1,4 +1,4 @@
-import { AT_SLOTS, validVelocities, validColors } from "./ATTransaction.mjs";
+import { AT_SLOTS, validVelocities, validColors, validATDestinations } from "./ATTransaction.mjs";
 
 export function validateMotifBank(value) {
     const length = n => n === null || Number.isInteger(n) && n >= 1 && n <= 32;
@@ -10,7 +10,8 @@ export function validateMotifBank(value) {
             Array.isArray(m.voiceLengths) && m.voiceLengths.length === 16 &&
             m.voiceLengths.every(length) && length(m.motifLength) &&
             (m.velocities === undefined || validVelocities(m.velocities)) &&
-            (m.colors === undefined || validColors(m.colors)))) {
+            (m.colors === undefined || validColors(m.colors)) &&
+            (m.atDestinations === undefined || validATDestinations(m.atDestinations)))) {
         throw new Error("Invalid or unsupported Motif Bank (expected version 1, 16 valid motifs)");
     }
     // Whitelist and clone; neither transient state nor shared rows cross this boundary.
@@ -18,6 +19,7 @@ export function validateMotifBank(value) {
         motifs: value.motifs.map(m => ({ events: m.events.map(row => row.slice()),
             ...(m.velocities ? { velocities: m.velocities.map(row => row.slice()) } : {}),
             ...(m.colors ? { colors: m.colors.map(row => row.slice()) } : {}),
+            ...(m.atDestinations ? { atDestinations: structuredClone(m.atDestinations) } : {}),
             voiceLengths: m.voiceLengths.slice(), motifLength: m.motifLength })) };
 }
 export function snapshotMotifBank(state) {
@@ -27,6 +29,8 @@ export function snapshotMotifBank(state) {
     const motifs = tx ? state.motifs.map((motif, id) => {
         const copy = { ...motif };
         AT_SLOTS[tx.slot].restore(copy, tx.snapshots[id]);
+        if (tx.destinationSnapshots[id] === undefined) delete copy.atDestinations;
+        else copy.atDestinations = structuredClone(tx.destinationSnapshots[id]);
         return copy;
     }) : state.motifs;
     return validateMotifBank({ format: "lirythme-motif-bank", version: 1,
