@@ -596,7 +596,7 @@ export class LiRythmeActions {
                 !copy.colors.every(n => typeof n === "boolean"))) ||
             (copy.atDestinations !== undefined && (!copy.atDestinations || typeof copy.atDestinations !== "object" ||
                 Array.isArray(copy.atDestinations) || !Object.entries(copy.atDestinations).every(([key, row]) =>
-                    ["VELOCITY", "COLOR"].includes(key) && validATDestinationRow(row))))) return false;
+                    ["VELOCITY", "COLOR", "ROTATION"].includes(key) && validATDestinationRow(row))))) return false;
         // COPY preserves live phase for either clock source, using the existing transition.
         this.state.setTargetLength(copy.length, { target, defer: this.state.transportState === "PLAY" });
         this.state.motif[target] = copy.events.slice();

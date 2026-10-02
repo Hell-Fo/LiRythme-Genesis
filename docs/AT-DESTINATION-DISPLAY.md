@@ -1,5 +1,13 @@
 # Affichage A/T par destination
 
+**Validation utilisateur — 2026-10-02 :** grammaire visuelle et transitions
+audibles de Rotation validées. Cette procédure constitue la référence normative
+pour les prochains A/T : préserver la musicalité sans interrompre le cycle engagé.
+Toute nouvelle implémentation doit vérifier la sélection par destination,
+l'indication des commandes actives, CANCEL/COMMIT et, lorsqu'elle modifie le temps
+ou le rythme, le passage audible à la frontière du cycle approprié. Les tests
+doivent couvrir ces comportements, notamment les voix de longueurs différentes.
+
 En édition A/T, le rouge indique uniquement la destination de l'A/T sélectionné.
 
 Cette grammaire est commune à tous les attributs et toutes les transformations,
@@ -7,6 +15,15 @@ actuels et futurs : destination, affichage DimRed/RED, sélection, COMMIT/CANCEL
 et remise à zéro par Delete → A/T. Chaque nouvel A/T doit respecter ces règles
 et déclarer sa valeur par défaut ainsi que la manière de reconnaître une valeur
 appliquée; il ne doit pas introduire une grammaire d'affichage différente.
+
+Les transformations temporelles commandées par << / >> signalent ces commandes
+par un clignotement RED/OFF pendant leur édition. La première est
+[ROTATION](AT-ROTATION.md), qui déplace les événements et leurs attributs.
+
+Pendant la lecture, une transformation temporelle devient audible uniquement
+à la fin du cycle engagé : cycle du motif pour une cible motif, cycle individuel
+de chaque voix pour une cible instrument ou steps. L'édition reste immédiatement
+visible; COMMIT ne court-circuite pas cette attente.
 
 | Cible lors de l'application | Affichage |
 | --- | --- |

@@ -3,7 +3,7 @@ export const createColors = () => Array.from({ length: 16 }, () => Array(32).fil
 export const validATDestinationRow = row => Array.isArray(row) && row.length === 32 &&
     row.every(v => v === null || ["STEP", "INSTRUMENT", "MOTIF"].includes(v));
 export const validATDestinations = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "ROTATION"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(validATDestinationRow));
 export const hasTargetEvents = (motif, target) => Boolean(motif && target && motif.events.some((row, voice) =>
     (!target.instruments.size || target.instruments.has(voice)) &&
@@ -55,7 +55,19 @@ export const AT_SLOTS = Object.freeze([
             return changed;
         }
     }),
-    ...Array(14).fill(null)
+    ...Array(6).fill(null),
+    Object.freeze({ id: "ROTATION", values: Object.freeze([]),
+        isAssigned: (motif, voice, step) => Boolean(motif.atDestinations?.ROTATION?.[voice]?.[step]),
+        capture: motif => Object.fromEntries(["events", "velocities", "colors", "atDestinations"]
+            .map(key => [key, structuredClone(motif[key])])),
+        restore(motif, snapshot) {
+            for (const [key, value] of Object.entries(snapshot)) {
+                if (value === undefined) delete motif[key];
+                else motif[key] = structuredClone(value);
+            }
+        }
+    }),
+    ...Array(7).fill(null)
 ]);
 export const validVelocities = value => Array.isArray(value) && value.length === 16 &&
     value.every(row => Array.isArray(row) && row.length === 32 &&
@@ -87,7 +99,7 @@ export class ATTransaction {
         this.state.atTransaction = {
             slot, instruments: new Set(), steps: new Set(), valueIndex: null,
             // CHAIN playback and FOCUS navigation remain independent of A/T's view.
-            editingMotifId: slot === 1 || this.state.chainEnabled ? this.context().editingMotifId : null,
+            editingMotifId: slot === 1 || slot === 8 || this.state.chainEnabled ? this.context().editingMotifId : null,
             // Capture before any edit for CANCEL.
             snapshots: this.state.motifs.map(m => definition.capture(m)),
             destinationSnapshots: this.state.motifs.map(m => structuredClone(m.atDestinations)),
@@ -104,6 +116,7 @@ export class ATTransaction {
         if (set.has(id)) set.delete(id);
         else { if (!additive) set.clear(); set.add(id); }
         tx.valueIndex = null;
+        delete tx.rotationTargets;
         this.changed(category);
         return true;
     }
@@ -111,6 +124,7 @@ export class ATTransaction {
         const tx = this.state.atTransaction;
         if (!tx || !Number.isInteger(index) || index < 0 || index > 7) return false;
         const definition = AT_SLOTS[tx.slot];
+        if (definition.id === "ROTATION") return false; // Controlled exclusively by << / >>.
         if (definition.id === "COLOR") {
             if (index !== 0) return false;
             // Reset by target changes; mixed states always start with collective ON.
@@ -139,11 +153,93 @@ export class ATTransaction {
         this.changed("value");
         return true;
     }
+    rotate(direction) {
+        const tx = this.state.atTransaction;
+        if (tx?.slot !== 8 || ![-1, 1].includes(direction)) return false;
+        const id = this.getEditingMotifId(), motif = this.state.getMotif(id);
+        const moves = [];
+        const destination = tx.steps.size ? "STEP" : tx.instruments.size ? "INSTRUMENT" : "MOTIF";
+        // Capture every source first: adjacent selected events move simultaneously.
+        for (let voice = 0; voice < 16; voice++) for (let step = 0; step < this.state.getVoiceLength(voice, id); step++) {
+            const selectedSteps = tx.rotationTargets?.get(voice) ?? tx.steps;
+            if (!motif.events[voice][step] || (tx.instruments.size && !tx.instruments.has(voice)) ||
+                (tx.rotationTargets && !tx.rotationTargets.has(voice)) ||
+                (tx.steps.size && !selectedSteps.has(step))) continue;
+            const length = this.state.getVoiceLength(voice, id);
+            moves.push({ voice, step, to: (step + direction + length) % length,
+                velocity: motif.velocities?.[voice][step] ?? 100,
+                color: motif.colors?.[voice][step] ?? false,
+                destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
+                    .map(([key, rows]) => [key, rows[voice][step]])) });
+        }
+        if (!moves.length) return false;
+        tx.rotationVoices ??= new Set();
+        for (const { voice } of moves) tx.rotationVoices.add(voice);
+        tx.rotationWholeMotif ||= destination === "MOTIF";
+        if (this.state.transportState === "PLAY" && id === this.state.playingMotifId) {
+            this.state.deferDouble([...new Set(moves.map(move => move.voice))], destination === "MOTIF");
+        }
+        const sources = new Map(moves.map(move => [`${move.voice}:${move.step}`, move]));
+        const displaced = [];
+        for (const { voice, to } of moves) {
+            if (sources.has(`${voice}:${to}`) || !motif.events[voice][to]) continue;
+            const length = this.state.getVoiceLength(voice, id);
+            // At the end of a selected run, return the encountered event to
+            // the run's vacated origin. All selected events still advance once.
+            let origin = (to - direction + length) % length;
+            while (sources.has(`${voice}:${(origin - direction + length) % length}`)) {
+                origin = (origin - direction + length) % length;
+            }
+            displaced.push({ voice, to: origin,
+                velocity: motif.velocities?.[voice][to] ?? 100,
+                color: motif.colors?.[voice][to] ?? false,
+                destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
+                    .map(([key, rows]) => [key, rows[voice][to]])) });
+        }
+        motif.atDestinations ??= {};
+        motif.atDestinations.ROTATION ??= Array.from({ length: 16 }, () => Array(32).fill(null));
+        for (const { voice, step } of moves) {
+            motif.events[voice][step] = false;
+            if (motif.velocities) motif.velocities[voice][step] = 100;
+            if (motif.colors) motif.colors[voice][step] = false;
+            for (const rows of Object.values(motif.atDestinations)) rows[voice][step] = null;
+        }
+        for (const move of moves) {
+            const { voice, to } = move;
+            motif.events[voice][to] = true;
+            if (motif.velocities) motif.velocities[voice][to] = move.velocity;
+            if (motif.colors) motif.colors[voice][to] = move.color;
+            for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = move.destinations[key] ?? null;
+            motif.atDestinations.ROTATION[voice][to] = destination;
+        }
+        for (const { voice, to, velocity, color, destinations } of displaced) {
+            motif.events[voice][to] = true;
+            if (motif.velocities) motif.velocities[voice][to] = velocity;
+            if (motif.colors) motif.colors[voice][to] = color;
+            for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = destinations[key] ?? null;
+        }
+        if (tx.steps.size) {
+            // Different cycles can send the same selected step to different pads.
+            // Track each voice separately so the displayed union cannot select extra notes.
+            tx.rotationTargets = new Map();
+            for (const { voice, to } of moves) {
+                if (!tx.rotationTargets.has(voice)) tx.rotationTargets.set(voice, new Set());
+                tx.rotationTargets.get(voice).add(to);
+            }
+            tx.steps = new Set(moves.map(move => move.to));
+        }
+        tx.touched.add(id);
+        this.changed("value");
+        return true;
+    }
     finish(commit = false) {
         const tx = this.state.atTransaction;
         if (!tx) return false;
         const definition = AT_SLOTS[tx.slot];
         if (!commit) for (const id of tx.touched) {
+            if (tx.slot === 8 && this.state.transportState === "PLAY" && id === this.state.playingMotifId) {
+                this.state.deferDouble([...tx.rotationVoices], Boolean(tx.rotationWholeMotif));
+            }
             definition.restore(this.state.motifs[id], tx.snapshots[id]);
             if (tx.destinationSnapshots[id] === undefined) delete this.state.motifs[id].atDestinations;
             else this.state.motifs[id].atDestinations = structuredClone(tx.destinationSnapshots[id]);

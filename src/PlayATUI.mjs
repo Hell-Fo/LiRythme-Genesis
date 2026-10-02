@@ -11,7 +11,8 @@ export function readATPanel(state) {
     return { name: definition.id, target: instruments
         ? instruments + (steps ? ` · ${steps}` : "") : steps ? `STEPS ${steps}` : "MOTIF",
         motif: (tx.editingMotifId ?? state.currentMotifId) + 1,
-        values: definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.values,
+        values: definition.id === "ROTATION" ? ["<<  −1 STEP", ">>  +1 STEP"]
+            : definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.values,
         selected: definition.id === "COLOR" ? (valueIndex === null ? null : 0) : valueIndex };
 }
 
@@ -35,7 +36,7 @@ export function initializePlayATUI({ state, document = globalThis.document }) {
             const value = status.values[index];
             const row = field(`play-at-value-${index}`);
             row.hidden = value === undefined;
-            row.textContent = value === undefined ? "" : `${String.fromCharCode(65 + index)}   ${value}`;
+            row.textContent = value === undefined ? "" : status.name === "ROTATION" ? value : `${String.fromCharCode(65 + index)}   ${value}`;
             row.classList.toggle("at-selected", status.selected === index);
             row.setAttribute("aria-current", status.selected === index ? "true" : "false");
         }

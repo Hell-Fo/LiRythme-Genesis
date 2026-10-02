@@ -124,7 +124,7 @@ test("A/T navigation is inert; VELOCITY available and COLOR disabled by default 
     }
     actions.toggleView(); actions.toggleView();
     assert.equal(AT_SLOTS.length, 16);
-    for (const note of c.mapping.BOOKS.slice(1)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.equal(state.atTransaction.slot, 0);
     assert.deepEqual([...state.atTransaction.instruments], []);
     assert.deepEqual([...state.atTransaction.steps], []);
@@ -330,10 +330,10 @@ for (const commit of [false, true]) test(`existing PLAY A/T surface: all 16 fami
     const { state, c, leds, tap, press, release } = setup(t);
     const colors = () => c.mapping.BOOKS.map(note => leds.get(`144:${note}`));
     const expected = lit => Array.from({ length: 16 }, (_, i) =>
-        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : i < 8 ? "DIM_RED" : "DIM_AMBER"] & 0x33) | 4);
+        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : i < 8 ? "DIM_RED" : i === 8 ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
     assert.equal(state.currentView, "PLAY");
     c.drawBooks(); assert.deepEqual(colors(), expected(true));
-    for (const note of c.mapping.BOOKS.slice(1)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.ok(state.atTransaction); assert.deepEqual(colors(), expected(true));
     t.mock.timers.tick(160); drainAT(t, c); assert.deepEqual(colors(), expected(false));
     c.drawBooks(); assert.deepEqual(colors(), expected(false));
@@ -346,7 +346,8 @@ for (const commit of [false, true]) test(`existing PLAY A/T surface: all 16 fami
 
 test("A/T implemented Transformations use their YELLOW family without enabling an empty slot", t => {
     const { c, state, actions } = setup(t);
-    assert.equal(c.getATBookColor(8), "DIM_AMBER");
+    assert.equal(c.getATBookColor(8), "YELLOW");
+    assert.equal(c.getATBookColor(9), "DIM_AMBER");
     const definition = actions.at.definition.bind(actions.at);
     actions.at.definition = slot => slot === 8 ? { id: "TEST_ONLY" } : definition(slot);
     assert.equal(c.getATBookColor(8), "YELLOW");
@@ -1465,4 +1466,227 @@ test("A/T destinations survive independent copies and clear with events; malform
     assert.equal(actions.applyVoiceCopy(voice, 2), false);
     actions.clearMotifEvents();
     assert.equal(state.getMotif(0).atDestinations, undefined);
+});
+
+for (const [target, voices, steps] of [
+    ["motif", [], []], ["instrument", [0], []], ["steps", [], [0, 1]], ["intersection", [0], [0, 1]]
+]) test(`ROTATION ${target}: simultaneous moves, swaps, attributes, cancel and autosave`, t => {
+    const { state, actions } = setup(t);
+    const motif = state.getMotif(0);
+    motif.events[0][0] = motif.events[0][1] = motif.events[0][2] = motif.events[1][0] = true;
+    motif.velocities = createVelocities();
+    motif.velocities[0][0] = 16; motif.velocities[0][1] = 64; motif.velocities[0][2] = 127;
+    motif.colors = Array.from({ length: 16 }, () => Array(32).fill(false)); motif.colors[0][0] = true;
+    motif.atDestinations = { COLOR: Array.from({ length: 16 }, () => Array(32).fill(null)) };
+    motif.atDestinations.COLOR[0][0] = "INSTRUMENT";
+    motif.voiceLengths[0] = 4; motif.motifLength = 8;
+    const before = snapshotMotifBank(state);
+    assert.equal(actions.at.begin(8), true);
+    for (const voice of voices) actions.at.select("instruments", voice, true);
+    for (const step of steps) actions.at.select("steps", step, true);
+    assert.equal(actions.at.rotate(1), true);
+    assert.equal(motif.events[0][0], steps.length > 0);
+    if (steps.length) assert.equal(motif.velocities[0][0], 127);
+    assert.equal(motif.events[0][1], true); assert.equal(motif.velocities[0][1], 16);
+    assert.equal(motif.events[0][2], true); assert.equal(motif.velocities[0][2], 64);
+    assert.equal(motif.colors[0][1], true); assert.equal(motif.colors[0][0], false);
+    assert.equal(motif.atDestinations.COLOR[0][1], "INSTRUMENT");
+    assert.equal(motif.events[0][3], steps.length === 0);
+    assert.equal(motif.events[1][0], voices.length > 0);
+    assert.equal(motif.events[1][1], voices.length === 0);
+    assert.equal(motif.atDestinations.ROTATION[0][1], steps.length ? "STEP" : voices.length ? "INSTRUMENT" : "MOTIF");
+    assert.deepEqual([...state.atTransaction.steps], steps.map(step => step + 1));
+    assert.equal(motif.voiceLengths[0], 4); assert.equal(motif.motifLength, 8);
+    assert.deepEqual(snapshotMotifBank(state), before);
+    actions.at.finish(false);
+    assert.deepEqual(snapshotMotifBank(state), before);
+});
+
+test("ROTATION wraps, follows the moving selection, commits and survives save/copy/reset", t => {
+    const { state, actions, c } = setup(t);
+    state.motif[0][31] = true;
+    actions.at.begin(8); actions.at.select("instruments", 0); actions.at.select("steps", 31);
+    actions.at.rotate(1); assert.equal(state.motif[0][0], true);
+    actions.at.rotate(1); assert.equal(state.motif[0][1], true);
+    assert.deepEqual([...state.atTransaction.steps], [1]);
+    assert.equal(c.getMotifStepColor(1), c.colors.DIM_RED);
+    assert.notEqual(c.getInstrumentColor(0), c.colors.RED);
+    actions.at.rotate(-1); actions.at.rotate(-1); assert.equal(state.motif[0][31], true);
+    actions.at.finish(true);
+    const bank = snapshotMotifBank(state); restoreMotifBank(state, bank);
+    assert.equal(state.getMotif(0).atDestinations.ROTATION[0][31], "STEP");
+    assert.equal(actions.applyMotifCopy(actions.captureMotifCopy(0), 1), true);
+    assert.equal(state.getMotif(1).atDestinations.ROTATION[0][31], "STEP");
+    assert.equal(actions.applyVoiceCopy(actions.captureMusicalCopy("VOICE", 0), 1), true);
+    assert.equal(state.getMotif(0).atDestinations.ROTATION[1][31], "STEP");
+    actions.at.resetMotif();
+    assert.equal(state.motif[0][31], true); assert.equal(state.getMotif(0).atDestinations, undefined);
+});
+
+test("ROTATION empty targets and VALUE pads are inert; rotation pins the editing motif", t => {
+    const { state, actions, c, tap } = setup(t);
+    state.chainEnabled = true; state.chainFocus = true; state.viewMotifId = 3;
+    state.getMotif(3).events[0][0] = true; state.getMotif(0).events[0][0] = true;
+    actions.at.begin(8); actions.at.select("steps", 2);
+    const before = structuredClone(state.motifs);
+    assert.equal(actions.at.rotate(1), false);
+    for (const pad of c.mapping.AT_VALUE) tap(pad);
+    assert.deepEqual(state.motifs, before); assert.equal(state.atTransaction.touched.size, 0);
+    actions.at.select("steps", 2);
+    state.viewMotifId = 4;
+    actions.at.rotate(1);
+    assert.equal(state.getMotif(3).events[0][1], true);
+    assert.equal(state.getMotif(0).events[0][0], true);
+    assert.equal(state.getMotif(4).events[0][1], false);
+    assert.equal(readATPanel(state).name, "ROTATION");
+    assert.equal(readATPanel(state).values.length, 2);
+});
+
+for (const commit of [false, true]) test(`ROTATION hardware arrows blink RED, consume holds, ${commit ? "commit" : "cancel"}`, t => {
+    const { state, actions, c, tap, press, release, leds, clock } = setup(t);
+    state.motif[0][0] = true; state.transportState = "PLAY";
+    const before = musicalContext(state, clock);
+    const rotation = c.mapping.BOOKS[8], left = c.mapping.TOP_CONTROLS.PREVIOUS, right = c.mapping.TOP_CONTROLS.NEXT;
+    tap(rotation); drainAT(t, c);
+    const color = note => leds.get('176:' + note) & 0x33;
+    assert.equal(state.atTransaction.slot, 8);
+    assert.equal(color(left), c.colors.RED & 0x33); assert.equal(color(right), c.colors.RED & 0x33);
+    t.mock.timers.tick(160); drainAT(t, c);
+    assert.equal(color(left), 0); assert.equal(color(right), 0);
+    t.mock.timers.tick(160); drainAT(t, c);
+    assert.equal(color(left), c.colors.RED & 0x33);
+    press(right, 0xB0); press(right, 0xB0); t.mock.timers.tick(500);
+    assert.equal(state.motif[0][1], true); assert.equal(state.motif[0][2], false);
+    assert.deepEqual({ ...musicalContext(state, clock), live: before.live }, before);
+    assert.equal(state.getPlaybackMotifForVoice(0).events[0][0], true);
+    if (commit) { press(rotation); t.mock.timers.tick(300); release(rotation); } else tap(rotation);
+    release(right, 0xB0); drainAT(t, c);
+    assert.equal(state.atTransaction, null); assert.equal(c.atBlinkTimer, null);
+    assert.equal(state.motif[0][commit ? 1 : 0], true);
+    assert.equal(c.nextPressed, false); assert.equal(c.focusNavigationHeld?.size ?? 0, 0);
+    assert.notEqual(color(left), c.colors.RED & 0x33);
+});
+
+for (const direction of [-1, 1]) test(`ROTATION respects individual 8/6 cycles and preserves out-of-cycle events (${direction})`, t => {
+    const { state, actions } = setup(t);
+    const motif = state.getMotif(0);
+    motif.voiceLengths[0] = 8; motif.voiceLengths[1] = 6;
+    motif.motifLength = 4; // Global break must not replace individual voice cycles.
+    motif.events[0][direction === 1 ? 7 : 0] = true;
+    motif.events[1][direction === 1 ? 5 : 0] = true;
+    motif.events[0][12] = motif.events[1][12] = true;
+    motif.velocities = createVelocities(); motif.velocities[0][12] = 16;
+    const before = snapshotMotifBank(state);
+    actions.at.begin(8); actions.at.rotate(direction);
+    assert.equal(motif.events[0][direction === 1 ? 0 : 7], true);
+    assert.equal(motif.events[1][direction === 1 ? 0 : 5], true);
+    assert.equal(motif.events[0][12], true); assert.equal(motif.events[1][12], true);
+    assert.equal(motif.velocities[0][12], 16);
+    assert.equal(motif.events[0][direction === 1 ? 13 : 11], false);
+    actions.at.finish(false); assert.deepEqual(snapshotMotifBank(state), before);
+});
+
+test("ROTATION follows per-voice step targets without pulling unselected events into subsequent moves", t => {
+    const { state, actions } = setup(t);
+    const motif = state.getMotif(0);
+    motif.voiceLengths[0] = 8; motif.voiceLengths[1] = 6;
+    motif.events[0][0] = motif.events[1][0] = true;
+    motif.events[0][5] = true; // Must not join the snare's wrapped selection at step 6.
+    actions.at.begin(8); actions.at.select("steps", 0);
+    actions.at.rotate(-1);
+    assert.deepEqual([...state.atTransaction.steps].sort(), [5, 7]);
+    actions.at.rotate(-1);
+    assert.equal(motif.events[0][6], true); assert.equal(motif.events[1][4], true);
+    assert.equal(motif.events[0][5], true); assert.equal(motif.events[0][4], false);
+    actions.at.select("steps", 5); // Explicit target change starts a fresh selection.
+    actions.at.rotate(-1);
+    assert.equal(motif.events[0][5], false); assert.equal(motif.events[0][4], true);
+});
+
+for (const direction of [-1, 1]) for (const count of [1, 2, 4]) {
+    test(`ROTATION swaps preserve all events and attributes across wrap (${direction}, ${count} selected)`, t => {
+        const { state, actions } = setup(t);
+        const motif = state.getMotif(0), length = 6;
+        motif.voiceLengths[0] = length;
+        motif.velocities = createVelocities();
+        motif.colors = Array.from({ length: 16 }, () => Array(32).fill(false));
+        motif.atDestinations = { COLOR: Array.from({ length: 16 }, () => Array(32).fill(null)) };
+        const selected = Array.from({ length: count }, (_, i) => (direction === 1 ? 5 + i : length - i) % length);
+        const collision = (selected.at(-1) + direction + length) % length;
+        for (const [index, step] of [...selected, collision].entries()) {
+            motif.events[0][step] = true; motif.velocities[0][step] = 20 + index;
+        }
+        motif.colors[0][collision] = true; motif.atDestinations.COLOR[0][collision] = "INSTRUMENT";
+        const before = snapshotMotifBank(state);
+        actions.at.begin(8); actions.at.select("instruments", 0);
+        selected.forEach(step => actions.at.select("steps", step, true));
+        actions.at.rotate(direction);
+        assert.equal(motif.events[0].filter(Boolean).length, count + 1);
+        selected.forEach((step, index) => assert.equal(motif.velocities[0][(step + direction + length) % length], 20 + index));
+        assert.equal(motif.velocities[0][selected[0]], 20 + count);
+        assert.equal(motif.colors[0][selected[0]], true);
+        assert.equal(motif.atDestinations.COLOR[0][selected[0]], "INSTRUMENT");
+        assert.equal(motif.atDestinations.ROTATION[0][selected[0]], null);
+        assert.deepEqual(snapshotMotifBank(state), before);
+        actions.at.rotate(-direction);
+        assert.deepEqual(motif.events, before.motifs[0].events);
+        assert.deepEqual(motif.velocities, before.motifs[0].velocities);
+        assert.deepEqual(motif.colors, before.motifs[0].colors);
+        actions.at.finish(false); assert.deepEqual(snapshotMotifBank(state), before);
+    });
+}
+
+test("ROTATION disjoint selected runs and a full cycle preserve note count on commit", t => {
+    const { state, actions } = setup(t);
+    const motif = state.getMotif(0); motif.voiceLengths[0] = 6;
+    motif.velocities = createVelocities();
+    for (let step = 0; step < 6; step++) { motif.events[0][step] = true; motif.velocities[0][step] = 10 + step; }
+    actions.at.begin(8); actions.at.select("instruments", 0);
+    actions.at.select("steps", 0); actions.at.select("steps", 3, true);
+    actions.at.rotate(1);
+    assert.deepEqual(motif.velocities[0].slice(0, 6), [11, 10, 12, 14, 13, 15]);
+    assert.equal(motif.events[0].filter(Boolean).length, 6);
+    actions.at.finish(true);
+    actions.at.begin(8); actions.at.select("instruments", 0); actions.at.rotate(1);
+    assert.deepEqual(motif.velocities[0].slice(0, 6), [15, 11, 10, 12, 14, 13]);
+    assert.equal(motif.events[0].filter(Boolean).length, 6);
+    actions.at.finish(true);
+    restoreMotifBank(state, snapshotMotifBank(state));
+    assert.equal(state.motif[0].filter(Boolean).length, 6);
+});
+
+for (const whole of [false, true]) test(`ROTATION audio waits for ${whole ? "motif" : "individual voice"} cycle, including commit`, t => {
+    const { state, actions } = setup(t);
+    const motif = state.getMotif(0);
+    motif.voiceLengths[0] = 8; motif.voiceLengths[1] = 6;
+    motif.events[0][0] = motif.events[1][0] = true;
+    state.transportState = "PLAY"; state.playheadPosition = 4;
+    actions.at.begin(8);
+    if (!whole) { actions.at.select("instruments", 0); actions.at.select("instruments", 1, true); }
+    actions.at.rotate(1); actions.at.rotate(1);
+    assert.equal(motif.events[0][2], true);
+    assert.equal(state.getPlaybackMotifForVoice(0).events[0][0], true);
+    assert.equal(state.getPlaybackMotifForVoice(1).events[1][0], true);
+    actions.at.finish(true);
+    actions.nextStep(); actions.nextStep(); // voice 1 starts its next 6-step cycle
+    assert.equal(state.getPlaybackMotifForVoice(1).events[1][whole ? 0 : 2], true);
+    assert.equal(state.getPlaybackMotifForVoice(0).events[0][0], true);
+    actions.nextStep(); actions.nextStep(); // voice 0 starts its next 8-step cycle
+    assert.equal(state.getPlaybackMotifForVoice(0).events[0][whole ? 0 : 2], true);
+    while (state.playheadPosition !== 0) actions.nextStep(); // LCM 24
+    assert.equal(state.getPlaybackMotifForVoice(0).events[0][2], true);
+    assert.equal(state.getPlaybackMotifForVoice(1).events[1][2], true);
+});
+
+for (const afterBoundary of [false, true]) test(`ROTATION cancel ${afterBoundary ? "after" : "before"} audible boundary preserves engaged cycle`, t => {
+    const { state, actions } = setup(t);
+    state.getMotif(0).voiceLengths[0] = 8;
+    state.motif[0][0] = true; state.transportState = "PLAY"; state.playheadPosition = 6;
+    actions.at.begin(8); actions.at.select("instruments", 0); actions.at.rotate(1);
+    if (afterBoundary) { actions.nextStep(); actions.nextStep(); }
+    actions.at.finish(false);
+    assert.equal(state.motif[0][0], true);
+    assert.equal(state.getPlaybackMotifForVoice(0).events[0][afterBoundary ? 1 : 0], true);
+    do { actions.nextStep(); } while (state.getVoiceStep(0) !== 0);
+    assert.equal(state.getPlaybackMotifForVoice(0).events[0][0], true);
 });

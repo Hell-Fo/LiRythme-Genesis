@@ -415,6 +415,11 @@ export class LaunchpadMini {
     drawTimelineSelection() {
         const previous = this.mapping.TOP_CONTROLS.PREVIOUS;
         const next = this.mapping.TOP_CONTROLS.NEXT;
+        if (this.state.atTransaction?.slot === 8) {
+            this.setTopLed(previous, this.atLit ? this.colors.RED : this.colors.OFF);
+            this.setTopLed(next, this.atLit ? this.colors.RED : this.colors.OFF);
+            return;
+        }
 
         const isMotif = this.state.currentTimeline === "MOTIF";
         if (this.state.chainFocus) {
@@ -1202,7 +1207,7 @@ export class LaunchpadMini {
             }
         }
         for (const [index, note] of this.mapping.AT_VALUE.entries()) {
-            const color = tx?.slot === 1
+            const color = tx?.slot === 8 ? this.colors.OFF : tx?.slot === 1
                 ? index !== 0 || !colorCount ? this.colors.OFF : this.colors.RED
                 : tx ? (velocities.has(this.actions.at.definition(tx.slot).values[index]) ? this.colors.RED : this.colors.DIM_AMBER)
                 : this.colors.OFF;
@@ -1224,7 +1229,10 @@ export class LaunchpadMini {
                 this.atBlinkTimer = setTimeout(() => {
                     this.atLit = !this.atLit;
                     this.collectATLEDs = true;
-                    try { this.drawBooks(); }
+                    try {
+                        this.drawBooks();
+                        if (this.state.atTransaction?.slot === 8) this.drawTimelineSelection();
+                    }
                     finally { this.collectATLEDs = false; }
                     blink();
                 }, 160);
@@ -1245,6 +1253,7 @@ export class LaunchpadMini {
             if (reason === "steps" || reason === "value") { this.drawMotif(); this.drawPlayhead(); }
             else if (reason !== "value") this.drawSelectedMotif();
             this.drawTransport();
+            this.drawTimelineSelection();
         } finally { this.collectATLEDs = false; }
     }
 
@@ -1266,6 +1275,14 @@ export class LaunchpadMini {
                         else this.actions.at.begin(hold.slot);
                     }
                 }
+            }
+            return true;
+        }
+        if (this.state.atTransaction?.slot === 8 && status === 0xB0 &&
+            [this.mapping.TOP_CONTROLS.PREVIOUS, this.mapping.TOP_CONTROLS.NEXT].includes(number)) {
+            if (value > 0) {
+                this.atHeld.add(key);
+                this.actions.at.rotate(number === this.mapping.TOP_CONTROLS.PREVIOUS ? -1 : 1);
             }
             return true;
         }
