@@ -1,4 +1,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
+contextBridge.exposeInMainWorld("audioSampleFiles", {
+    pick: () => ipcRenderer.invoke("audio-sample", { action: "pick" }),
+    read: path => ipcRenderer.invoke("audio-sample", { action: "read", path })
+});
 contextBridge.exposeInMainWorld("motifBankFiles", {
     load: () => ipcRenderer.invoke("motif-bank", { action: "load" }),
     save: bank => ipcRenderer.invoke("motif-bank", { action: "save", bank }),

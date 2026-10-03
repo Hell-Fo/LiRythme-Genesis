@@ -569,7 +569,7 @@ export class LaunchpadMini {
         if (this.stepInstrumentFeedback && this.state.transportState !== "PLAY") return;
         if (this.performanceHolds.size) return;
         if (!Number.isInteger(position) || position < 0 || position >= 16 ||
-            this.state.padConfiguration.voices[position]?.type !== "MIDI DRUM") {
+            !["MIDI DRUM", "AUDIO"].includes(this.state.padConfiguration.voices[position]?.type)) {
             return;
         }
 

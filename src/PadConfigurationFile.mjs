@@ -57,6 +57,12 @@ export function validateDocument(doc) {
             const v = doc.voices[key];
             if (!object(v)) { error(key, "objet attendu."); continue; }
             if (typeof v.name !== "string") error(`${key} → name`, "chaîne de caractères obligatoire.");
+            if (v.type === "AUDIO") {
+                fields(v, ["name", "type", "output", "source"], key);
+                if (!["LEFT", "RIGHT"].includes(v.output)) error(`${key} → output`, "LEFT ou RIGHT requis.");
+                if (typeof v.source !== "string" || (v.source !== "" && !/\.wav$/i.test(v.source))) error(`${key} → source`, "Chemin vers un fichier .wav requis.");
+                continue;
+            }
             if (!["NONE", "MIDI DRUM"].includes(v.type)) { error(`${key} → type`, `type inconnu : ${JSON.stringify(v.type) ?? "champ absent"}.`); continue; }
             fields(v, v.type === "NONE" ? ["name", "type"] : ["name", "type", "output", "channel", "note", "colorNote"], key);
             if (v.type === "NONE") continue;

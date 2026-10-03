@@ -36,7 +36,7 @@ test("all 16 Voices support edits; valid type transitions preserve names and all
 
 test("editor uses Phase B errors and invalid edits are atomic", () => {
     const state = stateFor();
-    for (const [field, values] of [["channel", [0, 17, 1.5, NaN, "10", null]], ["note", [-1, 128, 1.5, NaN, "42", null]], ["type", ["AUDIO", "MIDI BANANA", ""]], ["name", [null, 42]]]) {
+    for (const [field, values] of [["channel", [0, 17, 1.5, NaN, "10", null]], ["note", [-1, 128, 1.5, NaN, "42", null]], ["type", ["UNKNOWN", "MIDI BANANA", ""]], ["name", [null, 42]]]) {
         for (const value of values) {
             const previous = state.padConfiguration;
             assert.throws(() => editPadVoice(state, 12, field, value), new RegExp(`VOICE 13 → ${field}`));

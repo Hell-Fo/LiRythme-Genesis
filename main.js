@@ -43,8 +43,24 @@ const {
     utilityProcess
 } = require("electron");
 const path = require("node:path");
+const { readWav } = require("./src/AudioSampleFiles.cjs");
+ipcMain.handle("audio-sample", async (event, request) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Unauthorized audio request");
+    try {
+        if (request?.action === "pick") {
+            const result = await dialog.showOpenDialog(mainWindow, { properties: ["openFile"], filters: [{ name: "Audio WAV", extensions: ["wav"] }] });
+            if (result.canceled || !result.filePaths.length) return { canceled: true };
+            await readWav(result.filePaths[0]);
+            return { path: result.filePaths[0] };
+        }
+        if (request?.action === "read") return { bytes: await readWav(request.path) };
+        throw new Error("Opération audio inconnue.");
+    } catch (error) { return { error: error.message }; }
+});
 // Chromium otherwise places debug.log beside the Windows executable.
 app.setAppLogsPath();
+// Musical playback may be started from hardware without a browser mouse gesture.
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 app.commandLine.appendSwitch("log-file", path.join(app.getPath("userData"), "electron.log"));
 const { PadConfigurationPreferences } = require("./src/PadConfigurationPreferences.cjs");
 const { PadConfigurationLibrary } = require("./src/PadConfigurationLibrary.cjs");

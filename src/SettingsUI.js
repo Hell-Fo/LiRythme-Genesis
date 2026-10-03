@@ -2,7 +2,7 @@ import { initializePadLibraryUI } from "./PadLibraryUI.js";
 import { editPadVoice } from "./PadVoiceEditor.mjs";
 
 // UI state is intentionally independent of the musical selection and transport.
-export function initializeSettingsUI({ state, clock, actions }) {
+export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     const get = id => document.getElementById(id);
     const settingsPage = get("settings-page");
     const playPage = get("play-page");
@@ -22,6 +22,8 @@ export function initializeSettingsUI({ state, clock, actions }) {
     let initialSoundCheckApplied = false;
     let selectedVoice = 0;
     const libraryUI = initializePadLibraryUI({ state, onActivated: () => {
+        audioPlayer?.stop();
+        audioPlayer?.sync(state.padConfiguration.voices);
         setText("voice-error", "");
         renderVoice(true);
     }, onBusyChanged: () => renderVoice() });
@@ -112,6 +114,14 @@ export function initializeSettingsUI({ state, clock, actions }) {
             if (force || locked || document.activeElement !== input) input.value = String(voice[field] ?? "");
         }
         get("voice-midi-fields").hidden = voice.type !== "MIDI DRUM";
+        if (get("voice-audio-fields")) {
+            get("voice-audio-fields").hidden = voice.type !== "AUDIO";
+            get("voice-audioOutput").disabled = locked;
+            get("voice-audioOutput").value = voice.type === "AUDIO" ? voice.output : "LEFT";
+            get("voice-source").value = voice.source ?? "";
+            get("voice-browse").disabled = locked;
+            setText("voice-audio-status", audioPlayer?.status(voice.source) ?? "");
+        }
         const destination = output.options[output.selectedIndex]?.textContent;
         setText("voice-output-status", `Default MIDI Output : ${destination || "aucune sortie disponible"}`);
         setText("voice-editor-status", state.transportState === "PLAY"
@@ -129,12 +139,29 @@ export function initializeSettingsUI({ state, clock, actions }) {
             const value = field === "colorNote" && input.value === "" ? null
                 : ["channel", "note", "colorNote"].includes(field) ? input.valueAsNumber : input.value;
             editPadVoice(state, selectedVoice, field, value);
+            audioPlayer?.stop();
+            audioPlayer?.sync(state.padConfiguration.voices);
             setText("voice-error", "");
         } catch (error) { rejected = true; setText("voice-error", error.message); }
         renderVoice(rejected || field !== "name");
         libraryUI.refresh();
     }
     get("voice-name").addEventListener("input", () => applyVoiceEdit("name"));
+    get("voice-audioOutput")?.addEventListener("change", () => applyVoiceEdit("audioOutput"));
+    get("voice-browse")?.addEventListener("click", async () => {
+        const id = selectedVoice, configuration = state.padConfiguration;
+        try {
+            if (libraryUI.busy || !libraryUI.hasActivePreset || !["STOP", "PAUSE"].includes(state.transportState)) return;
+            const result = await window.audioSampleFiles.pick();
+            if (result.error) throw new Error(result.error);
+            if (result.canceled || state.padConfiguration !== configuration || selectedVoice !== id) return;
+            editPadVoice(state, id, "source", result.path);
+            audioPlayer?.samples.delete(result.path);
+            audioPlayer?.sync(state.padConfiguration.voices);
+            setText("voice-error", "");
+        } catch (error) { setText("voice-error", error.message); }
+        renderVoice(true); libraryUI.refresh();
+    });
     get("voice-name").addEventListener("blur", () => renderVoice(true));
     for (const field of ["type", "channel", "note", "colorNote"]) {
         get(`voice-${field}`).addEventListener("change", () => applyVoiceEdit(field));
@@ -161,6 +188,7 @@ export function initializeSettingsUI({ state, clock, actions }) {
     });
     tempo.addEventListener("blur", () => renderTempo(true));
     function refresh() {
+        audioPlayer?.sync(state.padConfiguration.voices);
         if (settingsPage.hidden) return;
         renderTempo();
         renderVoice();

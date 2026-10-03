@@ -7,6 +7,7 @@ import { DrumBruteImpactProfile } from "./hardware/midi/profiles/DrumBruteImpact
 import { LaunchpadMini } from "./hardware/launchpad/LaunchpadMini.js";
 import { LiRythmeActions } from "./LiRythmeActions.js";
 import { initializeSettingsUI } from "./SettingsUI.js";
+import { AudioVoicePlayer } from "./AudioVoicePlayer.mjs";
 import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
 import { initializePlayMotifUI } from "./PlayMotifUI.mjs";
 import { initializePlayChainUI } from "./PlayChainUI.mjs";
@@ -71,9 +72,12 @@ if (state.filterMode) {
 
 const actions = new LiRythmeActions(state, clock);
 initializePlayChainUI({ state, actions });
-const settingsUI = initializeSettingsUI({ state, clock, actions });
+const audioPlayer = new AudioVoicePlayer({ files: window.audioSampleFiles });
+document.addEventListener("pointerdown", () => { void audioPlayer.resume(); });
+const settingsUI = initializeSettingsUI({ state, clock, actions, audioPlayer });
 // Restore before connecting transport/controller input handlers.
 await settingsUI.ready;
+audioPlayer.sync(state.padConfiguration.voices);
 
 console.log(
     "ACTIONS:",
@@ -284,6 +288,7 @@ actions.setTransportTransitionHandler(
         playStatusUI.render();
         midiManager.invalidatePreviews();
         if (to === "PAUSE" || to === "STOP") {
+            audioPlayer.stop();
             try {
                 launchpad.cancelInstrumentPulses(true);
             } catch (error) {
@@ -640,6 +645,10 @@ function triggerMotifStep(step) {
         }
 
         const voice = state.padConfiguration.voices[voiceId];
+        if (voice?.type === "AUDIO") {
+            if (audioPlayer.trigger(voice, playingMotif.velocities?.[voiceId]?.[localStep] ?? 100)) triggeredInstruments.push(voiceId);
+            continue;
+        }
         if (voice?.type !== "MIDI DRUM" || voice.output?.mode !== "DEFAULT" ||
             !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
             !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127) {
