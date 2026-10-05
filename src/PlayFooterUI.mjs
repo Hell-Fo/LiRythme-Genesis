@@ -1,11 +1,14 @@
 // Read-only indicators: performance activation belongs to state; gesture stages
 // belong to the controller. No commands or additional animation loop.
 export function readPlayFooter(state, controller) {
+    state = state.editingState ?? state;
     return {
-        zone1: `MOTIF ${String(state.currentMotifId + 1).padStart(2, "0")}`,
+        zone1: `${state.systemName === "MODULATION" ? "MODULATION" : "MOTIF"} ${String(state.currentMotifId + 1).padStart(2, "0")}`,
         project: "Non disponible", // No active Project identity exists in the engine yet.
         states: [state.soloActive && "SOLO", state.muteActive && "MUTE",
-            controller.copyStage && "COPY", controller.deleteArmed && "DELETE"]
+            controller.copyStage && "COPY", controller.deleteArmed && "DELETE",
+            (state.modulationRequested || state.modulationActive) &&
+                `MODULATION ${state.modulationActive ? "ON" : "OFF"}${state.modulationRequested !== state.modulationActive ? ` → ${state.modulationRequested ? "ON" : "OFF"}` : ""}`]
             .filter(Boolean).join("  "),
         resolution: `${state.getMotifDuration()} STEPS · 1/${state.stepDivision}`
     };

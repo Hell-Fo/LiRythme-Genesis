@@ -17,7 +17,8 @@ Elias (OpenAI)
 import { PadConfiguration } from "./PadConfiguration.js";
 
 export class LiRythmeState {
-    constructor() {
+    constructor({ system = "MOTIF" } = {}) {
+        this.systemName = system;
         Object.defineProperty(this, "onBankChange", { value: null, writable: true });
         // Navigation is independent of the musical timeline and transport.
         this.currentView = "PLAY";
@@ -36,6 +37,7 @@ export class LiRythmeState {
 
         this.freezeMode = false;
         this.colorEnabled = false;
+        this.atTransaction = null;
         this.lockMode = false;
 
         this.selectedInstrument = 12;
@@ -85,6 +87,57 @@ export class LiRythmeState {
         this.soloActive = false;
         this.muteActive = false;
         this.liveLengthCycle = null;
+        if (system === "MODULATION") {
+            for (const motif of this.motifs) motif.attributes = {};
+        } else {
+            // Both layers use this same bank, Chain and local-cycle implementation.
+            // The facade shares transport/Voice/filter state and selects only musical data.
+            this.modulationRequested = false;
+            Object.defineProperty(this, "rootState", { value: this });
+            Object.defineProperty(this, "modulation", { value: new LiRythmeState({ system: "MODULATION" }) });
+            Object.defineProperty(this.modulation, "rootState", { value: this });
+            const local = new Set(["systemName", "motifs", "motif", "motifLength", "voiceLengths", "currentMotifId",
+                "playingMotifId", "nextMotifId", "playheadPosition", "liveLengthCycle", "chainEnabled", "chain",
+                "chainPlayingIndex", "chainPlayingDetached", "chainLoopMasterIndex", "chainFocus", "viewMotifId", "chainViewIndex"]);
+            for (const key of Object.keys(this)) if (!local.has(key)) Object.defineProperty(this.modulation, key, {
+                enumerable: true, configurable: true, get: () => this[key], set: value => { this[key] = value; }
+            });
+            this.modulation.onBankChange = () => this.onBankChange?.();
+            const methods = new Map();
+            Object.defineProperty(this, "editingState", { value: new Proxy(this, {
+                get: (root, key) => {
+                    const descriptor = Object.getOwnPropertyDescriptor(root, key);
+                    if (descriptor && !descriptor.configurable && !descriptor.writable && "value" in descriptor) return descriptor.value;
+                    const layer = root.forSystem(root.currentTimeline), value = layer[key];
+                    if (typeof value !== "function") return value;
+                    const id = `${layer.systemName}:${String(key)}`;
+                    if (methods.get(id)?.original !== value) methods.set(id, { original: value, bound: value.bind(layer) });
+                    return methods.get(id).bound;
+                },
+                set: (root, key, value) => { root.forSystem(root.currentTimeline)[key] = value; return true; }
+            }) });
+        }
+    }
+
+    forSystem(name = "MOTIF") {
+        const root = this.rootState ?? this;
+        if (!["MOTIF", "MODULATION"].includes(name)) throw new Error("Unknown musical system");
+        return name === "MOTIF" ? root : root.modulation;
+    }
+
+    getPlayingEvent(voiceId, position = this.playheadPosition) {
+        const motif = this.forSystem("MOTIF");
+        const modulation = this.forSystem("MODULATION");
+        const base = motif.getPlaybackMotifForVoice(voiceId), baseStep = motif.getVoiceStep(voiceId, position);
+        const overlay = modulation.getPlaybackMotifForVoice(voiceId), overlayStep = modulation.getVoiceStep(voiceId);
+        const active = this.modulationActive;
+        if (!base.events[voiceId][baseStep] && !(active && overlay.events[voiceId][overlayStep])) return null;
+        // Union first, then each explicitly present overlay attribute independently.
+        const attributes = active ? overlay.attributes : null;
+        return {
+            velocity: attributes?.VELOCITY?.[voiceId]?.[overlayStep] ?? base.velocities?.[voiceId]?.[baseStep] ?? 100,
+            color: attributes?.COLOR?.[voiceId]?.[overlayStep] ?? base.colors?.[voiceId]?.[baseStep] ?? false
+        };
     }
 
     getChainNextIndex() {

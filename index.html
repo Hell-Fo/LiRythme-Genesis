@@ -42,8 +42,12 @@
         .motif-position { grid-template-columns: 1fr 1fr; }
         .motif-chain { min-height: 100px; padding-top: 16px; border-top: 1px solid #c9cfd5; }
         #play-chain-occurrences { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+        #play-modulation-chain-occurrences { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+        #play-modulation-active { color: #888; }
+        #play-modulation-active.is-active { color: #c94c4c; font-weight: bold; }
         .chain-occurrence { display: inline-block; }
         .chain-occurrence.is-playing { color: #4a9b6b; }
+        .is-modulation .chain-occurrence.is-playing { color: #c94c4c; }
         .chain-occurrence.is-loop-master { color: #c94c4c; }
         .chain-occurrence.is-loop-master.is-playing {
             text-decoration-line: underline;
@@ -188,7 +192,20 @@
                 </section>
             </section>
             <section id="play-modulation" class="panel play-modulation" aria-labelledby="play-modulation-title">
-                <h3 id="play-modulation-title">MODULATION</h3>
+                <h3 id="play-modulation-title">MODULATION —</h3>
+                <dl><dt>ACTIVE</dt><dd id="play-modulation-active" aria-live="polite">OFF</dd></dl>
+                <dl><dt>DURATION</dt><dd id="play-modulation-duration">Non disponible</dd></dl>
+                <div class="motif-clock-space" aria-label="Espace réservé à la future horloge graphique">
+                    <span class="muted">GRAPHIC CLOCK — espace réservé</span>
+                </div>
+                <dl class="play-status motif-position">
+                    <div><dt>STEP</dt><dd id="play-modulation-step">Non disponible</dd></div>
+                    <div><dt>PLAY MODE</dt><dd id="play-modulation-mode">Non disponible</dd></div>
+                </dl>
+                <section class="motif-chain" aria-labelledby="modulation-chain-title">
+                    <h3 id="modulation-chain-title">CHAIN MODULATION</h3>
+                    <div id="play-modulation-chain-occurrences" aria-label="Occurrences de la chaîne de Modulation"></div>
+                </section>
             </section>
             <section id="play-selection" class="panel" aria-labelledby="play-selection-title">
                 <h3 id="play-selection-title">SELECTION</h3>

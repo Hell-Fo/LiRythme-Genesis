@@ -57,10 +57,11 @@ window.motifBankFiles.onClose(() => motifBankAutosave.flush());
 window.motifBankFiles.ready();
 const clock = new LiRythmeClock(state);
 const motifUI = initializePlayMotifUI({ state });
+const modulationUI = initializePlayMotifUI({ state, system: "MODULATION" });
 const atUI = initializePlayATUI({ state });
 let footerUI = null;
 const playStatusUI = initializePlayStatusUI({ state, clock, midiManager,
-    renderMotif: motifUI.render, renderFooter: () => { footerUI?.render(); atUI.render(); } });
+    renderMotif: () => { motifUI.render(); modulationUI.render(); }, renderFooter: () => { footerUI?.render(); atUI.render(); } });
 
 state.filterMode =
     focusStartupCheckbox.checked;
@@ -71,7 +72,9 @@ if (state.filterMode) {
 }
 
 const actions = new LiRythmeActions(state, clock);
-initializePlayChainUI({ state, actions });
+const motifChainUI = initializePlayChainUI({ state, system: "MOTIF" });
+const modulationChainUI = initializePlayChainUI({ state, system: "MODULATION" });
+actions.onChainChange = () => { motifChainUI.render(); modulationChainUI.render(); };
 const audioPlayer = new AudioVoicePlayer({ files: window.audioSampleFiles });
 document.addEventListener("pointerdown", () => { void audioPlayer.resume(); });
 const settingsUI = initializeSettingsUI({ state, clock, actions, audioPlayer });
@@ -634,19 +637,26 @@ updateSoundCheck();
 function triggerMotifStep(step) {
     // Navigation supplies the editing Motif; clock calls retain temporal playback.
     const previewMotifId = arguments[1] ?? null;
+    const previewSystem = arguments[2] ?? state.currentTimeline ?? "MOTIF";
+    const previewState = state.forSystem?.(previewSystem) ?? state;
     const triggeredInstruments = [];
     for (let voiceId = 0; voiceId < 16; voiceId++) {
-        const playingMotif = previewMotifId !== null ? state.getMotif(previewMotifId)
+        const playingMotif = previewMotifId !== null ? previewState.getMotif(previewMotifId)
             : state.getPlaybackMotifForVoice?.(voiceId) ?? state.getMotif(state.playingMotifId);
         const steps = playingMotif.events[voiceId];
         const localStep = previewMotifId !== null ? step % 32 : state.getVoiceStep?.(voiceId, step) ?? step;
-        if (!steps[localStep] || state.isVoiceAudible?.(voiceId) === false) {
+        const event = previewMotifId === null && state.getPlayingEvent ? state.getPlayingEvent(voiceId, step)
+            : steps[localStep] ? {
+                velocity: playingMotif.attributes?.VELOCITY?.[voiceId]?.[localStep] ?? playingMotif.velocities?.[voiceId]?.[localStep] ?? 100,
+                color: playingMotif.attributes?.COLOR?.[voiceId]?.[localStep] ?? playingMotif.colors?.[voiceId]?.[localStep] ?? false
+            } : null;
+        if (!event || state.isVoiceAudible?.(voiceId) === false) {
             continue;
         }
 
         const voice = state.padConfiguration.voices[voiceId];
         if (voice?.type === "AUDIO") {
-            if (audioPlayer.trigger(voice, playingMotif.velocities?.[voiceId]?.[localStep] ?? 100)) triggeredInstruments.push(voiceId);
+            if (audioPlayer.trigger(voice, event.velocity)) triggeredInstruments.push(voiceId);
             continue;
         }
         if (voice?.type !== "MIDI DRUM" || voice.output?.mode !== "DEFAULT" ||
@@ -654,7 +664,7 @@ function triggerMotifStep(step) {
             !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127) {
             continue;
         }
-        const note = playingMotif.colors?.[voiceId]?.[localStep] &&
+        const note = event.color &&
             Number.isInteger(voice.colorNote) && voice.colorNote >= 0 && voice.colorNote <= 127
             ? voice.colorNote : voice.note;
         const status = 0x90 | (voice.channel - 1);
@@ -664,7 +674,7 @@ function triggerMotifStep(step) {
             ]?.textContent;
         midiManager.send(
             midiOutputName,
-            [status, note, playingMotif.velocities?.[voiceId]?.[localStep] ?? 100],
+            [status, note, event.velocity],
             undefined, { preview: previewMotifId !== null }
         );
 
@@ -696,7 +706,7 @@ actions.setClockStepHandler(() => {
     triggerMotifStep(state.playheadPosition);
 
     // A reset may jump from any physical pad to zero, not necessarily pad 32.
-    launchpad.drawClockStep(launchpad.lastPlayheadStep ?? 0, state.playheadPosition % 32);
+    launchpad.drawClockStep(launchpad.lastPlayheadStep ?? 0, launchpad.state.playheadPosition % 32);
     launchpad.pulseMotifCycle();
 });
 
@@ -708,6 +718,7 @@ actions.setClockStepHandler(() => {
 actions.setClockBeatHandler(() => {
     console.log("BEAT");
     launchpad.pulseTransport();
+    launchpad.pulseModulationBeat();
 });
 
 

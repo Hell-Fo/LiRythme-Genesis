@@ -15,28 +15,63 @@ Elias (OpenAI)
 
 ===============================================================================
 */
-import { ATTransaction, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow } from "./ATTransaction.mjs";
+import { ATTransaction, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes } from "./ATTransaction.mjs";
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
     constructor(state, clock) {
-        this.state = state;
+        this.rootState = state.rootState ?? state;
+        this.state = this.rootState.editingState ?? state;
         this.clock = clock;
         this.onStepPreview = null;
         this.onTransportTransition = null;
         this.onViewChange = null;
         this.onMotifChange = null;
         this.onNextMotifChange = null;
+        this.modulationTransitionPending = false;
+        this.temporalFlags = { MOTIF: {}, MODULATION: {} };
+        for (const key of ["motifTransitionPending", "chainOccurrencePending"]) Object.defineProperty(this, key, {
+            get: () => this.temporalFlags[this.state.systemName ?? "MOTIF"][key] ?? false,
+            set: value => { this.temporalFlags[this.state.systemName ?? "MOTIF"][key] = value; }
+        });
         this.motifTransitionPending = false;
         this.onChainChange = null;
         this.onChainOccurrence = null;
         this.chainOccurrencePending = false;
-        this.at = new ATTransaction(state, () => this.resolveContext(), reason => this.onATChange?.(reason));
+        this.at = new ATTransaction(this.state, () => this.resolveContext(), reason => this.onATChange?.(reason));
+    }
+    inSystem(name, operation) {
+        const previous = this.state;
+        this.state = this.rootState.forSystem?.(name) ?? this.rootState;
+        try { return operation(); } finally { this.state = previous; }
+    }
+    forEachSystem(operation) {
+        for (const name of this.rootState.modulation ? ["MOTIF", "MODULATION"] : ["MOTIF"]) {
+            this.inSystem(name, operation);
+        }
+    }
+    toggleModulation() {
+        this.rootState.modulationRequested = !this.rootState.modulationRequested;
+        if (this.state.transportState !== "PLAY") this.rootState.modulationActive = this.rootState.modulationRequested;
+        this.state.onBankChange?.();
+        this.onModulationChange?.();
+        return this.rootState.modulationRequested;
+    }
+    toggleModulationChain() {
+        const result = this.inSystem("MODULATION", () => this.toggleChain());
+        this.rootState.modulationChainMode = result;
+        this.state.onBankChange?.();
+        this.onModulationChange?.();
+        return result;
+    }
+    deferModulationEdit(voices, whole = false, motifId = this.state.currentMotifId) {
+        if (this.state.systemName === "MODULATION" && this.state.transportState === "PLAY" &&
+            motifId === this.state.playingMotifId) this.state.deferDouble(voices, whole);
     }
     // Normative grammar shared by editing commands and hardware routing.
     resolveContext() {
         const mode = !this.state.chainEnabled ? "NORMAL" : this.state.chainFocus ? "CHAIN_FOCUS" : "CHAIN";
         const playing = this.state.transportState === "PLAY";
-        return { mode, editingMotifId: this.state.currentMotifId, atActive: Boolean(this.state.atTransaction), structural: mode === "CHAIN",
+        return { system: this.state.systemName ?? "MOTIF", mode, editingMotifId: this.state.currentMotifId, atActive: Boolean(this.state.atTransaction), structural: mode === "CHAIN",
             navigation: !playing && this.state.atTransaction ? "STEP" : mode === "CHAIN_FOCUS" ? (playing ? "VIEW_OCCURRENCE" : "STEP")
                 : mode === "CHAIN" && !playing ? "CHAIN_OCCURRENCE" : playing ? "FUTURE" : "STEP" };
     }
@@ -50,6 +85,8 @@ export class LiRythmeActions {
         return false;
     }
     navigate(direction) {
+        const tx = this.rootState.atTransaction;
+        if (tx && this.state.systemName !== tx.system) return this.inSystem(tx.system, () => this.navigate(direction));
         const { navigation } = this.resolveContext();
         if (navigation === "FUTURE") return false;
         if (navigation === "STEP") {
@@ -57,7 +94,7 @@ export class LiRythmeActions {
             const duration = this.state.getMotifDuration(motifId);
             this.state.liveLengthCycle = null;
             this.state.playheadPosition = (this.state.playheadPosition + direction + duration) % duration;
-            this.onStepPreview?.(this.state.playheadPosition, motifId);
+            this.onStepPreview?.(this.state.playheadPosition, motifId, this.state.systemName);
             return true;
         }
         return this.navigateContext(direction);
@@ -65,11 +102,17 @@ export class LiRythmeActions {
     setClockStepHandler(handler) {
         this.clock.setClockStepHandler(() => {
             handler();
-            this.flushChainOccurrence();
-            if (this.motifTransitionPending) {
-                this.motifTransitionPending = false;
-                this.onMotifChange?.(this.state.playingMotifId);
+            if (this.modulationTransitionPending) {
+                this.modulationTransitionPending = false;
+                this.onModulationChange?.();
             }
+            this.forEachSystem(() => {
+                this.flushChainOccurrence();
+                if (this.motifTransitionPending) {
+                    this.motifTransitionPending = false;
+                    if (this.state.systemName === this.rootState.currentTimeline) this.onMotifChange?.(this.state.playingMotifId);
+                }
+            });
         });
     }
     toggleView() {
@@ -108,7 +151,7 @@ export class LiRythmeActions {
         const motif = this.state.getMotif(id);
         if (!this.state.chainFocus || !motif || !(this.state.chain.includes(id) ||
             motif.motifLength !== null || motif.voiceLengths.some(n => n !== null) ||
-            motif.events.some(row => row.some(Boolean)))) return false;
+            motif.events.some(row => row.some(Boolean)) || Object.values(motif.attributes ?? {}).some(rows => rows.some(row => row.some(value => value !== null))))) return false;
         this.state.chainViewIndex = this.state.chain.indexOf(id);
         this.state.currentMotifId = id;
         this.onMotifChange?.(id);
@@ -137,6 +180,8 @@ export class LiRythmeActions {
     captureMotifCopy(id) {
         const motif = this.state.getMotif(id);
         return motif ? { kind: "BANK_MOTIF", sourceId: id,
+            ...(this.state.systemName === "MODULATION" ? { system: "MODULATION" } : {}),
+            ...(motif.attributes !== undefined ? { attributes: structuredClone(motif.attributes) } : {}),
             ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
             ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
             ...(motif.atDestinations ? { atDestinations: structuredClone(motif.atDestinations) } : {}),
@@ -149,9 +194,11 @@ export class LiRythmeActions {
                 (id !== this.state.playingMotifId && id !== this.state.nextMotifId));
     }
     replaceMotif(id, motif) {
+        if (this.state.systemName === "MODULATION") motif.attributes ??= {};
+        this.deferModulationEdit([], true, id);
         this.state.motifs[id] = motif;
         this.state.onBankChange?.();
-        if (id === this.state.playingMotifId) {
+        if (id === this.state.playingMotifId && !(this.state.systemName === "MODULATION" && this.state.transportState === "PLAY")) {
             this.state.liveLengthCycle = null;
             this.state.playheadPosition = 0;
         }
@@ -159,6 +206,7 @@ export class LiRythmeActions {
     }
     applyMotifCopy(copy, id) {
         if (copy?.kind !== "BANK_MOTIF" || !this.state.getMotif(copy.sourceId) ||
+            (copy.system ?? "MOTIF") !== this.state.systemName ||
             !this.state.getMotif(id)) return false;
         // Destination protection never applies to source capture. Check it here,
         // even for self-copy, so a protected destination keeps COPY armed.
@@ -171,8 +219,10 @@ export class LiRythmeActions {
             !copy.voiceLengths.every(validLength) || !validLength(copy.motifLength) ||
             (copy.velocities !== undefined && !validVelocities(copy.velocities)) ||
             (copy.colors !== undefined && !validColors(copy.colors)) ||
-            (copy.atDestinations !== undefined && !validATDestinations(copy.atDestinations))) return false;
+            (copy.atDestinations !== undefined && !validATDestinations(copy.atDestinations)) ||
+            (copy.attributes !== undefined && !validExplicitAttributes(copy.attributes))) return false;
         this.replaceMotif(id, { events: copy.events.map(row => row.slice()),
+            ...(copy.attributes !== undefined ? { attributes: structuredClone(copy.attributes) } : {}),
             ...(copy.velocities ? { velocities: copy.velocities.map(row => row.slice()) } : {}),
             ...(copy.colors ? { colors: copy.colors.map(row => row.slice()) } : {}),
             ...(copy.atDestinations ? { atDestinations: structuredClone(copy.atDestinations) } : {}),
@@ -187,6 +237,7 @@ export class LiRythmeActions {
     deleteChainMotif(id) {
         if (!this.resolveContext().structural || !this.state.getMotif(id)) return false;
         const motif = this.state.getMotif(id);
+        this.deferModulationEdit([], true, id);
         // Preserve the engaged geometry, using the same deferred cycle as FOCUS.
         if (id === this.state.playingMotifId && this.state.transportState === "PLAY") {
             this.state.setTargetLength(null, { target: null, defer: true });
@@ -201,6 +252,7 @@ export class LiRythmeActions {
         delete motif.velocities;
         delete motif.colors;
         delete motif.atDestinations;
+        if (motif.attributes !== undefined) motif.attributes = {};
         for (let index = this.state.chain.length - 1; index >= 0; index--) {
             if (this.state.chain[index] === id) this.removeChainOccurrence(index);
         }
@@ -230,6 +282,10 @@ export class LiRythmeActions {
         this.clearNextMotif();
         this.refreshChainNext();
         if (!this.state.chainEnabled) this.onChainChange?.();
+        if (this.state.systemName === "MODULATION") {
+            this.rootState.modulationChainMode = this.state.chainEnabled;
+            this.state.onBankChange?.();
+        }
         return this.state.chainEnabled;
     }
     refreshChainNext(notify = true) {
@@ -248,6 +304,7 @@ export class LiRythmeActions {
             this.state.chainLoopMasterIndex++;
         }
         this.refreshChainNext();
+        if (this.state.systemName === "MODULATION") this.state.onBankChange?.();
         return true;
     }
     navigateContext(direction) {
@@ -292,6 +349,7 @@ export class LiRythmeActions {
             return false;
         }
         this.state.chainLoopMasterIndex = index === master ? null : index;
+        if (this.state.systemName === "MODULATION") this.state.onBankChange?.();
         this.refreshChainNext();
         return true;
     }
@@ -313,6 +371,7 @@ export class LiRythmeActions {
             this.state.chainLoopMasterIndex = null;
         }
         this.refreshChainNext();
+        if (this.state.systemName === "MODULATION") this.state.onBankChange?.();
         return true;
     }
     deleteChainNext() {
@@ -327,6 +386,7 @@ export class LiRythmeActions {
         this.state.chainPlayingDetached = true;
         this.chainOccurrencePending = false;
         this.refreshChainNext();
+        if (this.state.systemName === "MODULATION") this.state.onBankChange?.();
         return true;
     }
     flushChainOccurrence() {
@@ -382,14 +442,14 @@ export class LiRythmeActions {
     }
 
     startPlayback({ origin = "LOCAL" } = {}) {
-        this.clearNextMotif();
-        this.prepareChainStart();
+        this.modulationTransitionPending = false;
+        this.forEachSystem(() => { this.clearNextMotif(); this.prepareChainStart(); });
         const previousState = this.state.transportState;
 
         this.stopClock();
 
-        this.state.liveLengthCycle = null;
-        this.state.playheadPosition = 0;
+        this.forEachSystem(() => { this.state.liveLengthCycle = null; this.state.playheadPosition = 0; });
+        this.rootState.modulationActive = this.rootState.modulationRequested;
         this.clock.resetMidiPhase();
         this.state.transportState = "PLAY";
         this.startClock();
@@ -414,8 +474,10 @@ export class LiRythmeActions {
         const previousState = this.state.transportState;
 
         this.state.transportState = "PLAY";
-        if (previousState === "STOP") this.prepareChainStart();
-        else this.refreshChainNext();
+        if (previousState === "STOP") {
+            this.forEachSystem(() => this.prepareChainStart());
+            this.rootState.modulationActive = this.rootState.modulationRequested;
+        } else this.forEachSystem(() => this.refreshChainNext());
         this.startClock();
         this.notifyTransportTransition(previousState, origin);
         this.flushChainOccurrence();
@@ -429,7 +491,7 @@ export class LiRythmeActions {
     }
 
     pausePlayback({ origin = "LOCAL" } = {}) {
-        this.clearNextMotif();
+        this.forEachSystem(() => this.clearNextMotif());
         if (this.state.transportState === "PAUSE") {
             return;
         }
@@ -448,20 +510,21 @@ export class LiRythmeActions {
         );
     }
     stop({ origin = "LOCAL" } = {}) {
-        this.clearNextMotif();
+        this.modulationTransitionPending = false;
+        this.forEachSystem(() => this.clearNextMotif());
         const previousState = this.state.transportState;
 
         this.stopClock();
 
         this.state.transportState = "STOP";
-        if (this.state.chainEnabled) {
+        this.forEachSystem(() => { if (this.state.chainEnabled) {
             this.state.chainPlayingIndex = -1;
             this.state.chainPlayingDetached = true;
             this.chainOccurrencePending = false;
-        }
+        } });
         this.state.lockMode = false;
-        this.state.liveLengthCycle = null;
-        this.state.playheadPosition = 0;
+        this.forEachSystem(() => { this.state.liveLengthCycle = null; this.state.playheadPosition = 0; });
+        this.rootState.modulationActive = this.rootState.modulationRequested;
         this.clock.resetMidiPhase();
         this.notifyTransportTransition(previousState, origin);
 
@@ -503,6 +566,8 @@ export class LiRythmeActions {
         }
         const voiceId = this.state.selectedInstrument;
         if (!Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return;
+        if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= 32) return;
+        this.deferModulationEdit([voiceId]);
 
         this.state.motif[voiceId][stepIndex] =
             !this.state.motif[voiceId][stepIndex];
@@ -510,7 +575,8 @@ export class LiRythmeActions {
         if (velocities) velocities[voiceId][stepIndex] = 100;
         const colors = this.state.getMotif(this.state.currentMotifId).colors;
         if (colors) colors[voiceId][stepIndex] = false;
-        for (const rows of Object.values(this.state.getMotif(this.state.currentMotifId).atDestinations ?? {})) rows[voiceId][stepIndex] = null;
+        const editingMotif = this.state.getMotif(this.state.currentMotifId);
+        if (editingMotif.attributes === undefined) for (const rows of Object.values(editingMotif.atDestinations ?? {})) rows[voiceId][stepIndex] = null;
         this.state.onBankChange?.();
 
         console.log(
@@ -567,10 +633,11 @@ export class LiRythmeActions {
         this.clock.stop();
     }
     captureMusicalCopy(kind, voiceId) {
-        if (this.state.currentTimeline !== "MOTIF") return null;
         const motif = this.state.getMotif(this.resolveContext().editingMotifId);
         if (kind === "MOTIF") {
             return { kind, events: motif.events.map(row => row.slice()),
+                ...(this.state.systemName === "MODULATION" ? { system: "MODULATION" } : {}),
+                ...(motif.attributes !== undefined ? { attributes: structuredClone(motif.attributes) } : {}),
                 ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
                 ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
                 ...(motif.atDestinations ? { atDestinations: structuredClone(motif.atDestinations) } : {}),
@@ -578,6 +645,8 @@ export class LiRythmeActions {
         }
         if (kind !== "VOICE" || !Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return null;
         return { kind, events: motif.events[voiceId].slice(), length: motif.voiceLengths[voiceId],
+            ...(this.state.systemName === "MODULATION" ? { system: "MODULATION" } : {}),
+            ...(motif.attributes !== undefined ? { attributes: Object.fromEntries(Object.entries(motif.attributes).map(([key, rows]) => [key, rows[voiceId].slice()])) } : {}),
             ...(motif.velocities ? { velocities: motif.velocities[voiceId].slice() } : {}),
             ...(motif.colors ? { colors: motif.colors[voiceId].slice() } : {}),
             ...(motif.atDestinations ? { atDestinations: Object.fromEntries(Object.entries(motif.atDestinations)
@@ -585,7 +654,7 @@ export class LiRythmeActions {
     }
 
     applyVoiceCopy(copy, target) {
-        if (this.state.currentTimeline !== "MOTIF" || copy?.kind !== "VOICE" ||
+        if (copy?.kind !== "VOICE" || (copy.system ?? "MOTIF") !== this.state.systemName ||
             !Number.isInteger(target) || target < 0 || target >= 16 ||
             !Array.isArray(copy.events) || copy.events.length !== 32 ||
             !copy.events.every(event => typeof event === "boolean") ||
@@ -597,10 +666,20 @@ export class LiRythmeActions {
             (copy.atDestinations !== undefined && (!copy.atDestinations || typeof copy.atDestinations !== "object" ||
                 Array.isArray(copy.atDestinations) || !Object.entries(copy.atDestinations).every(([key, row]) =>
                     ["VELOCITY", "COLOR", "ROTATION"].includes(key) && validATDestinationRow(row))))) return false;
+        if (copy.attributes !== undefined && (!copy.attributes || typeof copy.attributes !== "object" || Array.isArray(copy.attributes) ||
+            !validExplicitAttributes(Object.fromEntries(Object.entries(copy.attributes)
+            .map(([key, row]) => [key, Array.from({ length: 16 }, () => row)]))))) return false;
+        this.deferModulationEdit([target]);
         // COPY preserves live phase for either clock source, using the existing transition.
         this.state.setTargetLength(copy.length, { target, defer: this.state.transportState === "PLAY" });
         this.state.motif[target] = copy.events.slice();
         const motif = this.state.getMotif(this.state.currentMotifId);
+        if (motif.attributes !== undefined) {
+            for (const key of new Set([...Object.keys(motif.attributes), ...Object.keys(copy.attributes ?? {})])) {
+                motif.attributes[key] ??= Array.from({ length: 16 }, () => Array(32).fill(null));
+                motif.attributes[key][target] = copy.attributes?.[key]?.slice() ?? Array(32).fill(null);
+            }
+        }
         if (copy.velocities || motif.velocities) {
             motif.velocities ??= createVelocities();
             motif.velocities[target] = copy.velocities?.slice() ?? Array(32).fill(100);
@@ -635,8 +714,9 @@ export class LiRythmeActions {
     }
 
     deleteViewMotif() {
-        if (!this.state.chainFocus || this.state.currentTimeline !== "MOTIF") return false;
+        if (!this.state.chainFocus) return false;
         const motif = this.state.getMotif(this.state.currentMotifId);
+        this.deferModulationEdit([], true);
         // Keep the engaged geometry until its natural boundary, exactly as
         // other live temporal edits do. Scheduled Note Offs remain untouched.
         if (this.state.currentMotifId === this.state.playingMotifId && this.state.transportState === "PLAY") {
@@ -652,17 +732,22 @@ export class LiRythmeActions {
         delete motif.velocities;
         delete motif.colors;
         delete motif.atDestinations;
+        if (motif.attributes !== undefined) motif.attributes = {};
         this.state.onBankChange?.();
         return true;
     }
 
     clearMotifEvents(voiceId = null) {
-        if (this.state.currentTimeline !== "MOTIF") return false;
         if (voiceId !== null && (!Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16)) return false;
+        this.deferModulationEdit(voiceId === null ? [] : [voiceId], voiceId === null);
         const rows = voiceId === null ? this.state.motif : [this.state.motif[voiceId]];
         // Existing scheduled Note Offs own active notes and remain untouched.
         for (const row of rows) row.fill(false);
         const motif = this.state.getMotif(this.state.currentMotifId);
+        if (motif.attributes !== undefined) {
+            if (voiceId === null) motif.attributes = {};
+            else for (const rows of Object.values(motif.attributes)) rows[voiceId].fill(null);
+        }
         if (voiceId === null) delete motif.velocities;
         else motif.velocities?.[voiceId].fill(100);
         if (voiceId === null) delete motif.atDestinations;
@@ -675,7 +760,7 @@ export class LiRythmeActions {
 
     doubleSelected() {
         const context = this.resolveContext();
-        if (context.atActive || this.state.currentTimeline !== "MOTIF") return false;
+        if (context.atActive) return false;
         const motif = this.state.getMotif(context.editingMotifId);
         const target = this.state.selectedInstrument;
         const whole = target === null;
@@ -683,7 +768,7 @@ export class LiRythmeActions {
         if (!motif || !whole && (!Number.isInteger(target) || target < 0 || target >= 16)) return false;
         if (whole && !canDouble(motif.motifLength)) return false;
         const voices = whole ? motif.voiceLengths.flatMap((length, id) =>
-            length !== null || motif.events[id].some(Boolean) ? [id] : []) : [target];
+            length !== null || motif.events[id].some(Boolean) || Object.values(motif.attributes ?? {}).some(rows => rows[id].some(v => v !== null)) ? [id] : []) : [target];
         if (voices.some(id => !canDouble(motif.voiceLengths[id]))) return false;
         // Prepare the entire replacement before touching the bank or live cycle.
         // Step-indexed attribute matrices share the event geometry, including future attributes.
@@ -698,6 +783,9 @@ export class LiRythmeActions {
                 }
             }
             for (const rows of Object.values(next.atDestinations ?? {})) {
+                for (let step = 0; step < length; step++) rows[id][step + length] = rows[id][step];
+            }
+            for (const rows of Object.values(next.attributes ?? {})) {
                 for (let step = 0; step < length; step++) rows[id][step + length] = rows[id][step];
             }
             next.voiceLengths[id] = length * 2;
@@ -716,7 +804,7 @@ export class LiRythmeActions {
 
     setSelectedLength(length) {
         return this.state.setTargetLength(length, {
-            defer: (this.state.chainEnabled || this.clock.source === "INTERNAL") && this.state.transportState === "PLAY"
+            defer: (this.state.systemName === "MODULATION" || this.state.chainEnabled || this.clock.source === "INTERNAL") && this.state.transportState === "PLAY"
         });
     }
 
@@ -732,15 +820,25 @@ export class LiRythmeActions {
     }
 
     selectMotifTimeline() {
-        this.state.currentTimeline = "MOTIF";
-
-        console.log("TIMELINE: MOTIF");
+        return this.selectTimeline("MOTIF");
     }
 
     selectModulationTimeline() {
-        this.state.currentTimeline = "MODULATION";
-
-        console.log("TIMELINE: MODULATION");
+        return this.selectTimeline("MODULATION");
+    }
+    selectTimeline(name) {
+        if (this.rootState.currentTimeline === name) return false;
+        this.rootState.currentTimeline = name;
+        this.onContextChange?.();
+        if (this.rootState.atTransaction) {
+            this.onATChange?.("context");
+            this.onChainChange?.();
+            return true;
+        }
+        this.onMotifChange?.(this.state.currentMotifId);
+        this.onChainChange?.();
+        this.onViewChange?.(this.state.currentView);
+        return true;
     }
     toggleFreezeMode() {
         this.state.freezeMode = !this.state.freezeMode;
@@ -776,11 +874,21 @@ export class LiRythmeActions {
             ) &&
             this.onStepPreview
         ) {
-            this.onStepPreview(this.state.playheadPosition);
+            this.onStepPreview(this.state.playheadPosition, this.at.getEditingMotifId(), this.state.systemName);
         }
     }
 
     nextStep({ preview = false } = {}) {
+        if (this.state.transportState === "PLAY") {
+            this.forEachSystem(() => this.advanceSystemStep());
+            if (this.rootState.modulation?.playheadPosition === 0) {
+                const changed = this.rootState.modulationActive !== this.rootState.modulationRequested;
+                this.rootState.modulationActive = this.rootState.modulationRequested;
+                if (changed) this.modulationTransitionPending = true;
+            }
+        } else this.advanceSystemStep({ preview });
+    }
+    advanceSystemStep({ preview = false } = {}) {
         this.state.advanceLiveLengthCycle();
         if (this.state.chainEnabled && this.state.transportState === "PLAY" && this.state.playheadPosition === 0) {
             this.refreshChainNext(false);
@@ -815,7 +923,7 @@ export class LiRythmeActions {
             ) &&
             this.onStepPreview
         ) {
-            this.onStepPreview(this.state.playheadPosition);
+            this.onStepPreview(this.state.playheadPosition, this.at.getEditingMotifId(), this.state.systemName);
         }
     }
     nextBook() {

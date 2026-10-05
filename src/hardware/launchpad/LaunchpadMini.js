@@ -37,7 +37,9 @@ export class LaunchpadMini {
         deviceName
     ) {
         this.midiManager = midiManager;
-        this.state = state;
+        this.rootState = state.rootState ?? state;
+        Object.defineProperty(this, "state", { get: () => this.rootState.forSystem?.(
+            this.rootState.atTransaction?.system ?? this.rootState.currentTimeline) ?? this.rootState });
         this.actions = actions;
         this.deviceName = deviceName;
         this.mapping = LaunchpadMapping;
@@ -46,6 +48,17 @@ export class LaunchpadMini {
         this.actions.setViewChangeHandler?.(() => this.drawView());
         this.actions.setMotifChangeHandler?.(() => this.drawSelectedMotif());
         this.actions.setNextMotifChangeHandler?.(() => this.drawBooks());
+        this.actions.onModulationChange = () => this.drawModulationStatus();
+        this.actions.onContextChange = () => {
+            const collecting = this.collectATLEDs;
+            this.collectATLEDs ||= Boolean(this.rootState.atTransaction);
+            try {
+                this.setCopyStage(null, null, { redraw: false });
+                this.setDeleteArmed(false);
+                for (const hold of this.chainMotifHolds.values()) clearTimeout(hold.timer);
+                this.chainMotifHolds.clear();
+            } finally { this.collectATLEDs = collecting; }
+        };
         this.chainConfirmations = new Map();
         this.chainNavigationFlashColor = null;
         this.chainNavigationFlashTimer = null;
@@ -81,6 +94,9 @@ export class LaunchpadMini {
         this.previousPressed = false;
         this.nextPressed = false;
         this.navigationCombo = false;
+        this.modulationPressed = false;
+        this.modulationBeatTimer = null;
+        this.modulationBeatLit = false;
 
         this.playStopTimer = null;
         this.transportPulseTimer = null;
@@ -178,6 +194,8 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.cancelModulationBeat();
+        this.modulationPressed = false;
         clearTimeout(this.atPadHold?.timer);
         this.atPadHold = null;
         this.atHeld.clear();
@@ -268,6 +286,9 @@ export class LaunchpadMini {
         this.updateBuffer = 0;
     }
     swapBuffers() {
+        // Collected colours already target both buffers; a swap is not a colour
+        // and must never enter the differential LED queue.
+        if (this.collectATLEDs) return;
         if (this.displayBuffer === 1) {
             this.sendController(
                 this.deviceName,
@@ -337,13 +358,13 @@ export class LaunchpadMini {
         const definition = this.actions.at.definition(tx.slot);
         // Older banks contain event values only; show these at their known step location.
         const assignedDestination = motif.atDestinations?.[definition?.id]?.[voice]?.[step] ?? "STEP";
-        return Boolean(assignedDestination === destination && motif.events[voice]?.[step] &&
+        return Boolean(assignedDestination === destination && (motif.attributes !== undefined || motif.events[voice]?.[step]) &&
             this.actions.at.definition(tx.slot)?.isAssigned?.(motif, voice, step));
     }
 
     hasMotifAT() {
         return Boolean(this.state.atTransaction && this.state.getMotif(this.actions.at.getEditingMotifId())
-            .events.some((row, voice) => row.some((event, step) => event && this.hasAssignedAT(voice, step, "MOTIF"))));
+            .events.some((row, voice) => row.some((event, step) => (event || this.state.systemName === "MODULATION") && this.hasAssignedAT(voice, step, "MOTIF"))));
     }
 
     getMotifStepColor(step) {
@@ -375,7 +396,7 @@ export class LaunchpadMini {
                 continue;
             }
 
-            if (steps[step]) {
+            if (steps[step] || Object.values(this.state.getMotif(this.actions.at.getEditingMotifId()).attributes ?? {}).some(rows => rows[voiceId][step] !== null)) {
                 if (target && this.hasAssignedAT(voiceId, step)) return this.colors.DIM_RED;
                 hasAnyVoice = true;
                 if (isSelectedInstrument) hasSelectedVoice = true;
@@ -390,7 +411,8 @@ export class LaunchpadMini {
         const explicitLength = selectedVoiceId === null
             ? this.state.motifLength : this.state.voiceLengths?.[selectedVoiceId];
         if (Number.isInteger(explicitLength) && step === explicitLength - 1) {
-            return hasAnyVoice ? this.colors.RED : this.colors.DIM_RED;
+            return this.state.systemName === "MODULATION" ? hasAnyVoice ? this.colors.GREEN : this.colors.DIM_GREEN
+                : hasAnyVoice ? this.colors.RED : this.colors.DIM_RED;
         }
 
         if (hasSelectedVoice) return this.colors.YELLOW;
@@ -608,6 +630,19 @@ export class LaunchpadMini {
     }
 
     getLibraryMotifColor(id) {
+        let color = this.getLibraryMotifBaseColor(id);
+        // COPY/refusal and FOCUS keep their existing visual priority.
+        if (this.copyDeniedPads.has(id) || id === this.copySuccessPad ||
+            this.state.chainFocus && id === this.state.currentMotifId) return color;
+        if (this.state.chainEnabled && ["YELLOW", "DIM_AMBER"].includes(color)) {
+            color = id === this.state.nextMotifId ? color === "YELLOW" ? "GREEN" : "DIM_GREEN" : "DIM_GREEN";
+        }
+        if (this.state.systemName === "MODULATION" && ["GREEN", "DIM_GREEN"].includes(color)) {
+            return color === "GREEN" ? "RED" : "DIM_RED";
+        }
+        return color;
+    }
+    getLibraryMotifBaseColor(id) {
         if (this.copyDeniedPads.has(id)) return "RED";
         if (id === this.copySuccessPad) return "YELLOW";
         if (this.copyStage === "TARGET" && this.copySource?.kind === "BANK_MOTIF" &&
@@ -643,7 +678,7 @@ export class LaunchpadMini {
         const motif = this.state.getMotif(id);
         const hasData = motif && (motif.motifLength !== null ||
             motif.voiceLengths.some(length => length !== null) ||
-            motif.events.some(row => row.some(Boolean)));
+            motif.events.some(row => row.some(Boolean)) || Object.values(motif.attributes ?? {}).some(rows => rows.some(row => row.some(v => v !== null))));
         return hasData ? (this.state.chainEnabled ? "DIM_AMBER" : this.layout.BOOKS.MOTIF_LIBRARY_IDLE) : "OFF";
     }
 
@@ -713,14 +748,18 @@ export class LaunchpadMini {
         for (const [name, controller] of Object.entries(
             this.mapping.TOP_CONTROLS
         )) {
+            if (name === "MODULATION") continue;
             const colorName = this.layout.TOP_CONTROLS[name];
             const colorValue = this.colors[colorName];
 
             this.setTopLed(controller, colorValue);
         }
+        this.drawModulationStatus();
     }
 
     drawTransport() {
+        if (this.rootState.transportState !== "PLAY") this.cancelModulationBeat();
+        this.drawModulationStatus();
         if (this.state.transportState === "PLAY") {
             this.cancelStepNavigationHold();
             if (this.focusNavigationHeld?.size) this.focusNavigationConsumed = true;
@@ -853,8 +892,10 @@ export class LaunchpadMini {
                 const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
                 const voices = this.state.atTransaction.instruments;
                 const occupied = motif.events.some((row, id) => (!voices.size || voices.has(id)) && row[step]);
+                const modulation = this.state.systemName === "MODULATION";
                 this.setLed(this.mapping.MOTIF[step], this.getMotifStepColor(step) === this.colors.DIM_RED
-                    ? this.colors.RED : occupied ? this.colors.GREEN : this.colors.DIM_GREEN);
+                    ? this.colors.RED : occupied ? modulation ? this.colors.RED : this.colors.GREEN
+                        : modulation ? this.colors.DIM_RED : this.colors.DIM_GREEN);
                 this.drawInstruments();
                 this.drawATValues();
             } finally { this.collectATLEDs = collecting; }
@@ -869,7 +910,8 @@ export class LaunchpadMini {
 
         // Explicit boundaries retain priority; ordinary MOTIF cells show the cursor.
         const motifColor = this.getMotifStepColor(step);
-        if (motifColor === this.colors.RED || motifColor === this.colors.DIM_RED) {
+        const boundaryColors = this.state.systemName === "MODULATION" ? [this.colors.GREEN, this.colors.DIM_GREEN] : [this.colors.RED, this.colors.DIM_RED];
+        if (boundaryColors.includes(motifColor)) {
             this.setLed(note, motifColor);
             return;
         }
@@ -890,7 +932,7 @@ export class LaunchpadMini {
         } else {
             this.setLed(
                 note,
-                hasSelectedVoice
+                motifColor === this.colors.YELLOW || motifColor === this.colors.DIM_AMBER
                     ? this.colors.RED
                     : this.colors.DIM_RED
             );
@@ -1166,6 +1208,33 @@ export class LaunchpadMini {
         this.drawCopyStatus();
         this.drawDeleteStatus();
     }
+    drawModulationStatus() {
+        const chain = this.rootState.forSystem("MODULATION").chainEnabled;
+        if (!chain) this.cancelModulationBeat();
+        const active = chain ? this.rootState.modulationActive : this.rootState.modulationRequested;
+        const beat = chain && this.modulationBeatLit && this.rootState.transportState === "PLAY";
+        const color = active ? (beat ? this.colors.YELLOW : this.colors.RED)
+            : (beat ? this.colors.DIM_AMBER : this.colors.DIM_RED);
+        this.sendController(this.deviceName, [0xB0, this.mapping.TOP_CONTROLS.MODULATION, (color & 0x33) | 4]);
+    }
+
+    cancelModulationBeat() {
+        clearTimeout(this.modulationBeatTimer);
+        this.modulationBeatTimer = null;
+        this.modulationBeatLit = false;
+    }
+
+    pulseModulationBeat() {
+        this.cancelModulationBeat();
+        if (this.rootState.transportState !== "PLAY" || !this.rootState.forSystem("MODULATION").chainEnabled) return;
+        this.modulationBeatLit = true;
+        this.drawModulationStatus();
+        this.modulationBeatTimer = setTimeout(() => {
+            this.modulationBeatTimer = null;
+            this.modulationBeatLit = false;
+            this.drawModulationStatus();
+        }, TRANSPORT_PULSE_MS);
+    }
 
     drawCopyStatus() {
         if (this.state.atTransaction) return this.drawATValues();
@@ -1199,9 +1268,10 @@ export class LaunchpadMini {
             if (!tx.steps.size || tx.steps.has(step)) {
                 for (let voice = 0; voice < 16; voice++) {
                     if ((!tx.instruments.size || tx.instruments.has(voice)) &&
-                        motif.events[voice][step]) {
-                        if (motif.colors?.[voice]?.[step]) colorCount++;
-                        if (motif.velocities?.[voice]?.[step] !== undefined) velocities.add(motif.velocities[voice][step]);
+                        (motif.events[voice][step] || motif.attributes !== undefined)) {
+                        if (motif.attributes !== undefined ? motif.attributes.COLOR?.[voice]?.[step] === true : motif.colors?.[voice]?.[step]) colorCount++;
+                        const velocity = motif.attributes !== undefined ? motif.attributes.VELOCITY?.[voice]?.[step] : motif.velocities?.[voice]?.[step];
+                        if (velocity != null) velocities.add(velocity);
                     }
                 }
             }
@@ -1327,10 +1397,36 @@ export class LaunchpadMini {
     }
 
     handleMidiMessage(data) {
+        const collecting = this.collectATLEDs;
+        const contextNavigation = this.rootState.transportState === "PLAY" && data[0] === 0xB0 &&
+            [this.mapping.TOP_CONTROLS.PREVIOUS, this.mapping.TOP_CONTROLS.NEXT].includes(data[1]) &&
+            !this.playStopPressed;
+        this.collectATLEDs ||= contextNavigation;
+        try {
+            return this.handleControllerMessage(data);
+        } finally {
+            this.collectATLEDs = collecting;
+        }
+    }
+
+    handleControllerMessage(data) {
         const [rawStatus, number, rawValue] = data;
         const status = rawStatus === 0x80 ? 0x90 : rawStatus;
         const value = rawStatus === 0x80 ? 0 : rawValue;
         const inputKey = status + ":" + number;
+        if (status === 0xB0 && number === this.mapping.TOP_CONTROLS.MODULATION) {
+            if (value > 0 && !this.modulationPressed) {
+                this.modulationPressed = true;
+                const collecting = this.collectATLEDs;
+                this.collectATLEDs ||= Boolean(this.rootState.atTransaction);
+                try {
+                    if (this.shiftPressed) this.actions.toggleModulationChain();
+                    else this.actions.toggleModulation();
+                    this.drawBooks();
+                } finally { this.collectATLEDs = collecting; }
+            } else if (value === 0) this.modulationPressed = false;
+            return;
+        }
         if (this.handleATInput(status, number, value, inputKey)) return;
         const chainHold = this.chainMotifHolds.get(inputKey);
         if (chainHold) {
@@ -1406,6 +1502,9 @@ export class LaunchpadMini {
                         if (this.actions.doubleSelected()) this.requestInstrumentFeedback();
                         this.doubleNavigationHeld = false;
                         return;
+                    } else if (this.state.transportState === "PLAY") {
+                        if (controlName === "PREVIOUS") this.actions.selectMotifTimeline();
+                        else this.actions.selectModulationTimeline();
                     } else if (this.shiftPressed && !this.state.chainEnabled && this.state.transportState !== "PLAY") {
                         if (controlName === "PREVIOUS") this.actions.selectMotifTimeline();
                         else this.actions.selectModulationTimeline();
@@ -1415,11 +1514,14 @@ export class LaunchpadMini {
                         this.actions.navigate(controlName === "PREVIOUS" ? -1 : 1);
                     }
                     if (this.actions.resolveContext().navigation === "CHAIN_OCCURRENCE") this.flashChainNavigationBoundary(controlName);
-                    this.drawMotif();
-                    this.drawPlayhead();
-                    this.drawInstruments();
-                    this.swapBuffers();
-                    this.drawTimelineSelection();
+                    if (this.state.atTransaction) this.drawATChange("context");
+                    else {
+                        this.drawMotif();
+                        this.drawPlayhead();
+                        this.drawInstruments();
+                        this.swapBuffers();
+                        this.drawTimelineSelection();
+                    }
                 }
                 if (!this.focusNavigationHeld.size) {
                     this.doubleNavigationHeld = false;
@@ -1520,7 +1622,7 @@ export class LaunchpadMini {
             if (value > 0) {
                 this.deleteConsumedInputs.add(inputKey);
                 if (this.copyStage) this.setCopyStage(null);
-                else if (!this.shiftPressed && (this.state.currentTimeline === "MOTIF" || this.state.currentView === "MOTIF_LIBRARY")) {
+                else if (!this.shiftPressed && (["MOTIF", "MODULATION"].includes(this.state.currentTimeline) || this.state.currentView === "MOTIF_LIBRARY")) {
                     this.setDeleteArmed(false);
                     this.setCopyStage("SOURCE");
                 }
@@ -1530,7 +1632,7 @@ export class LaunchpadMini {
         if (controlName === "DELETE") {
             if (value > 0) {
                 this.deleteConsumedInputs.add(inputKey);
-                if (this.deleteArmed || this.state.currentTimeline === "MOTIF" || this.state.currentView === "MOTIF_LIBRARY" || this.state.currentView === "PLAY") {
+                if (this.deleteArmed || ["MOTIF", "MODULATION"].includes(this.state.currentTimeline) || this.state.currentView === "MOTIF_LIBRARY" || this.state.currentView === "PLAY") {
                     this.setCopyStage(null);
                     this.setDeleteArmed(!this.deleteArmed);
                 }
@@ -1539,7 +1641,7 @@ export class LaunchpadMini {
         }
         if (!atActive && this.copyStage && value > 0) {
             this.deleteConsumedInputs.add(inputKey);
-            if (controlType === "INSTRUMENT" && this.state.currentTimeline === "MOTIF") {
+            if (controlType === "INSTRUMENT" && ["MOTIF", "MODULATION"].includes(this.state.currentTimeline)) {
                 if (this.copyStage === "SOURCE") {
                     this.setCopyStage("TARGET", this.actions.captureMusicalCopy("VOICE", controlPosition));
                 } else if (this.actions.applyVoiceCopy(this.copySource, controlPosition)) {

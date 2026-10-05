@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { readPlayMotif, initializePlayMotifUI } from "../src/PlayMotifUI.mjs";
 import { initializePlayStatusUI } from "../src/PlayStatusUI.mjs";
+import { initializePlayChainUI } from "../src/PlayChainUI.mjs";
 
 const source = file => fs.readFile(new URL(`../${file}`, import.meta.url), "utf8");
 const url = text => `data:text/javascript;base64,${Buffer.from(text.replace('"./ATTransaction.mjs"', JSON.stringify(new URL("../src/ATTransaction.mjs", import.meta.url).href))).toString("base64")}`;
@@ -10,6 +11,43 @@ const pad = url(await source("src/PadConfiguration.js"));
 const { LiRythmeState } = await import(url((await source("src/LiRythmeState.js")).replace('"./PadConfiguration.js"', JSON.stringify(pad))));
 const { LiRythmeClock } = await import(url(await source("src/LiRythmeClock.js")));
 const { LiRythmeActions } = await import(url(await source("src/LiRythmeActions.js")));
+
+test("PLAY keeps both banks and Chains visible and reports effective modulation activation", () => {
+    const state = new LiRythmeState();
+    state.selectedInstrument = null;
+    state.setTargetLength(8);
+    state.modulation.setTargetLength(5);
+    state.chain = [0, 2]; state.chainEnabled = true;
+    state.modulation.chain = [3, 4, 3]; state.modulation.chainEnabled = true;
+    const elements = new Map();
+    const document = { getElementById(id) {
+        if (!elements.has(id)) elements.set(id, { textContent: "", children: [],
+            classList: { toggle() {} }, replaceChildren(...children) { this.children = children; } });
+        return elements.get(id);
+    }, createElement() { return {}; } };
+    const panels = ["MOTIF", "MODULATION"].map(system => initializePlayMotifUI({ state, system, document }));
+    const chains = ["MOTIF", "MODULATION"].map(system => initializePlayChainUI({ state, system, document }));
+    const value = id => elements.get(id).textContent;
+    for (const context of ["MOTIF", "MODULATION"]) {
+        state.currentTimeline = context;
+        const before = JSON.stringify([state, state.modulation]);
+        panels.forEach(panel => panel.render()); chains.forEach(chain => chain.render());
+        assert.equal(value("play-motif-title"), "MOTIF 01");
+        assert.equal(value("play-modulation-title"), "MODULATION 01");
+        assert.equal(value("play-motif-duration"), "8 STEPS");
+        assert.equal(value("play-modulation-duration"), "5 STEPS");
+        assert.deepEqual(elements.get("play-chain-occurrences").children.map(x => x.textContent), ["[01]", "[03]"]);
+        assert.deepEqual(elements.get("play-modulation-chain-occurrences").children.map(x => x.textContent), ["[04]", "[05]", "[04]"]);
+        assert.equal(JSON.stringify([state, state.modulation]), before);
+    }
+    for (const [active, requested, expected] of [
+        [false, false, "OFF"], [false, true, "OFF → ON (en attente)"],
+        [true, true, "ON"], [true, false, "ON → OFF (en attente)"]
+    ]) {
+        state.modulationActive = active; state.modulationRequested = requested;
+        panels[1].render(); assert.equal(value("play-modulation-active"), expected);
+    }
+});
 
 test("current single Motif convention, actual matrix duration and unavailable Play Mode", () => {
     const state = new LiRythmeState();
@@ -95,7 +133,8 @@ test("MOTIF layout preserves order, empty CHAIN and reserved clock without contr
     const header = html.slice(html.indexOf('<section id="play-page"'), html.indexOf('<div class="play-zones">'));
     assert.doesNotMatch(header, /play-selected|SELECTION|SELECTED/);
     assert.ok(zone.indexOf('id="play-modulation"') < zone.indexOf('id="play-selection"'));
-    assert.match(zone, /<h3 id="play-modulation-title">MODULATION<\/h3>\s*<\/section>/);
+    for (const field of ["title", "active", "duration", "step", "mode", "chain-occurrences"])
+        assert.ok(zone.includes(`id="play-modulation-${field}"`));
     assert.match(zone, /<h3 id="play-selection-title">SELECTION<\/h3>\s*<p id="play-selected"/);
     const footer = zone.match(/<footer id="play-footer-3"[^>]*>([\s\S]*?)<\/footer>/)[1];
     assert.deepEqual([...footer.matchAll(/<span id="play-footer-(\w+)"[^>]*><\/span>/g)].map(match => match[1]),

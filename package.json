@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "build:windows-portable": "node scripts/build-windows-portable.mjs",
-    "test": "node --test scripts/test-at.mjs scripts/test-pad-configuration.mjs scripts/test-pad-library.mjs scripts/test-pad-editor.mjs scripts/test-play-status.mjs scripts/test-play-motif.mjs scripts/test-polymetric.mjs scripts/test-audio-voices.mjs"
+    "test": "node --test scripts/test-at.mjs scripts/test-pad-configuration.mjs scripts/test-pad-library.mjs scripts/test-pad-editor.mjs scripts/test-play-status.mjs scripts/test-play-motif.mjs scripts/test-polymetric.mjs scripts/test-audio-voices.mjs scripts/test-modulation.mjs"
   },
   "keywords": [],
   "author": "",

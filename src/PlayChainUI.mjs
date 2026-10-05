@@ -1,6 +1,7 @@
 // Read-only occurrence projection. A detached cursor denotes the gap left by
 // deleting PLAYING; it must never highlight the preceding occurrence.
-export function readPlayChain(state) {
+export function readPlayChain(state, system) {
+    state = system ? (state.forSystem?.(system) ?? state) : (state.editingState ?? state);
     const chain = state.chain ?? [];
     const enabled = state.chainEnabled && chain.length > 0;
     const stopped = state.transportState === "STOP";
@@ -16,14 +17,18 @@ export function readPlayChain(state) {
     }));
 }
 
-export function initializePlayChainUI({ state, actions, document = globalThis.document }) {
-    const container = document.getElementById("play-chain-occurrences");
+export function initializePlayChainUI({ state, actions, system, document = globalThis.document }) {
+    const container = document.getElementById(system === "MODULATION" ? "play-modulation-chain-occurrences" : "play-chain-occurrences");
     let previous = "";
     function render() {
-        const occurrences = readPlayChain(state);
-        const signature = JSON.stringify(occurrences);
+        const occurrences = readPlayChain(state, system);
+        const modulation = (system ?? state.currentTimeline) === "MODULATION";
+        const signature = JSON.stringify([modulation, occurrences]);
         if (signature === previous) return;
         previous = signature;
+        container.classList?.toggle("is-modulation", modulation);
+        const title = document.getElementById(system === "MODULATION" ? "modulation-chain-title" : "motif-chain-title");
+        if (title) title.textContent = modulation ? "CHAIN MODULATION" : "CHAIN";
         container.replaceChildren(...occurrences.map(occurrence => {
             const element = document.createElement("span");
             element.className = `chain-occurrence${occurrence.playing || occurrence.selected ? " is-playing" : ""}${occurrence.loopMaster ? " is-loop-master" : ""}`;
@@ -31,7 +36,7 @@ export function initializePlayChainUI({ state, actions, document = globalThis.do
             return element;
         }));
     }
-    actions.onChainChange = render;
+    if (actions) actions.onChainChange = render;
     render();
     return { render };
 }

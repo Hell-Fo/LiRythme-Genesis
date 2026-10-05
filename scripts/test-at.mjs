@@ -260,7 +260,7 @@ test("live CHAIN change and FOCUS navigation preserve the captured A/T motif", t
     assert.equal(state.playingMotifId, 1); assert.equal(state.viewMotifId, 2);
 });
 
-test("FOCUS chord and occurrence navigation retain their grammar during VELOCITY", t => {
+test("FOCUS chord stays exclusive; PLAY context selection preserves captured VELOCITY target", t => {
     const { state, actions, c, clock, tap, press, release, begin } = setup(t);
     state.chainEnabled = true; state.chain = [0, 1, 1, 2]; state.chainPlayingIndex = 0;
     state.chainPlayingDetached = false; state.chainLoopMasterIndex = 3;
@@ -269,10 +269,10 @@ test("FOCUS chord and occurrence navigation retain their grammar during VELOCITY
     begin();
     press(110, 0xB0); press(111, 0xB0); release(110, 0xB0); release(111, 0xB0);
     assert.equal(state.chainFocus, true); assert.equal(state.chainViewIndex, 0);
-    tap(111, 0xB0); assert.equal(state.chainViewIndex, 1);
+    tap(111, 0xB0); assert.equal(state.chainViewIndex, 0); assert.equal(state.currentTimeline, "MODULATION");
     tap(8); assert.equal(velocity(state, 12, 0, 1), 100); assert.equal(velocity(state, 12, 0, 0), 127);
-    tap(111, 0xB0); assert.equal(state.chainViewIndex, 2); assert.equal(state.currentMotifId, 1);
-    tap(111, 0xB0); assert.equal(state.chainViewIndex, 3); assert.equal(state.currentMotifId, 2);
+    tap(111, 0xB0); assert.equal(state.chainViewIndex, 0); assert.equal(state.currentMotifId, 0);
+    tap(110, 0xB0); assert.equal(state.currentTimeline, "MOTIF"); assert.equal(state.chainViewIndex, 0);
     tap(120); assert.equal(velocity(state, 12, 0, 0), 16); assert.equal(velocity(state, 12, 0, 2), 100);
     assert.equal(state.playheadPosition, 7); assert.equal(state.playingMotifId, 0);
     const context = musicalContext(state, clock);
@@ -574,18 +574,18 @@ test(`CHAIN A/T EDIT VIEW stays on 05 while PLAYING advances 03/08 (FOCUS ${focu
     assert.equal(c.getMotifStepColor(1), focus ? c.colors.RED : c.colors.DIM_RED);
 });
 
-test("A/T outside CHAIN retains contextual editing without capturing a motif", t => {
+test("A/T outside CHAIN retains its captured target across navigation", t => {
     const { state, actions, begin } = setup(t);
     state.getMotif(0).events[12][0] = true;
     state.getMotif(1).events[13][1] = true;
     begin();
-    assert.equal(state.atTransaction.editingMotifId, null);
+    assert.equal(state.atTransaction.editingMotifId, 0);
     actions.at.apply(0);
     state.currentMotifId = 1;
-    assert.equal(actions.at.getEditingMotifId(), 1);
+    assert.equal(actions.at.getEditingMotifId(), 0);
     actions.at.apply(7);
-    assert.equal(velocity(state, 12, 0, 0), 127);
-    assert.equal(velocity(state, 13, 1, 1), 16);
+    assert.equal(velocity(state, 12, 0, 0), 16);
+    assert.equal(velocity(state, 13, 1, 1), 100);
     actions.at.finish(false);
     assert.equal(velocity(state, 12, 0, 0), 100);
     assert.equal(velocity(state, 13, 1, 1), 100);

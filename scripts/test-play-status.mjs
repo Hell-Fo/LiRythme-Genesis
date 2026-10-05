@@ -175,7 +175,7 @@ test("PLAY has only informational markup and app wires rendering before transpor
         assert.match(play, new RegExp(`<dd id="play-${key}">`));
     }
     const app = await source("src/app.js");
-    assert.match(app, /initializePlayStatusUI\(\{ state, clock, midiManager,\s*renderMotif: motifUI.render, renderFooter:/);
+    assert.match(app, /initializePlayStatusUI\(\{ state, clock, midiManager,\s*renderMotif: \(\) => \{ motifUI.render\(\); modulationUI.render\(\); \}, renderFooter:/);
     assert.match(app, /setTransportTransitionHandler\(\s*\(\{ from, to, origin, transportRevision \}\) => \{\s*playStatusUI.render\(\);/);
     assert.doesNotMatch(await source("src/PlayStatusUI.mjs"), /innerHTML|\.actions|\.setTempo\(|\.setSource\(|\.send\(/);
 });

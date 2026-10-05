@@ -3,6 +3,7 @@ import { AT_SLOTS, hasTargetEvents } from "./ATTransaction.mjs";
 export function readATPanel(state) {
     const tx = state.atTransaction;
     if (!tx) return null;
+    state = state.forSystem?.(tx.system ?? "MOTIF") ?? state;
     const definition = AT_SLOTS[tx.slot];
     const valueIndex = hasTargetEvents(state.getMotif(tx.editingMotifId ?? state.currentMotifId), tx) ? tx.valueIndex : null;
     const instruments = [...tx.instruments].sort((a, b) => a - b).map(id =>
@@ -11,6 +12,7 @@ export function readATPanel(state) {
     return { name: definition.id, target: instruments
         ? instruments + (steps ? ` · ${steps}` : "") : steps ? `STEPS ${steps}` : "MOTIF",
         motif: (tx.editingMotifId ?? state.currentMotifId) + 1,
+        ...(tx.system === "MODULATION" ? { system: "MODULATION" } : {}),
         values: definition.id === "ROTATION" ? ["<<  −1 STEP", ">>  +1 STEP"]
             : definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.values,
         selected: definition.id === "COLOR" ? (valueIndex === null ? null : 0) : valueIndex };
@@ -31,7 +33,7 @@ export function initializePlayATUI({ state, document = globalThis.document }) {
         title.textContent = status?.name ?? "SELECTION";
         if (!status) return;
         field("play-at-target").textContent = status.target;
-        field("play-at-motif").textContent = `MOTIF ${String(status.motif).padStart(2, "0")}`;
+        field("play-at-motif").textContent = `${status.system ?? "MOTIF"} ${String(status.motif).padStart(2, "0")}`;
         for (let index = 0; index < 8; index++) {
             const value = status.values[index];
             const row = field(`play-at-value-${index}`);
