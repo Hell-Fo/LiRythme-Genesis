@@ -59,7 +59,7 @@ export function validateDocument(doc) {
             if (typeof v.name !== "string") error(`${key} → name`, "chaîne de caractères obligatoire.");
             if (v.type === "AUDIO") {
                 fields(v, ["name", "type", "output", "source"], key);
-                if (!["LEFT", "RIGHT"].includes(v.output)) error(`${key} → output`, "LEFT ou RIGHT requis.");
+                if (!["LEFT", "RIGHT", "STEREO"].includes(v.output)) error(`${key} → output`, "LEFT, RIGHT ou STEREO requis.");
                 if (typeof v.source !== "string" || (v.source !== "" && !/\.wav$/i.test(v.source))) error(`${key} → source`, "Chemin vers un fichier .wav requis.");
                 continue;
             }

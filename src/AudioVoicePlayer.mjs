@@ -22,7 +22,8 @@ export class AudioVoicePlayer {
                 const input = decoded.getChannelData(channel);
                 for (let i = 0; i < data.length; i++) data[i] += input[i] / decoded.numberOfChannels;
             }
-            entry.buffer = mono;
+            entry.buffer = decoded;
+            entry.monoBuffer = mono;
             await this.resume();
             entry.status = "Prêt — sortie audio système";
         } catch (error) { entry.status = `Audio indisponible : ${error.message}`; }
@@ -40,14 +41,26 @@ export class AudioVoicePlayer {
     }
     async resume() { if (this.ctx?.state === "suspended") await this.ctx.resume(); }
     trigger(voice, velocity = 100) {
-        const buffer = this.samples.get(voice.source)?.buffer;
-        if (!buffer || this.ctx?.state !== "running" || !["LEFT", "RIGHT"].includes(voice.output)) return false;
-        const source = this.ctx.createBufferSource(), gain = this.ctx.createGain(), merger = this.ctx.createChannelMerger(2);
+        const sample = this.samples.get(voice.source);
+        const stereo = voice.output === "STEREO";
+        const buffer = stereo ? sample?.buffer : sample?.monoBuffer;
+        if (!buffer || this.ctx?.state !== "running" || !["LEFT", "RIGHT", "STEREO"].includes(voice.output)) return false;
+        const source = this.ctx.createBufferSource(), gain = this.ctx.createGain();
+        const merger = stereo ? null : this.ctx.createChannelMerger(2);
         source.buffer = buffer;
         gain.gain.value = Math.max(0, Math.min(127, velocity)) / 127;
-        source.connect(gain); gain.connect(merger, 0, voice.output === "LEFT" ? 0 : 1);
-        merger.connect(this.ctx.destination);
-        source.onended = () => { this.active.delete(source); source.disconnect(); gain.disconnect(); merger.disconnect(); };
+        source.connect(gain);
+        if (stereo) {
+            // Speaker upmix duplicates a mono source on L/R and preserves stereo channels.
+            gain.channelCount = 2;
+            gain.channelCountMode = "explicit";
+            gain.channelInterpretation = "speakers";
+            gain.connect(this.ctx.destination);
+        } else {
+            gain.connect(merger, 0, voice.output === "LEFT" ? 0 : 1);
+            merger.connect(this.ctx.destination);
+        }
+        source.onended = () => { this.active.delete(source); source.disconnect(); gain.disconnect(); merger?.disconnect(); };
         this.active.add(source);
         source.start();
         return true;

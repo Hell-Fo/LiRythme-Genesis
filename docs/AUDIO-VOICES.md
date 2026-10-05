@@ -4,15 +4,17 @@ Validation utilisateur : fonctionnement des voix Audio confirmé à l'écoute
 après l'implémentation (« one shot deal, c'est parfait »).
 
 Dans Settings, charger ou créer un preset, sélectionner une voix puis choisir
-le type **Audio**, la sortie **Left** ou **Right**, et un fichier `.wav`.
+le type **Audio**, la sortie **Left**, **Right** ou **Stereo**, et un fichier `.wav`.
 SAVE conserve le chemin du fichier et le routage dans le preset. Les fichiers
 audio restent externes : les déplacer nécessite de les sélectionner à nouveau.
 L'édition est autorisée en STOP/PAUSE, verrouillée pendant PLAY.
 
 Chaque événement déclenche le sample entier, sans boucle. Plusieurs occurrences
 peuvent se superposer. La vélocité règle le gain (127 = gain unitaire). Un WAV
-stéréo est réduit en mono par moyenne des canaux, puis envoyé exclusivement
-à gauche ou à droite de la sortie audio système par défaut. COLOR ne change pas
+stéréo est réduit en mono par moyenne des canaux en mode **Left** ou **Right**, puis envoyé exclusivement
+à gauche ou à droite de la sortie audio système par défaut. En mode **Stereo**, les canaux
+du fichier stéréo sont conservés ; un fichier mono est réparti sur L et R.
+Le fichier source reste inchangé. COLOR ne change pas
 le sample. Aucun message MIDI n'est émis pour une voix Audio.
 
 Le chargement et le décodage sont effectués en amont; aucun accès disque ni

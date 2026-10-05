@@ -16,16 +16,18 @@ test('Audio preset edits, transitions, validation and persistence', () => {
     editPadVoice(state, 12, 'audioOutput', 'RIGHT');
     const next = parseConfiguration(serializeConfiguration(state.padConfiguration));
     assert.deepEqual(next.voices[12], { id: 12, name: 'Kick', type: 'AUDIO', output: 'RIGHT', source: 'C:\\Samples\\Kick.wav' });
+    editPadVoice(state, 12, 'audioOutput', 'STEREO');
+    assert.equal(parseConfiguration(serializeConfiguration(state.padConfiguration)).voices[12].output, 'STEREO');
     const before = state.padConfiguration;
     assert.throws(() => editPadVoice(state, 12, 'source', 'bad.mp3'));
-    assert.throws(() => editPadVoice(state, 12, 'audioOutput', 'STEREO'));
+    assert.throws(() => editPadVoice(state, 12, 'audioOutput', 'INVALID'));
     assert.equal(state.padConfiguration, before);
     state.transportState = 'PLAY'; assert.throws(() => editPadVoice(state, 12, 'source', 'x.wav'));
     state.transportState = 'PAUSE'; editPadVoice(state, 12, 'type', 'MIDI DRUM');
     assert.equal(state.padConfiguration.voices[12].source, undefined);
 });
 
-function context() {
+function context(channels = 2) {
     const nodes = [];
     const node = kind => {
         const n = { kind, connections: [], gain: {}, connect(...args) { this.connections.push(args); }, disconnect() {},
@@ -33,7 +35,7 @@ function context() {
         nodes.push(n); return n;
     };
     return { nodes, state: 'running', destination: {},
-        async decodeAudioData() { return { length: 2, sampleRate: 48000, numberOfChannels: 2,
+        async decodeAudioData() { return { length: 2, sampleRate: 48000, numberOfChannels: channels,
             getChannelData: c => new Float32Array(c ? [0, 1] : [1, 0]) }; },
         createBuffer(channels, length) { const data = new Float32Array(length); return { getChannelData: () => data }; },
         createBufferSource: () => node('source'), createGain: () => node('gain'), createChannelMerger: () => node('merger') };
@@ -44,7 +46,7 @@ for (const side of ['LEFT', 'RIGHT']) test(`Audio ${side}: preloaded mono mix, v
     const voice = { type: 'AUDIO', source: 'kick.wav', output: side };
     assert.equal(player.trigger(voice), false);
     await player.load(voice.source); await player.load(voice.source); assert.equal(reads, 1);
-    assert.deepEqual([...player.samples.get(voice.source).buffer.getChannelData(0)], [0.5, 0.5]);
+    assert.deepEqual([...player.samples.get(voice.source).monoBuffer.getChannelData(0)], [0.5, 0.5]);
     assert.equal(player.trigger(voice, 64), true); assert.equal(player.trigger(voice, 127), true);
     const gain = ctx.nodes.find(n => n.kind === 'gain');
     assert.equal(gain.gain.value, 64 / 127);
@@ -52,6 +54,27 @@ for (const side of ['LEFT', 'RIGHT']) test(`Audio ${side}: preloaded mono mix, v
     assert.equal(player.active.size, 2); player.stop(); assert.equal(player.active.size, 0);
     assert.ok(ctx.nodes.filter(n => n.kind === 'source').every(n => n.stopped));
     player.sync([]); assert.equal(player.samples.size, 0);
+});
+for (const channels of [1, 2]) test(`Audio STEREO: preserves ${channels} source channels and routes to L/R`, async () => {
+    const ctx = context(channels);
+    const player = new AudioVoicePlayer({ files: { read: async () => ({ bytes: [1] }) }, createContext: () => ctx });
+    await player.load('sample.wav');
+    assert.equal(player.trigger({ source: 'sample.wav', output: 'STEREO' }, 64), true);
+    const source = ctx.nodes.find(n => n.kind === 'source');
+    const gain = ctx.nodes.find(n => n.kind === 'gain');
+    assert.equal(source.buffer, player.samples.get('sample.wav').buffer);
+    assert.equal(source.buffer.numberOfChannels, channels);
+    assert.deepEqual([...source.buffer.getChannelData(0)], [1, 0]);
+    if (channels === 2) assert.deepEqual([...source.buffer.getChannelData(1)], [0, 1]);
+    assert.equal(gain.channelCount, 2);
+    assert.equal(gain.channelCountMode, 'explicit');
+    assert.equal(gain.channelInterpretation, 'speakers');
+    assert.equal(gain.gain.value, 64 / 127);
+    assert.deepEqual(gain.connections, [[ctx.destination]]);
+    assert.equal(ctx.nodes.some(n => n.kind === 'merger'), false);
+    player.stop();
+    assert.equal(player.active.size, 0);
+    assert.equal(source.stopped, true);
 });
 test('Missing WAV reports error and never schedules delayed notes', async () => {
     const player = new AudioVoicePlayer({ files: { read: async () => ({ error: 'Introuvable' }) }, createContext: context });
