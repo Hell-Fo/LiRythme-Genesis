@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { readPlayMotif, initializePlayMotifUI } from "../src/PlayMotifUI.mjs";
 import { initializePlayStatusUI } from "../src/PlayStatusUI.mjs";
 import { initializePlayChainUI } from "../src/PlayChainUI.mjs";
+import { readPlayCycle, cyclePoint, cycleOutline } from "../src/PlayCycleUI.mjs";
 
 const source = file => fs.readFile(new URL(`../${file}`, import.meta.url), "utf8");
 const url = text => `data:text/javascript;base64,${Buffer.from(text.replace('"./ATTransaction.mjs"', JSON.stringify(new URL("../src/ATTransaction.mjs", import.meta.url).href))).toString("base64")}`;
@@ -11,6 +12,45 @@ const pad = url(await source("src/PadConfiguration.js"));
 const { LiRythmeState } = await import(url((await source("src/LiRythmeState.js")).replace('"./PadConfiguration.js"', JSON.stringify(pad))));
 const { LiRythmeClock } = await import(url(await source("src/LiRythmeClock.js")));
 const { LiRythmeActions } = await import(url(await source("src/LiRythmeActions.js")));
+
+test("cycle clocks follow independent playback and engaged lengths, not FOCUS or pending edits", () => {
+    const state = new LiRythmeState();
+    state.selectedInstrument = 0;
+    state.motifLength = 8; state.voiceLengths[0] = 5;
+    state.modulation.motifLength = 7; state.modulation.voiceLengths[0] = 3;
+    state.transportState = "PLAY";
+    state.playheadPosition = 6; state.modulation.playheadPosition = 4;
+    assert.equal(readPlayCycle(state).voice.position, 1);
+    assert.equal(readPlayCycle(state, "MODULATION").voice.position, 1);
+    state.deferDouble([0], true);
+    state.motifLength = 16; state.voiceLengths[0] = 10;
+    assert.equal(readPlayCycle(state).length, 8);
+    assert.equal(readPlayCycle(state).voice.length, 5);
+    state.chainFocus = true;
+    state.currentMotifId = 1;
+    const before = JSON.stringify([state, state.modulation]);
+    assert.equal(readPlayCycle(state).viewingOther, true);
+    assert.equal(readPlayCycle(state).motifId, 0);
+    assert.equal(JSON.stringify([state, state.modulation]), before);
+    state.advanceLiveLengthCycle(); state.advanceLiveLengthCycle();
+    assert.equal(readPlayCycle(state).position, 0);
+    assert.equal(readPlayCycle(state).voice.position, 0);
+    assert.equal(readPlayCycle(state).length, 16);
+    state.selectedInstrument = null;
+    assert.equal(readPlayCycle(state).voice, null);
+});
+
+test("long clocks use bounded rings, short cycles polygons, inner radius is 80 percent", () => {
+    const state = new LiRythmeState();
+    state.voiceLengths[0] = 32; state.voiceLengths[1] = 5;
+    state.voiceLengths[2] = 30;
+    assert.equal(readPlayCycle(state).length, 480);
+    for (const length of [1, 2, 32, 320, 480, 72201776446800]) assert.equal(cycleOutline(length, 100), null);
+    assert.equal(cycleOutline(5, 80).split(" ").length, 5);
+    const distance = ([x, y]) => Math.hypot(x - 120, y - 120);
+    assert.ok(Math.abs(distance(cyclePoint(2, 5, 80)) / distance(cyclePoint(2, 5, 100)) - .8) < 1e-12);
+    assert.deepEqual(cyclePoint(0, 8, 100), [120, 20]);
+});
 
 test("PLAY keeps both banks and Chains visible and reports effective modulation activation", () => {
     const state = new LiRythmeState();
@@ -125,7 +165,7 @@ test("existing PLAY render loop propagates Motif changes read-only and disposes 
 test("MOTIF layout preserves order, empty CHAIN and reserved clock without controls", async () => {
     const html = await source("index.html");
     const zone = html.slice(html.indexOf('<section id="play-motif"'), html.indexOf('</main>'));
-    const positions = ["play-motif-title", "DURATION", "GRAPHIC CLOCK", ">STEP<", "PLAY MODE", ">CHAIN<"].map(label => zone.indexOf(label));
+    const positions = ["play-motif-title", "DURATION", "play-motif-clock", ">STEP<", "PLAY MODE", ">CHAIN<"].map(label => zone.indexOf(label));
     assert.ok(positions.every((position, index) => position >= 0 && (!index || position > positions[index - 1])));
     assert.doesNotMatch(zone, /<(button|input|select|textarea|a|canvas|svg|summary)\b|\b(onclick|onkeydown|tabindex|contenteditable)\s*=/i);
     assert.match(zone, /<h3 id="motif-chain-title">CHAIN<\/h3>\s*<div id="play-chain-occurrences"[^>]*><\/div>\s*<\/section>/);

@@ -10,6 +10,7 @@ import { initializeSettingsUI } from "./SettingsUI.js";
 import { AudioVoicePlayer } from "./AudioVoicePlayer.mjs";
 import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
 import { initializePlayMotifUI } from "./PlayMotifUI.mjs";
+import { initializePlayCycleUI } from "./PlayCycleUI.mjs";
 import { initializePlayChainUI } from "./PlayChainUI.mjs";
 import { initializePlayFooterUI } from "./PlayFooterUI.mjs";
 import { initializePlayATUI } from "./PlayATUI.mjs";
@@ -58,10 +59,11 @@ window.motifBankFiles.ready();
 const clock = new LiRythmeClock(state);
 const motifUI = initializePlayMotifUI({ state });
 const modulationUI = initializePlayMotifUI({ state, system: "MODULATION" });
+const cycleUI = ["MOTIF", "MODULATION"].map(system => initializePlayCycleUI({ state, system }));
 const atUI = initializePlayATUI({ state });
 let footerUI = null;
 const playStatusUI = initializePlayStatusUI({ state, clock, midiManager,
-    renderMotif: () => { motifUI.render(); modulationUI.render(); }, renderFooter: () => { footerUI?.render(); atUI.render(); } });
+    renderMotif: () => { motifUI.render(); modulationUI.render(); cycleUI.forEach(ui => ui.render()); }, renderFooter: () => { footerUI?.render(); atUI.render(); } });
 
 state.filterMode =
     focusStartupCheckbox.checked;

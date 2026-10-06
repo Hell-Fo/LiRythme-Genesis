@@ -1,0 +1,52 @@
+/* Same palette as PLAY, with explicit editable and disabled control states. */
+body:has(#settings-page:not([hidden])) {
+    background: #191d20;
+    color: #f2eee5;
+    color-scheme: dark;
+}
+body:has(#settings-page:not([hidden])) > h1 { color: #b9c0c4; }
+body:has(#settings-page:not([hidden])) .panel,
+body:has(#settings-page:not([hidden])) > aside {
+    background: #232a30;
+    border-color: #465057;
+}
+body:has(#settings-page:not([hidden])) .muted { color: #b9c0c4; }
+#settings-page h2 { color: #92c7e1; }
+#settings-page h3 { color: #f0aa72; }
+body:has(#settings-page:not([hidden])) button,
+#settings-page input:not([type=checkbox]),
+#settings-page select {
+    color: #f2eee5;
+    background: #191d20;
+    border: 1px solid #657580;
+    border-radius: 4px;
+}
+#settings-page input:not([type=checkbox]) { padding: 8px; }
+body:has(#settings-page:not([hidden])) button:not(:disabled):hover {
+    background: #35414a;
+    border-color: #92c7e1;
+}
+body:has(#settings-page:not([hidden])) button[aria-pressed=true] {
+    background: #344c5b;
+    border-color: #92c7e1;
+    color: #fff;
+}
+body:has(#settings-page:not([hidden])) button:disabled,
+#settings-page input:disabled,
+#settings-page select:disabled {
+    color: #a4adb4;
+    background: #2a3035;
+    border-color: #465057;
+    opacity: 1;
+}
+#settings-page input[readonly] { color: #b9c0c4; background: #2a3035; }
+#settings-page input[type=checkbox] { accent-color: #92c7e1; }
+body:has(#settings-page:not([hidden])) :focus-visible {
+    outline: 3px solid #97cce8;
+    outline-offset: 2px;
+}
+#settings-page [aria-invalid=true] { border-color: #f3a59f; }
+#settings-page [role=alert] { color: #f3a59f; }
+#settings-page #pads-dirty { color: #f0cf80; }
+#settings-page summary { color: #92c7e1; cursor: pointer; }
+#settings-page option { color: #f2eee5; background: #191d20; }

@@ -57,6 +57,8 @@
         }
         [hidden] { display: none !important; }
     </style>
+    <link rel="stylesheet" href="src/play.css">
+    <link rel="stylesheet" href="src/settings.css">
 </head>
 <body>
     <h1>LiRythme — Genesis</h1>
@@ -177,11 +179,9 @@
             </dl>
             <div class="play-zones">
             <section id="play-motif" class="panel play-motif" aria-labelledby="play-motif-title">
-                <h3 id="play-motif-title">MOTIF —</h3>
+                <header class="play-system-heading"><h3 id="play-motif-title">MOTIF —</h3></header>
                 <dl><dt>DURATION</dt><dd id="play-motif-duration">Non disponible</dd></dl>
-                <div class="motif-clock-space" aria-label="Espace réservé à la future horloge graphique">
-                    <span class="muted">GRAPHIC CLOCK — espace réservé</span>
-                </div>
+                <div id="play-motif-clock" class="motif-clock-space cycle-clock" role="img" aria-label="Cycle du Motif"></div>
                 <dl class="play-status motif-position">
                     <div><dt>STEP</dt><dd id="play-motif-step">Non disponible</dd></div>
                     <div><dt>PLAY MODE</dt><dd id="play-motif-mode">Non disponible</dd></div>
@@ -192,12 +192,12 @@
                 </section>
             </section>
             <section id="play-modulation" class="panel play-modulation" aria-labelledby="play-modulation-title">
-                <h3 id="play-modulation-title">MODULATION —</h3>
-                <dl><dt>ACTIVE</dt><dd id="play-modulation-active" aria-live="polite">OFF</dd></dl>
+                <header class="play-system-heading">
+                    <h3 id="play-modulation-title">MODULATION —</h3>
+                    <span id="play-modulation-active" aria-label="Activation Modulation" aria-live="polite">OFF</span>
+                </header>
                 <dl><dt>DURATION</dt><dd id="play-modulation-duration">Non disponible</dd></dl>
-                <div class="motif-clock-space" aria-label="Espace réservé à la future horloge graphique">
-                    <span class="muted">GRAPHIC CLOCK — espace réservé</span>
-                </div>
+                <div id="play-modulation-clock" class="motif-clock-space cycle-clock" role="img" aria-label="Cycle de Modulation"></div>
                 <dl class="play-status motif-position">
                     <div><dt>STEP</dt><dd id="play-modulation-step">Non disponible</dd></div>
                     <div><dt>PLAY MODE</dt><dd id="play-modulation-mode">Non disponible</dd></div>
