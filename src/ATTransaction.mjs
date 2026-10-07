@@ -1,5 +1,8 @@
 export const createVelocities = () => Array.from({ length: 16 }, () => Array(32).fill(100));
 export const SWING_VALUES = Object.freeze([75, 72, 69, 66, 63, 58, 54, 50]);
+export const RATCHET_VALUES = Object.freeze([8, 7, 6, 5, 4, 3, 2, 1]);
+export const validRatchetRow = row => Array.isArray(row) && row.length === 32 && row.every(v => v === null || RATCHET_VALUES.includes(v));
+export const validRatchets = rows => Array.isArray(rows) && rows.length === 16 && rows.every(validRatchetRow);
 export const validSwingRow = row => Array.isArray(row) && row.length === 32 && row.every(v => v === null || SWING_VALUES.includes(v));
 export const validSwings = rows => Array.isArray(rows) && rows.length === 16 && rows.every(validSwingRow);
 export const createColors = () => Array.from({ length: 16 }, () => Array(32).fill(false));
@@ -7,9 +10,9 @@ export const createAttributeRows = () => Array.from({ length: 16 }, () => Array(
 export const hasModulationCell = (motif, voice, step) => Boolean(
     Object.values(motif.attributes ?? {}).some(rows => rows[voice][step] !== null));
 export const validExplicitAttributes = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(row => Array.isArray(row) && row.length === 32 &&
-            row.every(v => v === null || (key === "COLOR" ? typeof v === "boolean" : key === "SWING" ? SWING_VALUES.includes(v) : Number.isInteger(v) && v >= 1 && v <= 127))));
+            row.every(v => v === null || (key === "COLOR" ? typeof v === "boolean" : key === "SWING" ? SWING_VALUES.includes(v) : key === "RATCHET" ? RATCHET_VALUES.includes(v) : Number.isInteger(v) && v >= 1 && v <= 127))));
 function applyExplicitAttribute(motif, { instruments, steps }, key, value) {
     let changed = false;
     const rows = motif.attributes[key] ??= createAttributeRows();
@@ -23,7 +26,7 @@ function applyExplicitAttribute(motif, { instruments, steps }, key, value) {
 export const validATDestinationRow = row => Array.isArray(row) && row.length === 32 &&
     row.every(v => v === null || ["STEP", "INSTRUMENT", "MOTIF"].includes(v));
 export const validATDestinations = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "ROTATION"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET", "ROTATION"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(validATDestinationRow));
 export const hasTargetEvents = (motif, target) => Boolean(motif && target && motif.events.some((row, voice) =>
     (!target.instruments.size || target.instruments.has(voice)) &&
@@ -99,10 +102,30 @@ export const AT_SLOTS = Object.freeze([
             return changed;
         }
     }),
-    ...Array(5).fill(null),
+    Object.freeze({ id: "RATCHET", values: RATCHET_VALUES,
+        isAssigned: (motif, voice, step) => (motif.attributes !== undefined
+            ? motif.attributes.RATCHET?.[voice]?.[step] : motif.ratchets?.[voice]?.[step]) != null,
+        capture: motif => motif.ratchets?.map(row => row.slice()),
+        restore(motif, snapshot) {
+            if (snapshot === undefined) delete motif.ratchets;
+            else motif.ratchets = snapshot.map(row => row.slice());
+        },
+        apply(motif, { instruments, steps }, value) {
+            if (motif.attributes !== undefined) return applyExplicitAttribute(motif, { instruments, steps }, "RATCHET", value);
+            let changed = false;
+            for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
+                if (!motif.events[voice][step] || instruments.size && !instruments.has(voice) || steps.size && !steps.has(step)) continue;
+                motif.ratchets ??= createAttributeRows();
+                motif.ratchets[voice][step] = value;
+                changed = true;
+            }
+            return changed;
+        }
+    }),
+    ...Array(4).fill(null),
     Object.freeze({ id: "ROTATION", values: Object.freeze([]),
         isAssigned: (motif, voice, step) => Boolean(motif.atDestinations?.ROTATION?.[voice]?.[step]),
-        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "atDestinations", "attributes"]
+        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "ratchets", "atDestinations", "attributes"]
             .map(key => [key, structuredClone(motif[key])])),
         restore(motif, snapshot) {
             for (const [key, value] of Object.entries(snapshot)) {
@@ -116,6 +139,35 @@ export const AT_SLOTS = Object.freeze([
 export const validVelocities = value => Array.isArray(value) && value.length === 16 &&
     value.every(row => Array.isArray(row) && row.length === 32 &&
         row.every(n => Number.isInteger(n) && n >= 1 && n <= 127));
+
+// Visit only the temporal copies that still feed the playing target. Geometry stays frozen.
+export function visitPlaybackAttributes(state, motifId, instruments, visit) {
+    if (state.transportState !== "PLAY" || motifId !== state.playingMotifId) return;
+    const groups = new Map();
+    for (const [voice, snapshot] of state.liveLengthCycle?.doubleVoices ?? []) {
+        if (instruments.size && !instruments.has(voice)) continue;
+        if (!groups.has(snapshot)) groups.set(snapshot, new Set());
+        groups.get(snapshot).add(voice);
+    }
+    for (const [snapshot, voices] of groups) visit(snapshot, voices);
+}
+function applyAttribute(motif, target, definition, value, scope = target) {
+    if (!definition.apply(motif, target, value)) return false;
+    motif.atDestinations ??= {};
+    const destinations = motif.atDestinations[definition.id] ??= createAttributeRows();
+    for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
+        if ((motif.attributes === undefined && !motif.events[voice][step]) ||
+            (target.instruments.size && !target.instruments.has(voice)) ||
+            (target.steps.size && !target.steps.has(step))) continue;
+        destinations[voice][step] = definition.isAssigned(motif, voice, step)
+            ? scope.steps.size ? "STEP" : scope.instruments.size ? "INSTRUMENT" : "MOTIF" : null;
+    }
+    return true;
+}
+function clearAttributes(motif) {
+    for (const key of ["velocities", "colors", "swings", "ratchets", "atDestinations"]) delete motif[key];
+    if (motif.attributes !== undefined) motif.attributes = {};
+}
 
 export class ATTransaction {
     constructor(state, context, changed = () => {}) {
@@ -183,32 +235,22 @@ export class ATTransaction {
         }
         const id = this.getEditingMotifId();
         const motif = this.state.getMotif(id);
-        if (definition.id === "SWING" && !hasTargetEvents(motif, tx)) return false;
-        if (this.state.systemName === "MODULATION" || definition.id === "SWING") {
-            const voices = tx.instruments.size ? [...tx.instruments] : Array.from({ length: 16 }, (_, i) => i);
-            const whole = !tx.instruments.size && !tx.steps.size;
-            tx.attributeVoices ??= new Set();
-            for (const voice of voices) tx.attributeVoices.add(voice);
-            tx.attributeWholeMotif ||= whole;
-            if (this.state.transportState === "PLAY" && id === this.state.playingMotifId) this.state.deferDouble(voices, whole);
-        }
-        // Playing Motifs require events; Modulation permits explicit A/T-only cells.
-        // A rejected target must not advance COLOR's toggle or dirty the bank.
-        if (!definition.apply(motif, tx, definition.values[index])) {
+        // Attribute values are read at the next event; never open a temporal cycle here.
+        if (!applyAttribute(motif, tx, definition, definition.values[index])) {
             tx.valueIndex = null;
             this.changed("value");
             return false;
         }
         tx.touched.add(id);
-        motif.atDestinations ??= {};
-        const destinations = motif.atDestinations[definition.id] ??=
-            Array.from({ length: 16 }, () => Array(32).fill(null));
-        for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
-            if ((motif.attributes === undefined && !motif.events[voice][step]) || (tx.instruments.size && !tx.instruments.has(voice)) ||
-                (tx.steps.size && !tx.steps.has(step))) continue;
-            destinations[voice][step] = definition.isAssigned(motif, voice, step)
-                ? tx.steps.size ? "STEP" : tx.instruments.size ? "INSTRUMENT" : "MOTIF" : null;
-        }
+        visitPlaybackAttributes(this.state, id, tx.instruments, (snapshot, voices) => {
+            tx.liveAttributeSnapshots ??= new Map();
+            if (!tx.liveAttributeSnapshots.has(snapshot)) tx.liveAttributeSnapshots.set(snapshot, {
+                value: definition.capture(snapshot),
+                attributes: structuredClone(snapshot.attributes),
+                destinations: structuredClone(snapshot.atDestinations)
+            });
+            applyAttribute(snapshot, { instruments: voices, steps: tx.steps }, definition, definition.values[index], tx);
+        });
         tx.valueIndex = index;
         this.changed("value");
         return true;
@@ -232,6 +274,7 @@ export class ATTransaction {
                 velocity: motif.velocities?.[voice][step] ?? 100,
                 color: motif.colors?.[voice][step] ?? false,
                 swing: motif.swings?.[voice][step] ?? null,
+                ratchet: motif.ratchets?.[voice][step] ?? null,
                 destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
                     .map(([key, rows]) => [key, rows[voice][step]])) });
         }
@@ -259,6 +302,7 @@ export class ATTransaction {
                 velocity: motif.velocities?.[voice][to] ?? 100,
                 color: motif.colors?.[voice][to] ?? false,
                 swing: motif.swings?.[voice][to] ?? null,
+                ratchet: motif.ratchets?.[voice][to] ?? null,
                 destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
                     .map(([key, rows]) => [key, rows[voice][to]])) });
         }
@@ -269,6 +313,7 @@ export class ATTransaction {
             if (motif.velocities) motif.velocities[voice][step] = 100;
             if (motif.colors) motif.colors[voice][step] = false;
             if (motif.swings) motif.swings[voice][step] = null;
+            if (motif.ratchets) motif.ratchets[voice][step] = null;
             for (const rows of Object.values(motif.attributes ?? {})) rows[voice][step] = null;
             for (const rows of Object.values(motif.atDestinations)) rows[voice][step] = null;
         }
@@ -279,15 +324,17 @@ export class ATTransaction {
             if (motif.velocities) motif.velocities[voice][to] = move.velocity;
             if (motif.colors) motif.colors[voice][to] = move.color;
             if (motif.swings) motif.swings[voice][to] = move.swing;
+            if (motif.ratchets) motif.ratchets[voice][to] = move.ratchet;
             for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = move.destinations[key] ?? null;
             motif.atDestinations.ROTATION[voice][to] = destination;
         }
-        for (const { voice, to, event, attributes, velocity, color, swing, destinations } of displaced) {
+        for (const { voice, to, event, attributes, velocity, color, swing, ratchet, destinations } of displaced) {
             motif.events[voice][to] = event;
             for (const [key, rows] of Object.entries(motif.attributes ?? {})) rows[voice][to] = attributes[key] ?? null;
             if (motif.velocities) motif.velocities[voice][to] = velocity;
             if (motif.colors) motif.colors[voice][to] = color;
             if (motif.swings) motif.swings[voice][to] = swing;
+            if (motif.ratchets) motif.ratchets[voice][to] = ratchet;
             for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = destinations[key] ?? null;
         }
         if (tx.steps.size) {
@@ -309,15 +356,21 @@ export class ATTransaction {
         if (!tx) return false;
         const definition = AT_SLOTS[tx.slot];
         if (!commit) for (const id of tx.touched) {
-            if ((tx.slot === 8 || tx.slot === 2 || tx.system === "MODULATION") && this.state.transportState === "PLAY" && id === this.state.playingMotifId) {
-                this.state.deferDouble(tx.slot === 8 ? [...tx.rotationVoices] : [...tx.attributeVoices],
-                    tx.slot === 8 ? Boolean(tx.rotationWholeMotif) : Boolean(tx.attributeWholeMotif));
+            if (tx.slot === 8 && this.state.transportState === "PLAY" && id === this.state.playingMotifId) {
+                this.state.deferDouble([...tx.rotationVoices], Boolean(tx.rotationWholeMotif));
             }
             definition.restore(this.state.motifs[id], tx.snapshots[id]);
             if (tx.attributeSnapshots[id] === undefined) delete this.state.motifs[id].attributes;
             else this.state.motifs[id].attributes = structuredClone(tx.attributeSnapshots[id]);
             if (tx.destinationSnapshots[id] === undefined) delete this.state.motifs[id].atDestinations;
             else this.state.motifs[id].atDestinations = structuredClone(tx.destinationSnapshots[id]);
+        }
+        if (!commit) for (const [snapshot, original] of tx.liveAttributeSnapshots ?? []) {
+            definition.restore(snapshot, original.value);
+            for (const [key, value] of [["attributes", original.attributes], ["atDestinations", original.destinations]]) {
+                if (value === undefined) delete snapshot[key];
+                else snapshot[key] = structuredClone(value);
+            }
         }
         this.state.atTransaction = null;
         if (commit && tx.touched.size) this.state.onBankChange?.();
@@ -328,14 +381,8 @@ export class ATTransaction {
         if (this.state.atTransaction) return false;
         const motif = this.state.getMotif(this.getEditingMotifId());
         if (!motif) return false;
-        if ((motif.attributes !== undefined || motif.swings) && this.state.transportState === "PLAY" && this.getEditingMotifId() === this.state.playingMotifId) this.state.deferDouble([], true);
-        delete motif.velocities;
-        delete motif.colors;
-        delete motif.swings;
-        delete motif.atDestinations;
-        if (motif.attributes !== undefined) {
-            motif.attributes = {};
-        }
+        clearAttributes(motif);
+        visitPlaybackAttributes(this.state, this.getEditingMotifId(), new Set(), clearAttributes);
         this.state.onBankChange?.();
         this.changed("reset");
         return true;

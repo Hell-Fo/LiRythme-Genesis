@@ -116,14 +116,16 @@ test("SWING Modulation A/T-only overrides timing family including explicit 50%, 
     state.modulationActive = false; assert.equal(readSwing(state, 0).fraction, .5);
 });
 
-test("SWING temporal edit activates at local or Motif entry; FOCUS edits VIEW without affecting PLAYING", () => {
+test("SWING edit is immediate without changing local or Motif phase; FOCUS edits VIEW without affecting PLAYING", () => {
     for (const whole of [false, true]) {
         const { state, actions } = setup();
         state.motif[0].fill(true); state.motifs[0].voiceLengths[0] = 3; state.motifs[0].motifLength = 8;
         state.transportState = "PLAY"; state.playheadPosition = 1;
         apply(actions, whole ? [] : [0]);
         assert.equal(state.motifs[0].swings[0][1], 75);
-        assert.equal(readSwing(state, 0).value, 50);
+        assert.equal(readSwing(state, 0).value, 75);
+        assert.equal(state.liveLengthCycle, null);
+        assert.equal(state.playheadPosition, 1);
         for (let i = 0; i < (whole ? 7 : 2); i++) actions.nextStep();
         assert.equal(readSwing(state, 0).value, 75);
     }
@@ -218,19 +220,19 @@ test("SWING AUDIO uses the same delay and pulse; a new step expires overdue onse
     assert.equal(sounds.length, 1); assert.equal(time.jobs.size, 0);
 });
 
-test("SWING CANCEL and reset during PLAY obey the captured cycle boundary", () => {
+test("SWING CANCEL and reset during PLAY take effect immediately", () => {
     const { state, actions } = setup();
     state.motif[0].fill(true); state.motifs[0].voiceLengths[0] = 3; state.motifs[0].motifLength = 8;
     state.transportState = "PLAY"; state.playheadPosition = 1;
     actions.at.begin(2); actions.at.select("instruments", 0); actions.at.apply(0);
     actions.nextStep(); actions.nextStep(); assert.equal(readSwing(state, 0).value, 75);
     actions.at.finish(false); assert.equal(state.motifs[0].swings, undefined);
-    assert.equal(readSwing(state, 0).value, 75);
+    assert.equal(readSwing(state, 0).value, 50);
     for (let i = 0; i < 3; i++) actions.nextStep();
     assert.equal(readSwing(state, 0).value, 50);
     state.transportState = "STOP"; state.liveLengthCycle = null; apply(actions);
     state.transportState = "PLAY"; state.playheadPosition = 7; actions.at.resetMotif();
-    assert.equal(readSwing(state, 0).value, 75);
+    assert.equal(readSwing(state, 0).value, 50);
     actions.nextStep(); assert.equal(state.playheadPosition, 0); assert.equal(readSwing(state, 0).value, 50);
 });
 

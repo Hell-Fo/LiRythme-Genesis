@@ -34,7 +34,7 @@ Clock et son ordonnanceur n'ont pas été modifiés.
 
 MODULATION ne contient plus de notes : elle module uniquement les événements
 de Motif. Ses matrices `events` restent vides pour compatibilité du format.
-Elle possède `attributes.VELOCITY`, `attributes.COLOR` et `attributes.SWING`,
+Elle possède `attributes.VELOCITY`, `attributes.COLOR`, `attributes.SWING` et `attributes.RATCHET`,
 avec une présence indépendante
 par Voice et Step. Un attribut inexistant, une famille absente ou une cellule
 `null` signifie « aucun remplacement ». Les valeurs `false`, `100` et `127`
@@ -54,7 +54,7 @@ Pour chaque Voice, indépendamment :
    remplace une note.
 4. Sans événement de Motif à ce Step local pour cette Voice, ne rien émettre.
 5. Partir des attributs du Motif, ou des valeurs habituelles en leur absence.
-   Si MODULATION est active, remplacer séparément VELOCITY, COLOR et SWING lorsque l'attribut de
+   Si MODULATION est active, remplacer séparément VELOCITY, COLOR, SWING et RATCHET lorsque l'attribut de
    MODULATION est explicitement présent à son Step local pour cette Voice.
 6. Appliquer SOLO/MUTE puis le routage de la Voice. Audio reçoit la vélocité
    composée. MIDI choisit la note normale ou `colorNote` propre à la Voice.
@@ -86,23 +86,26 @@ démarrage. Une commande ON/OFF en STOP/PAUSE est immédiatement effective, sans
 déplacement des positions. Une demande faite en PLAY puis suivie d'une PAUSE
 reste en attente jusqu'à la frontière lors de la reprise.
 
-Les éditions de MODULATION sont visibles immédiatement et reprennent les
-snapshots de DOUBLE/ROTATION pour l'audition différée : cible globale à l'entrée
-du motif, cible locale à l'entrée des Voices concernées. La frontière globale
-termine les cycles locaux incomplets. Modifier la durée attend la frontière
-ancienne engagée ; changer NEXT ou avancer une Chain attend la frontière de
-son propre système. Les deux sources Clock sont couvertes.
+Les éditions d'attributs de MOTIF et MODULATION sont audibles dès le prochain
+événement : VELOCITY, COLOR, SWING et RATCHET. Un événement ou train déjà
+programmé garde ses paramètres capturés. Si une transformation est en attente,
+seuls les attributs ciblés sont édités dans la version temporelle ; sa géométrie
+reste figée. Aucun attribut de Motif ne crée de note ou de valeur orpheline.
+
+DOUBLE/ROTATION restent différés : cible globale à l'entrée du Motif, cible
+locale à l'entrée des Voices concernées. La frontière globale termine les
+cycles locaux incomplets. Modifier la durée attend la frontière ancienne
+engagée ; NEXT et la Chain attendent la frontière de leur propre système.
+ON/OFF de Modulation conserve également son activation à la frontière.
 
 Sans durée globale explicite, les règles existantes s'appliquent : PPCM des
 longueurs de Voices explicitement fixées ; fallback 32 s'il n'y en a aucune.
 Une Voice libre utilise 32 sans participer au PPCM.
 
-COMMIT persiste le résultat édité sans forcer la frontière. CANCEL restaure la
-source ; après une activation audible, cette restauration attend aussi les
-frontières pertinentes. La transaction mémorise toutes les Voices touchées,
-même si la sélection change avant CANCEL. Les comportements d'édition et de
-lecture historiques des Motifs sont conservés ; ROTATION et DOUBLE partagent
-le même mécanisme temporel dans les deux systèmes.
+COMMIT persiste sans forcer de frontière. CANCEL d'attribut restaure les valeurs
+dès le prochain événement, y compris dans les copies temporelles encore actives.
+CANCEL de ROTATION conserve la règle de prochaine entrée. La cible capturée,
+FOCUS et les phases de lecture restent inchangés.
 
 ## Édition, gestes et feedback
 
@@ -164,7 +167,7 @@ Modulation est persistée comme demandé.
 
 ## Vérifications
 
-- Suite complète après passage à A/T seuls : 491 tests réussis.
+- Suite complète après passage à A/T seuls : 508 tests réussis.
 - Couverture : exemples normatifs, intersections Voice/Step sur cycles 8/6, présence/OFF,
   A/T seuls, sources intactes, phases et Chains indépendantes, Clock INTERNAL/MIDI,
   activation aux frontières, longueur 1 et fallback/PPCM, CANCEL avant/après
@@ -223,12 +226,34 @@ ciblage direct des Steps restent ceux documentés dans SWING.md.
 
 Les clics ordinaires sur la Timeline de Modulation ne créent plus de notes.
 L'édition passe par le Livre A/T ; la sélection des Voices, les longueurs,
-COPY, DOUBLE et ROTATION restent disponibles. A/T seuls apparaissent atténués,
-sans jaune de note sélectionnée. DELETE+MOD (bouton 2) vide la Chain de Modulation si elle est active
+COPY, DOUBLE et ROTATION restent disponibles. La Timeline affiche les cellules A/T comme les événements de Motif : YELLOW
+pour la Voice sélectionnée, DIM AMBER pour les autres Voices visibles, sans
+créer de note. Les filtres, le curseur RED et la frontière GREEN restent actifs.
+DELETE+Step efface toutes les familles A/T et leurs métadonnées sur ce Step,
+pour la Voice sélectionnée, ou toutes les Voices si aucune n’est sélectionnée.
+FOCUS conserve la cible VIEW. Pendant PLAY, la suppression des attributs devient
+audible dès le prochain événement, sans modifier un train déjà programmé.
+DELETE+MOD (bouton 2) vide la Chain de Modulation si elle est active
 (y compris FOCUS), sinon les A/T du Motif de Modulation courant. DELETE+PLAY
 cible toujours Motif, indépendamment du Livre affiché. SHIFT+PLAY bascule la
 Chain Motif ; SHIFT+MOD bascule la Chain de Modulation. DELETE+un maillon
 conserve la suppression contextuelle de cette occurrence, sans effacer la banque.
+
+## Validation des attributs immédiats
+
+Suite complète : 531 tests réussis. Vérification de syntaxe et `git diff --check`
+réussis. Aucun lancement d'application ni accès matériel pour cette modification.
+
+À tester sur Launchpad, dans MOTIF puis MODULATION :
+
+- Modifier VELOCITY, COLOR, SWING et RATCHET pendant PLAY : le prochain événement
+  utilise la valeur, sans réinitialisation de phase. CANCEL suit cette même règle.
+- Éditer un attribut pendant une ROTATION ou un DOUBLE en attente : la géométrie
+  attend toujours sa frontière locale ou globale, selon la cible.
+- Changer RATCHET au milieu d'un train : celui-ci termine ses frappes et Note Off
+  normalement ; le prochain événement adopte la nouvelle valeur.
+- Entrer dans COLOR : A reste DIM AMBER sur OFF ou sans événement au curseur,
+  RED sur un événement COLOR ON ; B–H restent éteints et sans effet.
 DELETE prend priorité sur l’activation et consomme aussi le relâchement du bouton.
 
 Compatibilité : au chargement, les anciennes notes de MODULATION sont retirées

@@ -399,9 +399,9 @@ export class LaunchpadMini {
             if ((this.state.systemName !== "MODULATION" && steps[step]) || Object.values(this.state.getMotif(this.actions.at.getEditingMotifId()).attributes ?? {}).some(rows => rows[voiceId][step] !== null)) {
                 if (target && this.hasAssignedAT(voiceId, step)) return this.colors.DIM_RED;
                 hasAnyVoice = true;
-                // A Modulation attribute-only cell is visible, but is not a
-                // selected Voice note. Whole-Motif A/T can populate every cell.
-                if (isSelectedInstrument && this.state.systemName !== "MODULATION" && steps[step]) hasSelectedVoice = true;
+                // In Modulation, an A/T cell occupies the same visual role as
+                // a Motif event, while remaining silent on its own.
+                if (isSelectedInstrument) hasSelectedVoice = true;
             }
         }
 
@@ -1291,7 +1291,9 @@ export class LaunchpadMini {
                     if ((!tx.instruments.size || tx.instruments.has(voice)) &&
                         (motif.events[voice][step] || motif.attributes !== undefined)) {
                         if (motif.attributes !== undefined ? motif.attributes.COLOR?.[voice]?.[step] === true : motif.colors?.[voice]?.[step]) colorCount++;
-                        const velocity = tx.slot === 2
+                        const velocity = tx.slot === 3
+                            ? (motif.attributes !== undefined ? motif.attributes.RATCHET?.[voice]?.[step] : motif.ratchets?.[voice]?.[step])
+                            : tx.slot === 2
                             ? (motif.attributes !== undefined ? motif.attributes.SWING?.[voice]?.[step] : motif.swings?.[voice]?.[step])
                             : motif.attributes !== undefined ? motif.attributes.VELOCITY?.[voice]?.[step] : motif.velocities?.[voice]?.[step];
                         if (velocity != null) velocities.add(velocity);
@@ -1301,7 +1303,7 @@ export class LaunchpadMini {
         }
         for (const [index, note] of this.mapping.AT_VALUE.entries()) {
             const color = tx?.slot === 8 ? this.colors.OFF : tx?.slot === 1
-                ? index !== 0 || !colorCount ? this.colors.OFF : this.colors.RED
+                ? index !== 0 ? this.colors.OFF : colorCount ? this.colors.RED : this.colors.DIM_AMBER
                 : tx ? (velocities.has(this.actions.at.definition(tx.slot).values[index]) ? this.colors.RED : this.colors.DIM_AMBER)
                 : this.colors.OFF;
             this.sendController(this.deviceName, [0x90, note, (color & 0x33) | 4]);
@@ -1703,10 +1705,11 @@ export class LaunchpadMini {
         if (!atActive && this.deleteArmed && value > 0) {
             this.deleteConsumedInputs.add(inputKey);
             const performance = ["SOLO", "MUTE"].includes(controlName);
-            const valid = performance || controlType === "INSTRUMENT" || controlName === "PLAY_STOP";
+            const modulationStep = controlType === "MOTIF" && this.state.systemName === "MODULATION";
+            const valid = performance || controlType === "INSTRUMENT" || controlName === "PLAY_STOP" || modulationStep;
             if ((valid || controlName === "NEXT") && (performance
                     ? this.actions.clearPerformanceSelection(controlName.toLowerCase())
-                    : this.actions.deleteTarget(controlType === "INSTRUMENT" ? "INSTRUMENT"
+                    : this.actions.deleteTarget(modulationStep ? "STEP" : controlType === "INSTRUMENT" ? "INSTRUMENT"
                         : controlName === "PLAY_STOP" ? "PLAY" : "NEXT", controlPosition))) {
                 if (performance) {
                     this.performanceHolds.delete(controlName.toLowerCase());

@@ -124,7 +124,7 @@ test("A/T navigation is inert; VELOCITY available and COLOR disabled by default 
     }
     actions.toggleView(); actions.toggleView();
     assert.equal(AT_SLOTS.length, 16);
-    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.equal(state.atTransaction.slot, 0);
     assert.deepEqual([...state.atTransaction.instruments], []);
     assert.deepEqual([...state.atTransaction.steps], []);
@@ -330,10 +330,10 @@ for (const commit of [false, true]) test(`existing PLAY A/T surface: all 16 fami
     const { state, c, leds, tap, press, release } = setup(t);
     const colors = () => c.mapping.BOOKS.map(note => leds.get(`144:${note}`));
     const expected = lit => Array.from({ length: 16 }, (_, i) =>
-        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : i === 2 ? "RED" : i < 8 ? "DIM_RED" : i === 8 ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
+        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : (i === 2 || i === 3) ? "RED" : i < 8 ? "DIM_RED" : i === 8 ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
     assert.equal(state.currentView, "PLAY");
     c.drawBooks(); assert.deepEqual(colors(), expected(true));
-    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.ok(state.atTransaction); assert.deepEqual(colors(), expected(true));
     t.mock.timers.tick(160); drainAT(t, c); assert.deepEqual(colors(), expected(false));
     c.drawBooks(); assert.deepEqual(colors(), expected(false));
@@ -913,8 +913,8 @@ test("COLOR scenarios A/B: Voice then two Steps; cursor inspects but never narro
         assert.equal(colorAt(state, 12, step), true);
         assert.equal(colorLED(f, t, step), (c.colors.RED & 0x33));
     }
-    assert.equal(colorLED(f, t, 2), 0);
-    tap(c.mapping.INSTRUMENTS[13]); assert.equal(colorLED(f, t, 1), 0);
+    assert.equal(colorLED(f, t, 2), (c.colors.DIM_AMBER & 0x33));
+    tap(c.mapping.INSTRUMENTS[13]); assert.equal(colorLED(f, t, 1), (c.colors.DIM_AMBER & 0x33));
     tap(c.mapping.MOTIF[1]);
     actions.at.select("steps", 3, true); actions.at.select("steps", 2, true);
     tap(8);
@@ -934,16 +934,16 @@ test("COLOR scenarios C/D: mixed states become common ON/OFF, A shows 0/1/multip
     assert.equal(colorLED(f, t, 2), (c.colors.RED & 0x33));
     tap(8); assert.equal(colorLED(f, t, 2), (c.colors.RED & 0x33));
     t.mock.timers.tick(160); assert.equal(f.leds.get("144:8") & 0x33, (c.colors.RED & 0x33));
-    tap(8); assert.equal(colorLED(f, t, 2), 0);
+    tap(8); assert.equal(colorLED(f, t, 2), (c.colors.DIM_AMBER & 0x33));
     actions.at.select("instruments", 12); actions.at.select("instruments", 13);
     assert.equal(state.atTransaction.instruments.size, 0);
     state.playheadPosition = 31; tap(8);
     assert.equal(colorLED(f, t, 2), (c.colors.RED & 0x33)); assert.equal(colorLED(f, t, 4), (c.colors.RED & 0x33));
-    assert.equal(colorLED(f, t, 3), 0);
+    assert.equal(colorLED(f, t, 3), (c.colors.DIM_AMBER & 0x33));
     actions.at.select("steps", 4);
-    assert.equal(colorLED(f, t, 2), 0); assert.equal(colorLED(f, t, 4), (c.colors.RED & 0x33));
+    assert.equal(colorLED(f, t, 2), (c.colors.DIM_AMBER & 0x33)); assert.equal(colorLED(f, t, 4), (c.colors.RED & 0x33));
     actions.at.select("steps", 4); tap(8); tap(8);
-    assert.equal(colorLED(f, t, 2), 0); assert.equal(colorLED(f, t, 4), 0);
+    assert.equal(colorLED(f, t, 2), (c.colors.DIM_AMBER & 0x33)); assert.equal(colorLED(f, t, 4), (c.colors.DIM_AMBER & 0x33));
 });
 
 for (const transport of ["STOP", "PAUSE", "PLAY"]) test(`COLOR VALUE ownership and differential cursor feedback (${transport})`, t => {
@@ -1170,7 +1170,7 @@ for (const slot of [0, 1]) for (const scenario of ["empty", "mixed steps", "mixe
             assert.equal(state.atTransaction.touched.size, 0);
             assert.equal(readATPanel(state).selected, null);
             drainAT(t, c);
-            const expected = slot === 0 ? c.colors.DIM_AMBER : c.colors.OFF;
+            const expected = c.colors.DIM_AMBER;
             assert.equal(f.leds.get(`144:${c.mapping.AT_VALUE[valueIndex]}`), (expected & 0x33) | 4);
             let saves = 0; state.onBankChange = () => saves++;
             actions.at.finish(true); assert.equal(saves, 0);
@@ -1228,7 +1228,7 @@ for (const slot of [null, 0, 1]) test(`STOP preview and cursor render actual edi
     if (slot !== null) assert.equal(leds.get('144:8') & 0x33, c.colors.RED & 0x33);
     tap(c.mapping.TOP_CONTROLS.NEXT, 0xB0); drainAT(t, c);
     assert.equal(messages.length, 1); assert.equal(c.getInstrumentColor(12), c.colors.DIM_GREEN);
-    if (slot !== null) assert.equal(leds.get('144:8') & 0x33, (slot === 0 ? c.colors.DIM_AMBER : c.colors.OFF) & 0x33);
+    if (slot !== null) assert.equal(leds.get('144:8') & 0x33, c.colors.DIM_AMBER & 0x33);
     state.padConfiguration.voices[12].colorNote = 72; offs.forEach(fn => fn());
     assert.deepEqual(messages[1], [0x99, 60, 0]);
     assert.equal(clock.transportRevision, revision); assert.equal(state.transportState, "STOP");

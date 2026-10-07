@@ -43,11 +43,11 @@ propre Voice, selon la cible capturée.
 
 ## Activation et émission
 
-L'édition est visible immédiatement. Pendant PLAY, les modifications de SWING
-et leur CANCEL conservent la version temporelle engagée jusqu'à l'entrée
-suivante : frontière du Motif pour une cible Motif, frontière locale des
-Voices pour les autres cibles. La frontière explicite du Motif interrompt
-toujours les cycles locaux. FOCUS édite VIEW sans déplacer PLAYING.
+L'édition et CANCEL sont audibles dès le prochain événement, sans attendre
+le cycle. Un événement déjà programmé conserve son retard. Les transformations
+(ROTATION, DOUBLE) restent différées à leur frontière naturelle : un nouvel
+attribut ne force pas leur activation. La frontière explicite du Motif
+interrompt toujours les cycles locaux. FOCUS édite VIEW sans déplacer PLAYING.
 STOP/PAUSE conserve la sémantique d'édition existante.
 
 `SwingTiming.mjs` retarde seulement les départs MIDI et audio. Le moteur de
@@ -78,7 +78,7 @@ les événements. Le panneau A/T affiche les pourcentages et les LED VALUE
 reflètent les valeurs présentes au Step parcouru.
 
 Tests automatisés : échelle et accès hardware simulé, Steps vides et sélections
-mixtes, cycles impairs, MODULATION à 50 %, activation différée et FOCUS,
+mixtes, cycles impairs, MODULATION à 50 %, attributs immédiats et FOCUS,
 CANCEL/reset, persistance, copie/rotation/doublement, émissions MIDI et audio,
 Note Off après départ retardé, préécoute, expiration et mesure MIDI externe.
 

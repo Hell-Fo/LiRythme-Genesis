@@ -12,6 +12,19 @@ export function readSwing(state, voice) {
     return { value, target, fraction: affected ? (value - 50) / 50 : 0 };
 }
 
+export function readRatchet(state, voice) {
+    const base = state.forSystem("MOTIF"), mod = state.forSystem("MODULATION");
+    const overlay = mod.getPlaybackMotifForVoice(voice);
+    const explicit = state.modulationActive ? overlay.attributes?.RATCHET?.[voice]?.[mod.getVoiceStep(voice)] : null;
+    return explicit ?? base.getPlaybackMotifForVoice(voice).ratchets?.[voice]?.[base.getVoiceStep(voice)] ?? 1;
+}
+
+export function ratchetPlan(duration, delay, count) {
+    const interval = (duration - delay) / count;
+    return { offsets: Array.from({ length: count }, (_, i) => delay + i * interval),
+        interval, gate: count === 1 ? 50 : Math.min(50, interval / 2) };
+}
+
 export class SwingTiming {
     constructor(state, clock, { now = () => performance.now(), later = (fn, ms) => setTimeout(fn, ms), cancel = id => clearTimeout(id) } = {}) {
         Object.assign(this, { state, clock, now, later, cancel });
@@ -42,12 +55,19 @@ export class SwingTiming {
         }
     }
     delayFor(voice) { return readSwing(this.state, voice).fraction * this.duration; }
-    schedule(delay, emit) {
+    planFor(voice, preview = null) {
+        if (preview) {
+            const motif = this.state.forSystem(preview.system).getMotif(preview.motifId);
+            return ratchetPlan(this.duration, 0, motif.ratchets?.[voice]?.[preview.step % 32] ?? 1);
+        }
+        return ratchetPlan(this.duration, this.delayFor(voice), readRatchet(this.state, voice));
+    }
+    schedule(delay, emit, validUntil = this.duration, preview = false) {
         const revision = this.clock.transportRevision, source = this.clock.source;
-        const deadline = this.stepStarted + this.duration;
+        const deadline = this.stepStarted + validUntil;
         const id = this.later(() => {
             this.pending.delete(id);
-            if (this.state.transportState !== "PLAY" || this.clock.transportRevision !== revision ||
+            if ((preview ? this.state.transportState === "PLAY" : this.state.transportState !== "PLAY") || this.clock.transportRevision !== revision ||
                 this.clock.source !== source || this.now() >= deadline) return;
             emit();
         }, Math.max(0, this.stepStarted + delay - this.now()));

@@ -445,16 +445,16 @@ test('actual MIDI dispatch merges once per Voice, uses its COLOR routing and cap
     assert.deepEqual(messages.slice(2), [['Machine', [0x99, 70, 0]], ['Machine', [0x9a, 71, 0]]]);
 });
 
-test('whole MODULATION A/T edits and CANCEL after activation wait for the next entry of the engaged cycle', t => {
+test('whole MODULATION A/T edits and CANCEL after activation are immediate without changing phase', t => {
     const { state, modulation, actions, tick } = setup(t);
     state.motif[12].fill(true); state.motifLength = 7; modulation.motifLength = 3;
     actions.toggleModulation(); actions.startPlayback(); tick(); actions.selectModulationTimeline();
     actions.at.begin(0); actions.at.apply(7);
-    assert.equal(state.getPlayingEvent(12).velocity, 100);
-    tick(); assert.equal(state.getPlayingEvent(12).velocity, 100);
+    assert.equal(state.getPlayingEvent(12).velocity, 16);
     tick(); assert.equal(state.getPlayingEvent(12).velocity, 16);
-    actions.at.finish(false); assert.equal(state.getPlayingEvent(12).velocity, 16);
-    tick(); tick(); assert.equal(state.getPlayingEvent(12).velocity, 16);
+    tick(); assert.equal(state.getPlayingEvent(12).velocity, 16);
+    actions.at.finish(false); assert.equal(state.getPlayingEvent(12).velocity, 100);
+    tick(); tick(); assert.equal(state.getPlayingEvent(12).velocity, 100);
     tick(); assert.equal(state.getPlayingEvent(12).velocity, 100);
     assert.equal(state.playheadPosition, 6); assert.deepEqual(modulation.getMotif(0).attributes, {});
 });
@@ -469,7 +469,7 @@ test('all requests before a boundary collapse to the last intention, including c
     actions.toggleModulation(); actions.toggleModulation(); tick(); assert.equal(state.modulationActive, true);
 });
 
-test('CANCEL defers every Voice edited during the transaction, even after its selection changes', t => {
+test('CANCEL immediately restores every Voice edited during the transaction, even after its selection changes', t => {
     const { state, modulation, actions, tick } = setup(t);
     state.motif[12].fill(true); state.motif[13].fill(true); modulation.motifLength = 8;
     modulation.voiceLengths[12] = 3; modulation.voiceLengths[13] = 4;
@@ -479,10 +479,10 @@ test('CANCEL defers every Voice edited during the transaction, even after its se
     tick(); tick(); tick();
     assert.equal(state.getPlayingEvent(12).velocity, 16); assert.equal(state.getPlayingEvent(13).velocity, 16);
     actions.at.select('instruments', 14); actions.at.finish(false);
-    assert.equal(state.getPlayingEvent(12).velocity, 16); assert.equal(state.getPlayingEvent(13).velocity, 16);
-    tick(); assert.equal(state.getPlayingEvent(12).velocity, 16);
-    tick(); assert.equal(state.getPlayingEvent(12).velocity, 100); assert.equal(state.getPlayingEvent(13).velocity, 16);
-    tick(); assert.equal(state.getPlayingEvent(13).velocity, 16);
+    assert.equal(state.getPlayingEvent(12).velocity, 100); assert.equal(state.getPlayingEvent(13).velocity, 100);
+    tick(); assert.equal(state.getPlayingEvent(12).velocity, 100);
+    tick(); assert.equal(state.getPlayingEvent(12).velocity, 100); assert.equal(state.getPlayingEvent(13).velocity, 100);
+    tick(); assert.equal(state.getPlayingEvent(13).velocity, 100);
     tick(); assert.equal(state.getPlayingEvent(13).velocity, 100);
 });
 
@@ -675,22 +675,89 @@ test('SHIFT+PLAY and SHIFT+MOD toggle only their own Chain from either displayed
     }
 });
 
-for (const slot of [0, 1, 2]) test(`Modulation Timeline ignores legacy notes and displays whole-Motif attribute cells (slot ${slot})`, t => {
+for (const slot of [0, 1, 2]) test(`Modulation Timeline displays selected A/T cells like Motif events (slot ${slot})`, t => {
     const { state, actions, controller: c, modulation, messages } = setup(t);
     actions.selectModulationTimeline(); state.colorEnabled = true; state.selectedInstrument = 12;
     modulation.motif[12][3] = true;
     assert.equal(actions.at.begin(slot), true); assert.equal(actions.at.apply(0), true); actions.at.finish(true);
     for (let step = 0; step < 32; step++) {
-        assert.equal(c.getMotifStepColor(step), c.colors.DIM_AMBER);
+        assert.equal(c.getMotifStepColor(step), c.colors.YELLOW);
         assert.equal(modulation.motif[12][step], step === 3);
     }
+    state.selectedInstrument = null;
+    assert.equal(c.getMotifStepColor(0), c.colors.DIM_AMBER);
+    state.selectedInstrument = 12;
     state.transportState = 'PLAY'; modulation.playheadPosition = 1;
     c.drawClockStep(0, 1);
     const color = step => messages.filter(([status, note]) => status === 0x90 && note === c.mapping.MOTIF[step]).at(-1)?.[2];
-    assert.equal(color(0), c.colors.DIM_AMBER & 0x33);
+    assert.equal(color(0), c.colors.YELLOW & 0x33);
     assert.equal(color(1), c.colors.RED & 0x33);
     modulation.voiceLengths[12] = 8;
     assert.equal(c.getMotifStepColor(7), c.colors.GREEN); // Existing explicit boundary priority.
+});
+
+for (const selected of [12, null]) test(`Modulation DELETE+Timeline Step clears all A/T families, selected=${selected}`, t => {
+    const { state, modulation, actions, controller: c, tap, press, release } = setup(t);
+    actions.selectModulationTimeline(); state.selectedInstrument = selected;
+    const motif = modulation.getMotif(0);
+    for (const voice of [12, 13]) for (const step of [1, 2]) {
+        attribute(motif, 'VELOCITY', voice, step, 100);
+        attribute(motif, 'COLOR', voice, step, false);
+        attribute(motif, 'SWING', voice, step, 50);
+        motif.atDestinations ??= {};
+        for (const key of ['VELOCITY', 'COLOR', 'SWING', 'ROTATION']) {
+            motif.atDestinations[key] ??= createAttributeRows();
+            motif.atDestinations[key][voice][step] = 'STEP';
+        }
+    }
+    const base = structuredClone(state.motifs); let saves = 0; state.onBankChange = () => saves++;
+    tap(c.mapping.VALUE_CONTROLS.DELETE);
+    press(c.mapping.MOTIF[1]); press(c.mapping.MOTIF[1]); release(c.mapping.MOTIF[1]);
+    assert.equal(c.deleteArmed, false); assert.equal(saves, 1);
+    for (const rows of [...Object.values(motif.attributes), ...Object.values(motif.atDestinations)]) {
+        assert.equal(rows[12][1], null);
+        assert.equal(rows[13][1] === null, selected === null);
+        assert.notEqual(rows[12][2], null); assert.notEqual(rows[13][2], null);
+    }
+    assert.ok(motif.events.every(row => row.every(v => !v))); assert.deepEqual(state.motifs, base);
+    const saved = snapshotMotifBank(state); assert.equal(saved.modulation.motifs[0].attributes.COLOR[12][1], null);
+    tap(c.mapping.VALUE_CONTROLS.DELETE); tap(c.mapping.MOTIF[0]);
+    assert.equal(c.deleteArmed, false); assert.equal(saves, 1); // Empty target is a consumed no-op.
+});
+
+test('Modulation DELETE+Step respects FOCUS and removes playing attributes immediately', t => {
+    const { state, modulation, actions, controller: c, tap, tick } = setup(t);
+    actions.selectModulationTimeline(); state.selectedInstrument = 12;
+    modulation.motifLength = 8; modulation.voiceLengths[12] = 3;
+    attribute(modulation.getMotif(0), 'COLOR', 12, 0, true);
+    actions.startPlayback(); tick();
+    const revision = actions.clock.transportRevision;
+    tap(c.mapping.VALUE_CONTROLS.DELETE); tap(c.mapping.MOTIF[0]);
+    assert.equal(modulation.getMotif(0).attributes.COLOR[12][0], null);
+    assert.equal(modulation.getPlaybackMotifForVoice(12).attributes.COLOR[12][0], null);
+    tick(); tick(); assert.equal(modulation.getPlaybackMotifForVoice(12).attributes.COLOR[12][0], null);
+    assert.equal(actions.clock.transportRevision, revision);
+    modulation.chainEnabled = true; modulation.chain = [0, 1];
+    actions.toggleChainFocus(); actions.selectFocusMotif(1);
+    attribute(modulation.getMotif(1), 'COLOR', 12, 0, true);
+    const playing = structuredClone(modulation.getMotif(0)), phase = modulation.playheadPosition;
+    tap(c.mapping.VALUE_CONTROLS.DELETE); tap(c.mapping.MOTIF[0]);
+    assert.equal(modulation.getMotif(1).attributes.COLOR[12][0], null);
+    assert.deepEqual(modulation.getMotif(0), playing); assert.deepEqual(modulation.chain, [0, 1]);
+    assert.equal(modulation.playheadPosition, phase);
+});
+
+test('Modulation Timeline uses Voice selection and filters to display A/T occupancy', t => {
+    const { state, modulation, actions, controller: c } = setup(t);
+    actions.selectModulationTimeline(); state.selectedInstrument = 12;
+    attribute(modulation.getMotif(0), 'COLOR', 12, 1, false);
+    attribute(modulation.getMotif(0), 'SWING', 13, 2, 50);
+    assert.equal(c.getMotifStepColor(0), 0);
+    assert.equal(c.getMotifStepColor(1), c.colors.YELLOW);
+    assert.equal(c.getMotifStepColor(2), c.colors.DIM_AMBER);
+    state.filterMode = true; state.visibleInstrumentFilter = new Set([12]);
+    assert.equal(c.getMotifStepColor(2), 0);
+    state.selectedInstrument = 13; assert.equal(c.getMotifStepColor(2), c.colors.YELLOW);
 });
 
 test('controller initialization reflects restored requested activation instead of the reserved static palette', t => {

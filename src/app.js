@@ -647,7 +647,7 @@ function triggerMotifStep(step) {
     const previewMotifId = arguments[1] ?? null;
     const previewSystem = arguments[2] ?? state.currentTimeline ?? "MOTIF";
     const previewState = state.forSystem?.(previewSystem) ?? state;
-    if (previewMotifId === null) state.noteTiming?.beginStep();
+    state.noteTiming?.beginStep();
     const triggeredInstruments = [];
     for (let voiceId = 0; voiceId < 16; voiceId++) {
         const playingMotif = previewMotifId !== null ? previewState.getMotif(previewMotifId)
@@ -667,15 +667,18 @@ function triggerMotifStep(step) {
         const midiOutputName = voice?.type === "MIDI DRUM"
             ? midiOutputSelector.options[midiOutputSelector.selectedIndex]?.textContent : null;
         const delay = previewMotifId === null ? state.noteTiming?.delayFor(voiceId) ?? 0 : 0;
-        const feedback = () => {
-            if (delay > 0) {
+        const plan = state.noteTiming?.planFor(voiceId, previewMotifId === null ? null
+            : { system: previewSystem, motifId: previewMotifId, step }) ?? { offsets: [delay], interval: 0, gate: 50 };
+        const feedback = delayed => {
+            if (delayed) {
                 try { launchpad.pulseInstrument(voiceId); } catch (error) { console.error("Instrument LED feedback failed:", error); }
             } else triggeredInstruments.push(voiceId);
         };
-        const emit = () => {
+        let releasePrevious = null;
+        const emit = (delayed = false) => {
             if (state.isVoiceAudible?.(voiceId) === false) return;
             if (voice?.type === "AUDIO") {
-                if (audioPlayer.trigger(voice, event.velocity)) feedback();
+                if (audioPlayer.trigger(voice, event.velocity)) feedback(delayed);
                 return;
             }
             if (voice?.type !== "MIDI DRUM" || voice.output?.mode !== "DEFAULT" ||
@@ -687,25 +690,35 @@ function triggerMotifStep(step) {
                 Number.isInteger(voice.colorNote) && voice.colorNote >= 0 && voice.colorNote <= 127
                 ? voice.colorNote : voice.note;
             const status = 0x90 | (voice.channel - 1);
+            // A delayed Note Off must never cut the following ratchet strike.
+            releasePrevious?.();
             midiManager.send(
                 midiOutputName,
                 [status, note, event.velocity],
                 undefined, { preview: previewMotifId !== null }
             );
 
-            setTimeout(() => {
+            let released = false;
+            const release = () => {
+                if (released) return;
+                released = true;
                 midiManager.send(
                     midiOutputName,
                     [status, note, 0]
                 );
-            }, 50);
+            };
+            releasePrevious = release;
+            setTimeout(release, plan.gate);
 
             if (midiManager.findOutput(midiOutputName) !== null) {
-                feedback();
+                feedback(delayed);
             }
         };
-        if (delay > 0) state.noteTiming.schedule(delay, emit);
-        else emit();
+        for (const [index, offset] of plan.offsets.entries()) {
+            if (offset > 0) state.noteTiming.schedule(offset, () => emit(true),
+                plan.offsets[index + 1] ?? state.noteTiming.duration, previewMotifId !== null);
+            else emit();
+        }
     }
 
     // Run visual feedback only after all musical sends and note-off scheduling.
