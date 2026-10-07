@@ -396,10 +396,12 @@ export class LaunchpadMini {
                 continue;
             }
 
-            if (steps[step] || Object.values(this.state.getMotif(this.actions.at.getEditingMotifId()).attributes ?? {}).some(rows => rows[voiceId][step] !== null)) {
+            if ((this.state.systemName !== "MODULATION" && steps[step]) || Object.values(this.state.getMotif(this.actions.at.getEditingMotifId()).attributes ?? {}).some(rows => rows[voiceId][step] !== null)) {
                 if (target && this.hasAssignedAT(voiceId, step)) return this.colors.DIM_RED;
                 hasAnyVoice = true;
-                if (isSelectedInstrument) hasSelectedVoice = true;
+                // A Modulation attribute-only cell is visible, but is not a
+                // selected Voice note. Whole-Motif A/T can populate every cell.
+                if (isSelectedInstrument && this.state.systemName !== "MODULATION" && steps[step]) hasSelectedVoice = true;
             }
         }
 
@@ -512,9 +514,12 @@ export class LaunchpadMini {
 
     getInstrumentColor(i) {
         if (this.state.atTransaction) {
-            const events = this.state.getMotif(this.actions.at.getEditingMotifId()).events[i];
-            const event = events?.[this.state.playheadPosition % 32];
-            if (events?.some((occupied, step) => occupied && this.hasAssignedAT(i, step, "INSTRUMENT"))) {
+            const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
+            const events = motif.events[i];
+            const step = this.state.playheadPosition % 32;
+            const event = this.state.systemName === "MODULATION"
+                ? Object.values(motif.attributes ?? {}).some(rows => rows[i][step] !== null) : events?.[step];
+            if (events?.some((occupied, step) => (occupied || this.state.systemName === "MODULATION") && this.hasAssignedAT(i, step, "INSTRUMENT"))) {
                 return event ? this.colors.RED : this.colors.DIM_RED;
             }
             const selected = this.state.atTransaction.instruments.has(i);
@@ -634,6 +639,22 @@ export class LaunchpadMini {
         // COPY/refusal and FOCUS keep their existing visual priority.
         if (this.copyDeniedPads.has(id) || id === this.copySuccessPad ||
             this.state.chainFocus && id === this.state.currentMotifId) return color;
+        if (this.state.chainEnabled && !this.state.chain.includes(id) &&
+            !this.chainConfirmations.has(id) &&
+            !(this.copyStage === "TARGET" && this.copySource?.kind === "BANK_MOTIF" && id === this.copySource.sourceId)) {
+            return color === "OFF" ? "OFF" : this.state.systemName === "MODULATION" ? "DIM_RED" : "DIM_GREEN";
+        }
+        // Both Chains share the amber/yellow grammar. Keep transient
+        // confirmations, COPY and Loop Point indications above that palette.
+        if (this.state.chainEnabled && !this.state.chainFocus) {
+            if (this.chainConfirmations.has(id) ||
+                this.copyStage === "TARGET" && this.copySource?.kind === "BANK_MOTIF" && id === this.copySource.sourceId) return color;
+            if (id === this.state.playingMotifId && this.state.transportState !== "STOP") {
+                return color === "GREEN" ? "YELLOW" : color;
+            }
+            if (id === this.state.nextMotifId) return color;
+            return color === "YELLOW" ? "DIM_AMBER" : color;
+        }
         if (this.state.chainEnabled && ["YELLOW", "DIM_AMBER"].includes(color)) {
             color = id === this.state.nextMotifId ? color === "YELLOW" ? "GREEN" : "DIM_GREEN" : "DIM_GREEN";
         }
@@ -679,7 +700,7 @@ export class LaunchpadMini {
         const hasData = motif && (motif.motifLength !== null ||
             motif.voiceLengths.some(length => length !== null) ||
             motif.events.some(row => row.some(Boolean)) || Object.values(motif.attributes ?? {}).some(rows => rows.some(row => row.some(v => v !== null))));
-        return hasData ? (this.state.chainEnabled ? "DIM_AMBER" : this.layout.BOOKS.MOTIF_LIBRARY_IDLE) : "OFF";
+        return hasData ? this.layout.BOOKS.MOTIF_LIBRARY_IDLE : "OFF";
     }
 
     flashChainNavigationBoundary(controlName) {
@@ -1270,7 +1291,9 @@ export class LaunchpadMini {
                     if ((!tx.instruments.size || tx.instruments.has(voice)) &&
                         (motif.events[voice][step] || motif.attributes !== undefined)) {
                         if (motif.attributes !== undefined ? motif.attributes.COLOR?.[voice]?.[step] === true : motif.colors?.[voice]?.[step]) colorCount++;
-                        const velocity = motif.attributes !== undefined ? motif.attributes.VELOCITY?.[voice]?.[step] : motif.velocities?.[voice]?.[step];
+                        const velocity = tx.slot === 2
+                            ? (motif.attributes !== undefined ? motif.attributes.SWING?.[voice]?.[step] : motif.swings?.[voice]?.[step])
+                            : motif.attributes !== undefined ? motif.attributes.VELOCITY?.[voice]?.[step] : motif.velocities?.[voice]?.[step];
                         if (velocity != null) velocities.add(velocity);
                     }
                 }
@@ -1414,6 +1437,30 @@ export class LaunchpadMini {
         const status = rawStatus === 0x80 ? 0x90 : rawStatus;
         const value = rawStatus === 0x80 ? 0 : rawValue;
         const inputKey = status + ":" + number;
+        const sequenceButton = status === 0xB0 &&
+            [this.mapping.TOP_CONTROLS.PLAY_STOP, this.mapping.TOP_CONTROLS.MODULATION].includes(number);
+        if (sequenceButton && this.deleteConsumedInputs.has(inputKey)) {
+            if (value === 0) this.deleteConsumedInputs.delete(inputKey);
+            return;
+        }
+        // Sequence buttons own their system, independently of the displayed Book.
+        // DELETE takes precedence over ON/OFF, transport and SHIFT+Chain.
+        if (sequenceButton && this.deleteArmed && !this.rootState.atTransaction) {
+            if (value > 0) {
+                this.deleteConsumedInputs.add(inputKey);
+                this.cancelStepNavigationHold();
+                if (this.focusNavigationHeld?.size) this.focusNavigationConsumed = true;
+                const kind = number === this.mapping.TOP_CONTROLS.PLAY_STOP ? "PLAY" : "MODULATION";
+                if (this.actions.deleteTarget(kind)) this.setDeleteArmed(false);
+                this.drawBooks();
+                this.drawMotif();
+                this.drawPlayhead();
+                this.drawModulationStatus();
+                this.drawTransport();
+                this.swapBuffers();
+            }
+            return;
+        }
         if (status === 0xB0 && number === this.mapping.TOP_CONTROLS.MODULATION) {
             if (value > 0 && !this.modulationPressed) {
                 this.modulationPressed = true;
@@ -1537,7 +1584,7 @@ export class LaunchpadMini {
                 clearTimeout(hold.timer);
                 hold.fired = true;
             }
-            this.actions.toggleChain();
+            this.actions.inSystem("MOTIF", () => this.actions.toggleChain());
             this.cancelTransportPulse();
             this.drawTransport();
             this.swapBuffers();

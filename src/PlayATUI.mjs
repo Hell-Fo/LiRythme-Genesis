@@ -14,7 +14,7 @@ export function readATPanel(state) {
         motif: (tx.editingMotifId ?? state.currentMotifId) + 1,
         ...(tx.system === "MODULATION" ? { system: "MODULATION" } : {}),
         values: definition.id === "ROTATION" ? ["<<  −1 STEP", ">>  +1 STEP"]
-            : definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.values,
+            : definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.id === "SWING" ? definition.values.map(value => `${value} %`) : definition.values,
         selected: definition.id === "COLOR" ? (valueIndex === null ? null : 0) : valueIndex };
 }
 

@@ -1,12 +1,15 @@
 export const createVelocities = () => Array.from({ length: 16 }, () => Array(32).fill(100));
+export const SWING_VALUES = Object.freeze([75, 72, 69, 66, 63, 58, 54, 50]);
+export const validSwingRow = row => Array.isArray(row) && row.length === 32 && row.every(v => v === null || SWING_VALUES.includes(v));
+export const validSwings = rows => Array.isArray(rows) && rows.length === 16 && rows.every(validSwingRow);
 export const createColors = () => Array.from({ length: 16 }, () => Array(32).fill(false));
 export const createAttributeRows = () => Array.from({ length: 16 }, () => Array(32).fill(null));
-export const hasModulationCell = (motif, voice, step) => Boolean(motif.events[voice][step] ||
+export const hasModulationCell = (motif, voice, step) => Boolean(
     Object.values(motif.attributes ?? {}).some(rows => rows[voice][step] !== null));
 export const validExplicitAttributes = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(row => Array.isArray(row) && row.length === 32 &&
-            row.every(v => v === null || (key === "COLOR" ? typeof v === "boolean" : Number.isInteger(v) && v >= 1 && v <= 127))));
+            row.every(v => v === null || (key === "COLOR" ? typeof v === "boolean" : key === "SWING" ? SWING_VALUES.includes(v) : Number.isInteger(v) && v >= 1 && v <= 127))));
 function applyExplicitAttribute(motif, { instruments, steps }, key, value) {
     let changed = false;
     const rows = motif.attributes[key] ??= createAttributeRows();
@@ -20,7 +23,7 @@ function applyExplicitAttribute(motif, { instruments, steps }, key, value) {
 export const validATDestinationRow = row => Array.isArray(row) && row.length === 32 &&
     row.every(v => v === null || ["STEP", "INSTRUMENT", "MOTIF"].includes(v));
 export const validATDestinations = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "ROTATION"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "ROTATION"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(validATDestinationRow));
 export const hasTargetEvents = (motif, target) => Boolean(motif && target && motif.events.some((row, voice) =>
     (!target.instruments.size || target.instruments.has(voice)) &&
@@ -76,10 +79,30 @@ export const AT_SLOTS = Object.freeze([
             return changed;
         }
     }),
-    ...Array(6).fill(null),
+    Object.freeze({ id: "SWING", values: SWING_VALUES,
+        isAssigned: (motif, voice, step) => (motif.attributes !== undefined
+            ? motif.attributes.SWING?.[voice]?.[step] : motif.swings?.[voice]?.[step]) != null,
+        capture: motif => motif.swings?.map(row => row.slice()),
+        restore(motif, snapshot) {
+            if (snapshot === undefined) delete motif.swings;
+            else motif.swings = snapshot.map(row => row.slice());
+        },
+        apply(motif, { instruments, steps }, value) {
+            if (motif.attributes !== undefined) return applyExplicitAttribute(motif, { instruments, steps }, "SWING", value);
+            let changed = false;
+            for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
+                if (!motif.events[voice][step] || instruments.size && !instruments.has(voice) || steps.size && !steps.has(step)) continue;
+                motif.swings ??= createAttributeRows();
+                motif.swings[voice][step] = value;
+                changed = true;
+            }
+            return changed;
+        }
+    }),
+    ...Array(5).fill(null),
     Object.freeze({ id: "ROTATION", values: Object.freeze([]),
         isAssigned: (motif, voice, step) => Boolean(motif.atDestinations?.ROTATION?.[voice]?.[step]),
-        capture: motif => Object.fromEntries(["events", "velocities", "colors", "atDestinations", "attributes"]
+        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "atDestinations", "attributes"]
             .map(key => [key, structuredClone(motif[key])])),
         restore(motif, snapshot) {
             for (const [key, value] of Object.entries(snapshot)) {
@@ -160,7 +183,8 @@ export class ATTransaction {
         }
         const id = this.getEditingMotifId();
         const motif = this.state.getMotif(id);
-        if (this.state.systemName === "MODULATION") {
+        if (definition.id === "SWING" && !hasTargetEvents(motif, tx)) return false;
+        if (this.state.systemName === "MODULATION" || definition.id === "SWING") {
             const voices = tx.instruments.size ? [...tx.instruments] : Array.from({ length: 16 }, (_, i) => i);
             const whole = !tx.instruments.size && !tx.steps.size;
             tx.attributeVoices ??= new Set();
@@ -207,6 +231,7 @@ export class ATTransaction {
                 attributes: Object.fromEntries(Object.entries(motif.attributes ?? {}).map(([key, rows]) => [key, rows[voice][step]])),
                 velocity: motif.velocities?.[voice][step] ?? 100,
                 color: motif.colors?.[voice][step] ?? false,
+                swing: motif.swings?.[voice][step] ?? null,
                 destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
                     .map(([key, rows]) => [key, rows[voice][step]])) });
         }
@@ -233,6 +258,7 @@ export class ATTransaction {
                 attributes: Object.fromEntries(Object.entries(motif.attributes ?? {}).map(([key, rows]) => [key, rows[voice][to]])),
                 velocity: motif.velocities?.[voice][to] ?? 100,
                 color: motif.colors?.[voice][to] ?? false,
+                swing: motif.swings?.[voice][to] ?? null,
                 destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
                     .map(([key, rows]) => [key, rows[voice][to]])) });
         }
@@ -242,6 +268,7 @@ export class ATTransaction {
             motif.events[voice][step] = false;
             if (motif.velocities) motif.velocities[voice][step] = 100;
             if (motif.colors) motif.colors[voice][step] = false;
+            if (motif.swings) motif.swings[voice][step] = null;
             for (const rows of Object.values(motif.attributes ?? {})) rows[voice][step] = null;
             for (const rows of Object.values(motif.atDestinations)) rows[voice][step] = null;
         }
@@ -251,14 +278,16 @@ export class ATTransaction {
             for (const [key, rows] of Object.entries(motif.attributes ?? {})) rows[voice][to] = move.attributes[key] ?? null;
             if (motif.velocities) motif.velocities[voice][to] = move.velocity;
             if (motif.colors) motif.colors[voice][to] = move.color;
+            if (motif.swings) motif.swings[voice][to] = move.swing;
             for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = move.destinations[key] ?? null;
             motif.atDestinations.ROTATION[voice][to] = destination;
         }
-        for (const { voice, to, event, attributes, velocity, color, destinations } of displaced) {
+        for (const { voice, to, event, attributes, velocity, color, swing, destinations } of displaced) {
             motif.events[voice][to] = event;
             for (const [key, rows] of Object.entries(motif.attributes ?? {})) rows[voice][to] = attributes[key] ?? null;
             if (motif.velocities) motif.velocities[voice][to] = velocity;
             if (motif.colors) motif.colors[voice][to] = color;
+            if (motif.swings) motif.swings[voice][to] = swing;
             for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = destinations[key] ?? null;
         }
         if (tx.steps.size) {
@@ -280,7 +309,7 @@ export class ATTransaction {
         if (!tx) return false;
         const definition = AT_SLOTS[tx.slot];
         if (!commit) for (const id of tx.touched) {
-            if ((tx.slot === 8 || tx.system === "MODULATION") && this.state.transportState === "PLAY" && id === this.state.playingMotifId) {
+            if ((tx.slot === 8 || tx.slot === 2 || tx.system === "MODULATION") && this.state.transportState === "PLAY" && id === this.state.playingMotifId) {
                 this.state.deferDouble(tx.slot === 8 ? [...tx.rotationVoices] : [...tx.attributeVoices],
                     tx.slot === 8 ? Boolean(tx.rotationWholeMotif) : Boolean(tx.attributeWholeMotif));
             }
@@ -299,9 +328,10 @@ export class ATTransaction {
         if (this.state.atTransaction) return false;
         const motif = this.state.getMotif(this.getEditingMotifId());
         if (!motif) return false;
-        if (motif.attributes !== undefined && this.state.transportState === "PLAY" && this.getEditingMotifId() === this.state.playingMotifId) this.state.deferDouble([], true);
+        if ((motif.attributes !== undefined || motif.swings) && this.state.transportState === "PLAY" && this.getEditingMotifId() === this.state.playingMotifId) this.state.deferDouble([], true);
         delete motif.velocities;
         delete motif.colors;
+        delete motif.swings;
         delete motif.atDestinations;
         if (motif.attributes !== undefined) {
             motif.attributes = {};

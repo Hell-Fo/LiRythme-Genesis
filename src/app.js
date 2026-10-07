@@ -1,3 +1,4 @@
+import { SwingTiming } from "./SwingTiming.mjs";
 import { LiRythmeState } from "./LiRythmeState.js";
 import { LiRythmeClock } from "./LiRythmeClock.js";
 import { MidiManager } from "./hardware/midi/MidiManager.js";
@@ -57,6 +58,7 @@ const motifBankAutosave = await initializeMotifBankAutosave(state, window.motifB
 window.motifBankFiles.onClose(() => motifBankAutosave.flush());
 window.motifBankFiles.ready();
 const clock = new LiRythmeClock(state);
+Object.defineProperty(state, "noteTiming", { value: new SwingTiming(state, clock) });
 const motifUI = initializePlayMotifUI({ state });
 const modulationUI = initializePlayMotifUI({ state, system: "MODULATION" });
 const cycleUI = ["MOTIF", "MODULATION"].map(system => initializePlayCycleUI({ state, system }));
@@ -74,6 +76,7 @@ if (state.filterMode) {
 }
 
 const actions = new LiRythmeActions(state, clock);
+actions.onCancelDelayedNotes = () => state.noteTiming.reset();
 const motifChainUI = initializePlayChainUI({ state, system: "MOTIF" });
 const modulationChainUI = initializePlayChainUI({ state, system: "MODULATION" });
 actions.onChainChange = () => { motifChainUI.render(); modulationChainUI.render(); };
@@ -530,6 +533,7 @@ midiClockInput.onStop = () => {
 };
 
 const handleClockMessage = (data) => {
+    if (data[0] === 0xF8) state.noteTiming.observeMidiPulse();
     midiClockInput.handleMidiMessage(data);
     activeClockProfile?.handleMidiMessage(data);
 };
@@ -539,6 +543,7 @@ function switchMidiClockInput(name) {
         midiManager.disconnectClockInput();
         activeClockProfile = null;
         clock.resetMidiPhase();
+        state.noteTiming.reset();
         clock.setSource("INTERNAL");
 
         if (state.transportState === "PLAY") {
@@ -563,6 +568,7 @@ function switchMidiClockInput(name) {
 
     midiManager.disconnectClockInput();
     clock.resetMidiPhase();
+    state.noteTiming.reset();
     clock.setSource("MIDI");
 
     activeClockProfile =
@@ -641,6 +647,7 @@ function triggerMotifStep(step) {
     const previewMotifId = arguments[1] ?? null;
     const previewSystem = arguments[2] ?? state.currentTimeline ?? "MOTIF";
     const previewState = state.forSystem?.(previewSystem) ?? state;
+    if (previewMotifId === null) state.noteTiming?.beginStep();
     const triggeredInstruments = [];
     for (let voiceId = 0; voiceId < 16; voiceId++) {
         const playingMotif = previewMotifId !== null ? previewState.getMotif(previewMotifId)
@@ -648,7 +655,7 @@ function triggerMotifStep(step) {
         const steps = playingMotif.events[voiceId];
         const localStep = previewMotifId !== null ? step % 32 : state.getVoiceStep?.(voiceId, step) ?? step;
         const event = previewMotifId === null && state.getPlayingEvent ? state.getPlayingEvent(voiceId, step)
-            : steps[localStep] ? {
+            : previewSystem !== "MODULATION" && steps[localStep] ? {
                 velocity: playingMotif.attributes?.VELOCITY?.[voiceId]?.[localStep] ?? playingMotif.velocities?.[voiceId]?.[localStep] ?? 100,
                 color: playingMotif.attributes?.COLOR?.[voiceId]?.[localStep] ?? playingMotif.colors?.[voiceId]?.[localStep] ?? false
             } : null;
@@ -656,40 +663,49 @@ function triggerMotifStep(step) {
             continue;
         }
 
-        const voice = state.padConfiguration.voices[voiceId];
-        if (voice?.type === "AUDIO") {
-            if (audioPlayer.trigger(voice, event.velocity)) triggeredInstruments.push(voiceId);
-            continue;
-        }
-        if (voice?.type !== "MIDI DRUM" || voice.output?.mode !== "DEFAULT" ||
-            !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
-            !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127) {
-            continue;
-        }
-        const note = event.color &&
-            Number.isInteger(voice.colorNote) && voice.colorNote >= 0 && voice.colorNote <= 127
-            ? voice.colorNote : voice.note;
-        const status = 0x90 | (voice.channel - 1);
-        const midiOutputName =
-            midiOutputSelector.options[
-                midiOutputSelector.selectedIndex
-            ]?.textContent;
-        midiManager.send(
-            midiOutputName,
-            [status, note, event.velocity],
-            undefined, { preview: previewMotifId !== null }
-        );
-
-        setTimeout(() => {
+        const voice = structuredClone(state.padConfiguration.voices[voiceId]);
+        const midiOutputName = voice?.type === "MIDI DRUM"
+            ? midiOutputSelector.options[midiOutputSelector.selectedIndex]?.textContent : null;
+        const delay = previewMotifId === null ? state.noteTiming?.delayFor(voiceId) ?? 0 : 0;
+        const feedback = () => {
+            if (delay > 0) {
+                try { launchpad.pulseInstrument(voiceId); } catch (error) { console.error("Instrument LED feedback failed:", error); }
+            } else triggeredInstruments.push(voiceId);
+        };
+        const emit = () => {
+            if (state.isVoiceAudible?.(voiceId) === false) return;
+            if (voice?.type === "AUDIO") {
+                if (audioPlayer.trigger(voice, event.velocity)) feedback();
+                return;
+            }
+            if (voice?.type !== "MIDI DRUM" || voice.output?.mode !== "DEFAULT" ||
+                !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
+                !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127) {
+                return;
+            }
+            const note = event.color &&
+                Number.isInteger(voice.colorNote) && voice.colorNote >= 0 && voice.colorNote <= 127
+                ? voice.colorNote : voice.note;
+            const status = 0x90 | (voice.channel - 1);
             midiManager.send(
                 midiOutputName,
-                [status, note, 0]
+                [status, note, event.velocity],
+                undefined, { preview: previewMotifId !== null }
             );
-        }, 50);
 
-        if (midiManager.findOutput(midiOutputName) !== null) {
-            triggeredInstruments.push(voiceId);
-        }
+            setTimeout(() => {
+                midiManager.send(
+                    midiOutputName,
+                    [status, note, 0]
+                );
+            }, 50);
+
+            if (midiManager.findOutput(midiOutputName) !== null) {
+                feedback();
+            }
+        };
+        if (delay > 0) state.noteTiming.schedule(delay, emit);
+        else emit();
     }
 
     // Run visual feedback only after all musical sends and note-off scheduling.

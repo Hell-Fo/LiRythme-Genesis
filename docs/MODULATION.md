@@ -32,8 +32,10 @@ Transport, tempo, division, configurations de Voices, SOLO/MUTE et filtres reste
 partagés. Un tick accepté avance chaque système exactement une fois. Le moteur
 Clock et son ordonnanceur n'ont pas été modifiés.
 
-Les cellules d'événements restent booléennes. Une Modulation possède en plus
-`attributes.VELOCITY` et/ou `attributes.COLOR`, avec une présence indépendante
+MODULATION ne contient plus de notes : elle module uniquement les événements
+de Motif. Ses matrices `events` restent vides pour compatibilité du format.
+Elle possède `attributes.VELOCITY`, `attributes.COLOR` et `attributes.SWING`,
+avec une présence indépendante
 par Voice et Step. Un attribut inexistant, une famille absente ou une cellule
 `null` signifie « aucun remplacement ». Les valeurs `false`, `100` et `127`
 restent des valeurs explicites : COLOR OFF, vélocité neutre existante et 100 %.
@@ -48,11 +50,11 @@ Pour chaque Voice, indépendamment :
 
 1. Résoudre le Step local et la version temporelle active du Motif.
 2. Résoudre le Step local et la version temporelle active de MODULATION.
-3. Si MODULATION est active, unir les événements. Deux événements de la même
-   Voice deviennent un seul événement ; une Voice supplémentaire s'ajoute.
-4. S'il n'y a aucun événement, ne rien émettre, même si des A/T sont présents.
+3. Les départs proviennent exclusivement de Motif. MODULATION n'ajoute ni ne
+   remplace une note.
+4. Sans événement de Motif à ce Step local pour cette Voice, ne rien émettre.
 5. Partir des attributs du Motif, ou des valeurs habituelles en leur absence.
-   Remplacer séparément VELOCITY et COLOR seulement lorsque l'attribut de
+   Si MODULATION est active, remplacer séparément VELOCITY, COLOR et SWING lorsque l'attribut de
    MODULATION est explicitement présent à son Step local pour cette Voice.
 6. Appliquer SOLO/MUTE puis le routage de la Voice. Audio reçoit la vélocité
    composée. MIDI choisit la note normale ou `colorNote` propre à la Voice.
@@ -112,8 +114,8 @@ le même mécanisme temporel dans les deux systèmes.
   reste DOUBLE ; les accords de tempo avec PLAY/STOP conservent leur priorité.
 - Pendant une transaction ROTATION, `<< / >>` conserve sa fonction de rotation.
 - En STOP/PAUSE, la grammaire Steps/occurrences, les maintiens, FOCUS/VIEW et la
-  préécoute restent ceux du système ciblé. La préécoute de MODULATION joue ses
-  événements propres, avec ses attributs, indépendamment de son effet ON/OFF.
+  préécoute restent ceux du système ciblé. La navigation de MODULATION est
+  silencieuse : ses cellules A/T seules ne déclenchent aucun son autonome.
 - Le Book Motif/Chain affiché change de banque avec le contexte. Le Book A/T
   reste ouvert. Chaque BEGIN capture désormais le système et le motif pour
   tous les slots, y compris VELOCITY hors Chain ; les anciennes transactions
@@ -122,16 +124,17 @@ le même mécanisme temporel dans les deux systèmes.
   Après sa fermeture, le prochain BEGIN utilise le contexte sélectionné.
 - COPY et DELETE provisoires et les maintiens Chain sont annulés au changement
   de contexte pour éviter une écriture accidentelle dans l'autre banque.
-- ROTATION déplace aussi les cellules A/T seules dans MODULATION : événement
-  booléen, attributs présents et métadonnées se déplacent ensemble. La permutation
+- ROTATION déplace les cellules A/T de MODULATION : attributs présents et
+  métadonnées se déplacent ensemble. La permutation
   en destination occupée et les cycles locaux restent inchangés. Aucune note
   porteuse n'est créée. Dans un Motif de jeu, seuls les événements sont ciblés.
 - COPY, DELETE court/long, DOUBLE, NEXT, Loop Point et FOCUS utilisent les mêmes
   commandes et validations. Les copies portent leur système et ne traversent
   pas implicitement les banques.
 
-Les familles des Books Motif/Chain sont DIM GREEN/GREEN, celles de
-Modulation/Chain DIM RED/RED. Les mêmes cadences NEXT, COPY et Loop Point sont
+Hors Chain, les Motifs stockés sont DIM GREEN (Motif) ou DIM RED (Modulation).
+Dans les deux Chains, les maillons sont DIM AMBER, PLAYING est YELLOW et NEXT
+clignote DIM AMBER/YELLOW. Les priorités FOCUS, COPY et Loop Point restent actives. Les mêmes cadences NEXT, COPY et Loop Point sont
 réutilisées ; COPY/refus, VIEW en FOCUS et Loop Point gardent leurs priorités.
 Le curseur Motif est vert, celui de Modulation rouge, avec distinction DIM/FULL.
 La frontière explicite de Modulation est verte, conformément à la convention
@@ -161,8 +164,8 @@ Modulation est persistée comme demandé.
 
 ## Vérifications
 
-- Suite complète : 439 tests, dont 36 dédiés à MODULATION.
-- Couverture : exemples normatifs, union et absence de doublons, présence/OFF,
+- Suite complète après passage à A/T seuls : 491 tests réussis.
+- Couverture : exemples normatifs, intersections Voice/Step sur cycles 8/6, présence/OFF,
   A/T seuls, sources intactes, phases et Chains indépendantes, Clock INTERNAL/MIDI,
   activation aux frontières, longueur 1 et fallback/PPCM, CANCEL avant/après
   activation et après changement de sélection, isolation des transactions,
@@ -183,10 +186,11 @@ ouvert ; l'écoute, l'ergonomie et le feedback physique attendent la validation.
 1. Préparer un Motif Kick + Hat, avec une durée explicite de 5. Configurer les
    notes COLOR de quelques Voices et activer COLOR dans Settings.
 2. Passer en PLAY, sélectionner MODULATION par `>>`, puis arrêter pour la
-   préparer : durée 3, une Snare ; sur un Step, VELOCITY A sans événement.
-   Vérifier la préécoute et les familles vert/rouge des Books et curseurs.
+   préparer : durée 6, choisir Kick et les Steps 1 et 3 dans COLOR.
+   Vérifier les intersections avec les notes Kick de Motif ; aucune Snare ajoutée.
+   Sans sélection de Voice, vérifier que toutes les Voices existantes sont ciblées.
 3. Reprendre PLAY et commander ON/OFF entre deux frontières. Vérifier l'état
-   demandé/actif, l'union des notes et le retour du Motif original après OFF.
+   demandé/actif, les attributs composés et le retour du Motif original après OFF.
    Réactiver : la phase doit avoir continué, sans repartir à zéro.
 4. Tester COLOR ON puis OFF sur un Step sans note de MODULATION, puis ROTATION
    de cette cellule. Vérifier les notes propres à chaque Voice et l'absence de
@@ -201,3 +205,37 @@ ouvert ; l'écoute, l'ergonomie et le feedback physique attendent la validation.
    longueurs et Chain Modulation. Tester une ancienne sauvegarde : couche vide/OFF.
 
 Le travail s'arrête à cette livraison pour validation hardware par Daniel.
+
+
+## Révision : MODULATION uniquement A/T
+
+La sélection A/T détermine les destinations :
+
+- Voice(s) sans Steps : leurs A/T sont présents sur le cycle de Modulation.
+- Voice(s) et Steps : seulement ces Voices aux Steps sélectionnés.
+- Aucune Voice ni Step : toutes les Voices sur le cycle entier.
+- Steps sans Voice : toutes les Voices aux Steps sélectionnés.
+
+Les cycles restent indépendants. Une cellule Kick/COLOR au Step 1 de
+Modulation n'agit que si un événement Kick de Motif se produit au même tick.
+Elle ne programme pas un Kick. Pour SWING, l'alternance Motif/Voice et le
+ciblage direct des Steps restent ceux documentés dans SWING.md.
+
+Les clics ordinaires sur la Timeline de Modulation ne créent plus de notes.
+L'édition passe par le Livre A/T ; la sélection des Voices, les longueurs,
+COPY, DOUBLE et ROTATION restent disponibles. A/T seuls apparaissent atténués,
+sans jaune de note sélectionnée. DELETE+MOD (bouton 2) vide la Chain de Modulation si elle est active
+(y compris FOCUS), sinon les A/T du Motif de Modulation courant. DELETE+PLAY
+cible toujours Motif, indépendamment du Livre affiché. SHIFT+PLAY bascule la
+Chain Motif ; SHIFT+MOD bascule la Chain de Modulation. DELETE+un maillon
+conserve la suppression contextuelle de cette occurrence, sans effacer la banque.
+DELETE prend priorité sur l’activation et consomme aussi le relâchement du bouton.
+
+Compatibilité : au chargement, les anciennes notes de MODULATION sont retirées
+sans être converties en A/T. Les A/T explicites, longueurs, Chains et Loop Point
+sont conservés. Le document fourni au chargeur n'est pas modifié ; les futures
+sauvegardes contiennent les matrices de notes vides. Le moteur ignore également
+les notes résiduelles éventuelles avant normalisation. La banque Motif est intacte.
+
+Validation hardware encore requise. Aucun lancement d'application, accès MIDI,
+commit, push ou build de distribution pour cette révision.

@@ -131,8 +131,8 @@ export class LiRythmeState {
         const base = motif.getPlaybackMotifForVoice(voiceId), baseStep = motif.getVoiceStep(voiceId, position);
         const overlay = modulation.getPlaybackMotifForVoice(voiceId), overlayStep = modulation.getVoiceStep(voiceId);
         const active = this.modulationActive;
-        if (!base.events[voiceId][baseStep] && !(active && overlay.events[voiceId][overlayStep])) return null;
-        // Union first, then each explicitly present overlay attribute independently.
+        if (!base.events[voiceId][baseStep]) return null;
+        // Motif alone owns note onsets; Modulation overrides only matching Voice attributes.
         const attributes = active ? overlay.attributes : null;
         return {
             velocity: attributes?.VELOCITY?.[voiceId]?.[overlayStep] ?? base.velocities?.[voiceId]?.[baseStep] ?? 100,
