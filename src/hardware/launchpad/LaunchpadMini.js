@@ -353,7 +353,7 @@ export class LaunchpadMini {
 
     hasAssignedAT(voice, step, destination = "STEP") {
         const tx = this.state.atTransaction;
-        if (!tx) return false;
+        if (!tx || tx.kind === "MUTATION") return false;
         const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
         const definition = this.actions.at.definition(tx.slot);
         // Older banks contain event values only; show these at their known step location.
@@ -439,7 +439,7 @@ export class LaunchpadMini {
     drawTimelineSelection() {
         const previous = this.mapping.TOP_CONTROLS.PREVIOUS;
         const next = this.mapping.TOP_CONTROLS.NEXT;
-        if (this.state.atTransaction?.slot === 8) {
+        if (this.state.atTransaction?.slot === 8 && this.state.atTransaction?.kind !== "MUTATION") {
             this.setTopLed(previous, this.atLit ? this.colors.RED : this.colors.OFF);
             this.setTopLed(next, this.atLit ? this.colors.RED : this.colors.OFF);
             return;
@@ -746,7 +746,7 @@ export class LaunchpadMini {
         const books = this.mapping.BOOKS;
 
         for (let i = 0; i < books.length; i++) {
-            const colorName = this.state.atTransaction ? this.getATBookColor(i)
+            const colorName = this.state.atTransaction && this.state.atTransaction.kind !== "MUTATION" ? this.getATBookColor(i)
                 : this.chainNavigationFlashColor ?? (this.state.currentView === "MOTIF_LIBRARY"
                 ? this.getLibraryMotifColor(i) : this.getATBookColor(i));
 
@@ -760,7 +760,7 @@ export class LaunchpadMini {
         if (slot === 1 && !this.state.colorEnabled) return "DIM_RED";
         const familyColor = slot < 8 ? "RED" : "YELLOW";
         if (!implemented) return slot < 8 ? "DIM_RED" : "DIM_AMBER";
-        return this.state.atTransaction?.slot === slot && !this.atLit ? "OFF" : familyColor;
+        return this.state.atTransaction?.kind !== "MUTATION" && this.state.atTransaction?.slot === slot && !this.atLit ? "OFF" : familyColor;
     }
 
     drawTopControls() {
@@ -769,16 +769,24 @@ export class LaunchpadMini {
         for (const [name, controller] of Object.entries(
             this.mapping.TOP_CONTROLS
         )) {
-            if (name === "MODULATION") continue;
+            if (name === "MODULATION" || name === "MUTATION") continue;
             const colorName = this.layout.TOP_CONTROLS[name];
             const colorValue = this.colors[colorName];
 
             this.setTopLed(controller, colorValue);
         }
         this.drawModulationStatus();
+        this.drawMutationStatus();
+    }
+
+    drawMutationStatus() {
+        this.setTopLed(this.mapping.TOP_CONTROLS.MUTATION,
+            this.state.atTransaction?.kind === "MUTATION"
+                ? this.atLit ? this.colors.RED : this.colors.DIM_RED : this.colors.DIM_RED);
     }
 
     drawTransport() {
+        this.drawMutationStatus();
         if (this.rootState.transportState !== "PLAY") this.cancelModulationBeat();
         this.drawModulationStatus();
         if (this.state.transportState === "PLAY") {
@@ -1302,7 +1310,8 @@ export class LaunchpadMini {
             }
         }
         for (const [index, note] of this.mapping.AT_VALUE.entries()) {
-            const color = tx?.slot === 8 ? this.colors.OFF : tx?.slot === 1
+            const color = tx?.kind === "MUTATION" ? index === tx.valueIndex ? this.colors.RED : this.colors.DIM_AMBER
+                : tx?.slot === 8 ? this.colors.OFF : tx?.slot === 1
                 ? index !== 0 ? this.colors.OFF : colorCount ? this.colors.RED : this.colors.DIM_AMBER
                 : tx ? (velocities.has(this.actions.at.definition(tx.slot).values[index]) ? this.colors.RED : this.colors.DIM_AMBER)
                 : this.colors.OFF;
@@ -1326,7 +1335,8 @@ export class LaunchpadMini {
                     this.collectATLEDs = true;
                     try {
                         this.drawBooks();
-                        if (this.state.atTransaction?.slot === 8) this.drawTimelineSelection();
+                        this.drawMutationStatus();
+                        if (this.state.atTransaction?.slot === 8 && this.state.atTransaction?.kind !== "MUTATION") this.drawTimelineSelection();
                     }
                     finally { this.collectATLEDs = false; }
                     blink();
@@ -1367,13 +1377,34 @@ export class LaunchpadMini {
                     this.atPadHold = null;
                     if (!hold.fired) {
                         if (hold.active) this.actions.at.finish(false);
-                        else this.actions.at.begin(hold.slot);
+                        else if (!hold.mutation) this.actions.at.begin(hold.slot);
                     }
                 }
             }
             return true;
         }
-        if (this.state.atTransaction?.slot === 8 && status === 0xB0 &&
+        if (status === 0xB0 && number === this.mapping.TOP_CONTROLS.MUTATION) {
+            if (value > 0) {
+                this.atHeld.add(key);
+                const tx = this.state.atTransaction;
+                if (tx && tx.kind !== "MUTATION" || this.atPadHold || this.deleteArmed || this.copyStage || this.shiftPressed) return true;
+                const active = tx?.kind === "MUTATION";
+                if (!active && !this.actions.at.beginMutation()) return true;
+                const hold = { key, mutation: true, active, fired: false, timer: null };
+                this.atPadHold = hold;
+                if (active) hold.timer = setTimeout(() => {
+                    hold.fired = true;
+                    this.actions.at.finish(true);
+                }, TEMPO_HOLD_DELAY_MS);
+            }
+            return true;
+        }
+        if (this.state.atTransaction?.kind === "MUTATION" && status === 0x90 &&
+            [...this.mapping.BOOKS, ...this.mapping.INSTRUMENTS, ...this.mapping.MOTIF].includes(number)) {
+            if (value > 0) this.atHeld.add(key);
+            return true;
+        }
+        if (this.state.atTransaction?.slot === 8 && this.state.atTransaction?.kind !== "MUTATION" && status === 0xB0 &&
             [this.mapping.TOP_CONTROLS.PREVIOUS, this.mapping.TOP_CONTROLS.NEXT].includes(number)) {
             if (value > 0) {
                 this.atHeld.add(key);

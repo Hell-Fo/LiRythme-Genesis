@@ -1,9 +1,14 @@
 import { AT_SLOTS, hasTargetEvents } from "./ATTransaction.mjs";
+import { MUTATION_METHODS } from "./Mutation.mjs";
 
 export function readATPanel(state) {
     const tx = state.atTransaction;
     if (!tx) return null;
     state = state.forSystem?.(tx.system ?? "MOTIF") ?? state;
+    if (tx.kind === "MUTATION") return {
+        name: "MUTATION", target: "MOTIF", motif: tx.editingMotifId + 1,
+        values: MUTATION_METHODS, selected: tx.valueIndex
+    };
     const definition = AT_SLOTS[tx.slot];
     const valueIndex = hasTargetEvents(state.getMotif(tx.editingMotifId ?? state.currentMotifId), tx) ? tx.valueIndex : null;
     const instruments = [...tx.instruments].sort((a, b) => a - b).map(id =>

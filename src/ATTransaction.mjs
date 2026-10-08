@@ -1,3 +1,4 @@
+import { mutateMotif } from "./Mutation.mjs";
 export const createVelocities = () => Array.from({ length: 16 }, () => Array(32).fill(100));
 export const SWING_VALUES = Object.freeze([75, 72, 69, 66, 63, 58, 54, 50]);
 export const RATCHET_VALUES = Object.freeze([8, 7, 6, 5, 4, 3, 2, 1]);
@@ -194,16 +195,20 @@ export class ATTransaction {
     hasTargetEvents() {
         return hasTargetEvents(this.state.getMotif(this.getEditingMotifId()), this.state.atTransaction);
     }
-    begin(slot = 0) {
+    beginMutation() { return this.begin(8, { mutation: true }); }
+    begin(slot = 0, { mutation = false } = {}) {
         const definition = AT_SLOTS[slot];
-        if (!this.isEnabled(slot) || this.state.atTransaction || this.state.currentView !== "PLAY") return false;
+        if (!this.isEnabled(slot) || this.state.atTransaction ||
+            !(this.state.currentView === "PLAY" || mutation && this.state.currentView === "MOTIF_LIBRARY") ||
+            mutation && this.state.systemName !== "MOTIF") return false;
         this.state.atTransaction = {
+            ...(mutation ? { kind: "MUTATION" } : {}),
             system: this.state.systemName ?? "MOTIF",
             slot, instruments: new Set(), steps: new Set(), valueIndex: null,
             // CHAIN playback and FOCUS navigation remain independent of A/T's view.
             editingMotifId: this.context().editingMotifId,
             // Capture before any edit for CANCEL.
-            snapshots: this.state.motifs.map(m => definition.capture(m)),
+            snapshots: this.state.motifs.map(m => mutation ? structuredClone(m) : definition.capture(m)),
             destinationSnapshots: this.state.motifs.map(m => structuredClone(m.atDestinations)),
             attributeSnapshots: this.state.motifs.map(m => structuredClone(m.attributes)),
             touched: new Set()
@@ -213,6 +218,7 @@ export class ATTransaction {
     }
     select(category, id, additive = false) {
         const tx = this.state.atTransaction;
+        if (tx?.kind === "MUTATION") return false;
         const limit = category === "instruments" ? 16 : category === "steps" ? 32 : 0;
         if (!tx || !Number.isInteger(id) || id < 0 || id >= limit) return false;
         const set = tx[category];
@@ -226,6 +232,20 @@ export class ATTransaction {
     apply(index) {
         const tx = this.state.atTransaction;
         if (!tx || !Number.isInteger(index) || index < 0 || index > 7) return false;
+        if (tx.kind === "MUTATION") {
+            const id = tx.editingMotifId, motif = mutateMotif(tx.snapshots[id], index);
+            if (!motif) return false;
+            if (JSON.stringify(motif) !== JSON.stringify(this.state.getMotif(id))) {
+                if (this.state.transportState === "PLAY" && id === this.state.playingMotifId) this.state.deferDouble([], true);
+                this.state.motifs[id] = motif;
+                tx.rotationWholeMotif = true;
+                tx.rotationVoices = new Set(Array.from({ length: 16 }, (_, voice) => voice));
+                tx.touched.add(id);
+            }
+            tx.valueIndex = index;
+            this.changed("value");
+            return true;
+        }
         const definition = AT_SLOTS[tx.slot];
         if (definition.id === "ROTATION") return false; // Controlled exclusively by << / >>.
         if (definition.id === "COLOR") {
@@ -257,7 +277,7 @@ export class ATTransaction {
     }
     rotate(direction) {
         const tx = this.state.atTransaction;
-        if (tx?.slot !== 8 || ![-1, 1].includes(direction)) return false;
+        if (tx?.slot !== 8 || tx.kind === "MUTATION" || ![-1, 1].includes(direction)) return false;
         const id = this.getEditingMotifId(), motif = this.state.getMotif(id);
         const moves = [];
         const destination = tx.steps.size ? "STEP" : tx.instruments.size ? "INSTRUMENT" : "MOTIF";
