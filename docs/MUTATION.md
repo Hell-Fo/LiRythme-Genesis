@@ -69,7 +69,8 @@ Après confirmation, la variante est un Motif ordinaire, compatible avec les
 sauvegardes existantes. Aucun calcul de mutation ne s'exécute dans la clock.
 
 Mutation concerne ici les événements de MOTIF. MODULATION reste exclusivement
-A/T. Groove Morph et son geste BAKE ne font pas partie de cette implémentation.
+A/T. Shift + Mutation ouvre désormais [Groove Morph](GROOVE-MORPH.md).
+Le geste BAKE reste hors de cette implémentation.
 
 ## Validation hardware
 

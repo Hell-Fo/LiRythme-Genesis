@@ -1,4 +1,4 @@
-import { AT_SLOTS, validSwings, validRatchets, validVelocities, validColors, validATDestinations, validExplicitAttributes } from "./ATTransaction.mjs";
+import { AT_SLOTS, validSwings, validRatchets, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph } from "./ATTransaction.mjs";
 
 export function validateMotifBank(value, { modulation = false } = {}) {
     const length = n => n === null || Number.isInteger(n) && n >= 1 && n <= 32;
@@ -13,6 +13,7 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             (m.colors === undefined || validColors(m.colors)) &&
             (m.swings === undefined || validSwings(m.swings)) &&
             (m.ratchets === undefined || validRatchets(m.ratchets)) &&
+            (m.grooveMorph === undefined || !modulation && validGrooveMorph(m.grooveMorph) && !m.events.some(row => row.some(Boolean))) &&
             (modulation ? validExplicitAttributes(m.attributes) : m.attributes === undefined) &&
             (m.atDestinations === undefined || validATDestinations(m.atDestinations)))) {
         throw new Error("Invalid or unsupported Motif Bank (expected version 1, 16 valid motifs)");
@@ -23,6 +24,7 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             ...(m.velocities ? { velocities: m.velocities.map(row => row.slice()) } : {}),
             ...(m.colors ? { colors: m.colors.map(row => row.slice()) } : {}),
             ...(m.swings ? { swings: m.swings.map(row => row.slice()) } : {}),
+            ...(m.grooveMorph ? { grooveMorph: structuredClone(m.grooveMorph) } : {}),
             ...(m.ratchets ? { ratchets: m.ratchets.map(row => row.slice()) } : {}),
             ...(m.atDestinations ? { atDestinations: structuredClone(m.atDestinations) } : {}),
             ...(m.attributes !== undefined ? { attributes: structuredClone(m.attributes) } : {}),

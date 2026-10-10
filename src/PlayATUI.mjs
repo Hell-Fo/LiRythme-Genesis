@@ -1,10 +1,15 @@
 import { AT_SLOTS, hasTargetEvents } from "./ATTransaction.mjs";
 import { MUTATION_METHODS } from "./Mutation.mjs";
+import { GROOVE_METHODS } from "./GrooveMorph.mjs";
 
 export function readATPanel(state) {
     const tx = state.atTransaction;
     if (!tx) return null;
     state = state.forSystem?.(tx.system ?? "MOTIF") ?? state;
+    if (tx.kind === "GROOVE_MORPH") return {
+        name: "GROOVE MORPH", target: "MOTIF", motif: tx.editingMotifId + 1,
+        values: GROOVE_METHODS, selected: tx.valueIndex
+    };
     if (tx.kind === "MUTATION") return {
         name: "MUTATION", target: "MOTIF", motif: tx.editingMotifId + 1,
         values: MUTATION_METHODS, selected: tx.valueIndex

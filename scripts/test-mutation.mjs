@@ -37,6 +37,119 @@ function drainAT(t, c) {
     assert.equal(c.atLEDQueue.size, 0);
 }
 import { mutateMotif, MUTATION_METHODS } from "../src/Mutation.mjs";
+import { composeGroove } from "../src/GrooveMorph.mjs";
+import { readPlayChain, initializePlayChainUI } from "../src/PlayChainUI.mjs";
+
+test('Groove Morph Book cycles GREEN/AMBER/RED, DIM idle, FULL selected/playing, and stops on exit/reset', t => {
+    const { state, c, leds } = setup(t);
+    state.getMotif(1).grooveMorph = { level: 0 };
+    state.getMotif(2).grooveMorph = { level: 7 };
+    state.currentView = 'MOTIF_LIBRARY'; state.playingMotifId = 1;
+    c.drawBooks();
+    const led = id => leds.get(`144:${c.mapping.BOOKS[id]}`);
+    const color = name => (c.colors[name] & 0x33) | 4;
+    for (const [full, dim] of [['GREEN', 'DIM_GREEN'], ['AMBER', 'DIM_AMBER'], ['RED', 'DIM_RED'], ['GREEN', 'DIM_GREEN']]) {
+        assert.equal(led(1), color(full)); assert.equal(led(2), color(dim));
+        t.mock.timers.tick(400);
+    }
+    state.chainEnabled = true; state.chain = [1, 2]; state.chainPlayingIndex = 0;
+    state.chainPlayingDetached = false; state.transportState = 'PLAY';
+    state.chainFocus = true; state.viewMotifId = 2;
+    c.drawBooks();
+    assert.equal(c.getLibraryMotifColor(1), c.getLibraryMotifColor(2));
+    state.currentView = 'PLAY'; c.drawBooks();
+    assert.equal(c.grooveColorTimer, null);
+    state.currentView = 'MOTIF_LIBRARY'; c.drawBooks();
+    assert.notEqual(c.grooveColorTimer, null);
+    c.resetInputState(); assert.equal(c.grooveColorTimer, null);
+});
+
+test('PLAY chain uses [GM] labels with existing occurrence styling and updates after conversion', () => {
+    const state = new LiRythmeState();
+    state.chain = [0, 1, 4, 1]; state.getMotif(1).grooveMorph = { level: 3 };
+    state.chainEnabled = true; state.chainPlayingDetached = false; state.chainPlayingIndex = 1;
+    state.transportState = 'PLAY'; state.chainLoopMasterIndex = 3;
+    const occurrences = readPlayChain(state);
+    assert.deepEqual(occurrences.map(o => o.label), ['[01]', '[GM]', '[05]', '[GM]']);
+    assert.equal(occurrences[1].playing, true); assert.equal(occurrences[3].loopMaster, true);
+    const container = { replaceChildren(...children) { this.children = children; } };
+    const document = { getElementById: id => id === 'play-chain-occurrences' ? container : null,
+        createElement: () => ({}) };
+    const ui = initializePlayChainUI({ state, system: 'MOTIF', document });
+    assert.equal(container.children[1].className, 'chain-occurrence is-playing');
+    delete state.getMotif(1).grooveMorph; ui.render();
+    assert.equal(container.children[1].textContent, '[02]');
+});
+
+for (let level = 0; level < 8; level++) test(`Groove Morph ${level}: identical neighbors vary reproducibly with shared landmarks`, () => {
+    const state = new LiRythmeState(), a = phrase(state), original = structuredClone(a);
+    const recipe = structuredClone(state.getMotif(1)); recipe.grooveMorph = { level }; recipe.motifLength = 16;
+    const morph = composeGroove(a, a, recipe);
+    assert.deepEqual(morph, composeGroove(a, a, recipe));
+    assert.deepEqual(a, original);
+    assert.notDeepEqual(morph.velocities, a.velocities);
+    for (let voice = 0; voice < 2; voice++) for (const step of [0, 2, 4]) {
+        if (a.events[voice][step]) assert.equal(morph.events[voice][step], true);
+    }
+    assert.equal(morph.motifLength, 16);
+    assert.equal(morph.grooveMorph, undefined);
+    validateMotifBank({ format: 'lirythme-motif-bank', version: 1, currentMotifId: 0,
+        motifs: [morph, ...state.motifs.slice(1)] });
+});
+
+test('Groove Morph hardware: Shift+Mutation, choose empty Book, A-H, commit and reopen/cancel', t => {
+    const { state, actions, c, press, release, tap } = setup(t);
+    phrase(state); state.currentView = 'MOTIF_LIBRARY';
+    press(c.mapping.TOP_CONTROLS.SHIFT, 0xB0);
+    tap(c.mapping.TOP_CONTROLS.MUTATION, 0xB0);
+    release(c.mapping.TOP_CONTROLS.SHIFT, 0xB0);
+    assert.equal(state.atTransaction.kind, 'GROOVE_MORPH');
+    tap(c.mapping.BOOKS[1]); tap(c.mapping.AT_VALUE[6]);
+    assert.deepEqual(state.getMotif(1).grooveMorph, { level: 6 });
+    assert.equal(snapshotMotifBank(state).motifs[1].grooveMorph, undefined);
+    press(c.mapping.TOP_CONTROLS.MUTATION, 0xB0); t.mock.timers.tick(300); release(c.mapping.TOP_CONTROLS.MUTATION, 0xB0);
+    assert.equal(state.atTransaction, null);
+    const bank = snapshotMotifBank(state); restoreMotifBank(state, bank);
+    assert.deepEqual(state.getMotif(1).grooveMorph, { level: 6 });
+    state.currentView = 'PLAY'; state.playingMotifId = 1;
+    assert.equal(actions.at.beginGrooveMorph(), true);
+    actions.at.apply(7); actions.at.finish(false);
+    assert.deepEqual(state.getMotif(1).grooveMorph, { level: 6 });
+    state.playingMotifId = 0;
+    assert.equal(actions.at.beginGrooveMorph(), false);
+    state.playingMotifId = 1;
+    const copy = actions.captureMotifCopy(1);
+    assert.equal(actions.applyMotifCopy(copy, 2), true);
+    assert.deepEqual(state.getMotif(2).grooveMorph, { level: 6 });
+    state.chainEnabled = true; state.chain = [2];
+    actions.deleteChainMotif(2);
+    assert.equal(state.getMotif(2).grooveMorph, undefined);
+});
+
+test('Groove Morph occurrence context, stable passes, deferred source changes and variable duration', t => {
+    const { state, actions } = setup(t);
+    const a = phrase(state); state.motifs[2] = structuredClone(a); state.motifs[3] = structuredClone(a);
+    state.motifs[3].events[2][7] = true;
+    state.getMotif(1).grooveMorph = { level: 0 }; state.getMotif(1).motifLength = 8;
+    state.chain = [0, 1, 2, 1, 3]; state.chainEnabled = true; state.chainPlayingDetached = false;
+    state.playingMotifId = 1; state.chainPlayingIndex = 1; state.transportState = 'PLAY';
+    const first = structuredClone(state.getPlaybackMotifForVoice(0));
+    assert.equal(state.getMotifDuration(), 8);
+    state.playheadPosition = 4; state.getMotif(2).velocities[0][2] = 23;
+    assert.deepEqual(state.getPlaybackMotifForVoice(0), first);
+    state.playheadPosition = 0;
+    const updated = structuredClone(state.getPlaybackMotifForVoice(0));
+    assert.notDeepEqual(updated, first);
+    assert.deepEqual(state.getPlaybackMotifForVoice(0), updated);
+    state.chainPlayingIndex = 3;
+    const second = state.getPlaybackMotifForVoice(0);
+    assert.notDeepEqual(second, updated);
+    assert.equal(second.events[2][7], true);
+    assert.equal(state.getMotif(1).events.flat().some(Boolean), false);
+    state.transportState = 'STOP';
+    actions.at.beginGrooveMorph(); actions.at.apply(7); actions.at.finish(false);
+    assert.deepEqual(state.getMotif(1).grooveMorph, { level: 0 });
+});
 
 function phrase(state) {
     const m = state.getMotif(0);

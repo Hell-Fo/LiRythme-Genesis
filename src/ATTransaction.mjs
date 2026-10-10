@@ -1,4 +1,5 @@
 import { mutateMotif } from "./Mutation.mjs";
+export { composeGroove, validGrooveMorph } from "./GrooveMorph.mjs";
 export const createVelocities = () => Array.from({ length: 16 }, () => Array(32).fill(100));
 export const SWING_VALUES = Object.freeze([75, 72, 69, 66, 63, 58, 54, 50]);
 export const RATCHET_VALUES = Object.freeze([8, 7, 6, 5, 4, 3, 2, 1]);
@@ -126,7 +127,7 @@ export const AT_SLOTS = Object.freeze([
     ...Array(4).fill(null),
     Object.freeze({ id: "ROTATION", values: Object.freeze([]),
         isAssigned: (motif, voice, step) => Boolean(motif.atDestinations?.ROTATION?.[voice]?.[step]),
-        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "ratchets", "atDestinations", "attributes"]
+        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "ratchets", "atDestinations", "attributes", "grooveMorph"]
             .map(key => [key, structuredClone(motif[key])])),
         restore(motif, snapshot) {
             for (const [key, value] of Object.entries(snapshot)) {
@@ -195,7 +196,32 @@ export class ATTransaction {
     hasTargetEvents() {
         return hasTargetEvents(this.state.getMotif(this.getEditingMotifId()), this.state.atTransaction);
     }
-    beginMutation() { return this.begin(8, { mutation: true }); }
+    beginMutation() {
+        if (this.state.getMotif(this.context().editingMotifId)?.grooveMorph) return false;
+        return this.begin(8, { mutation: true });
+    }
+    beginGrooveMorph() {
+        const id = this.context().editingMotifId, motif = this.state.getMotif(id);
+        if (this.state.systemName !== "MOTIF" || !motif ||
+            this.state.currentView !== "MOTIF_LIBRARY" && !motif.grooveMorph && motif.events.some(row => row.some(Boolean))) return false;
+        if (!this.begin(8, { mutation: true })) return false;
+        const tx = this.state.atTransaction;
+        tx.kind = "GROOVE_MORPH";
+        for (const snapshot of tx.snapshots) snapshot.grooveMorph = structuredClone(snapshot.grooveMorph);
+        tx.valueIndex = motif.grooveMorph?.level ?? null;
+        tx.chooseBlock = this.state.currentView === "MOTIF_LIBRARY";
+        this.changed("begin");
+        return true;
+    }
+    selectGrooveBlock(id) {
+        const tx = this.state.atTransaction, motif = this.state.getMotif(id);
+        if (tx?.kind !== "GROOVE_MORPH" || !tx.chooseBlock || !motif ||
+            !motif.grooveMorph && motif.events.some(row => row.some(Boolean))) return false;
+        tx.editingMotifId = id;
+        tx.valueIndex = motif.grooveMorph?.level ?? null;
+        this.changed("target");
+        return true;
+    }
     begin(slot = 0, { mutation = false } = {}) {
         const definition = AT_SLOTS[slot];
         if (!this.isEnabled(slot) || this.state.atTransaction ||
@@ -218,7 +244,7 @@ export class ATTransaction {
     }
     select(category, id, additive = false) {
         const tx = this.state.atTransaction;
-        if (tx?.kind === "MUTATION") return false;
+        if (tx?.kind === "MUTATION" || tx?.kind === "GROOVE_MORPH") return false;
         const limit = category === "instruments" ? 16 : category === "steps" ? 32 : 0;
         if (!tx || !Number.isInteger(id) || id < 0 || id >= limit) return false;
         const set = tx[category];
@@ -232,6 +258,18 @@ export class ATTransaction {
     apply(index) {
         const tx = this.state.atTransaction;
         if (!tx || !Number.isInteger(index) || index < 0 || index > 7) return false;
+        if (tx.kind === "GROOVE_MORPH") {
+            const id = tx.editingMotifId, motif = this.state.getMotif(id);
+            if (!motif.grooveMorph && motif.events.some(row => row.some(Boolean))) return false;
+            if (this.state.transportState === "PLAY" && id === this.state.playingMotifId) this.state.deferDouble([], true);
+            motif.grooveMorph = { level: index };
+            tx.rotationWholeMotif = true;
+            tx.rotationVoices = new Set(Array.from({ length: 16 }, (_, voice) => voice));
+            tx.touched.add(id);
+            tx.valueIndex = index;
+            this.changed("value");
+            return true;
+        }
         if (tx.kind === "MUTATION") {
             const id = tx.editingMotifId, motif = mutateMotif(tx.snapshots[id], index);
             if (!motif) return false;
@@ -277,7 +315,7 @@ export class ATTransaction {
     }
     rotate(direction) {
         const tx = this.state.atTransaction;
-        if (tx?.slot !== 8 || tx.kind === "MUTATION" || ![-1, 1].includes(direction)) return false;
+        if (tx?.slot !== 8 || tx.kind === "MUTATION" || tx.kind === "GROOVE_MORPH" || ![-1, 1].includes(direction)) return false;
         const id = this.getEditingMotifId(), motif = this.state.getMotif(id);
         const moves = [];
         const destination = tx.steps.size ? "STEP" : tx.instruments.size ? "INSTRUMENT" : "MOTIF";

@@ -57,7 +57,9 @@ export class SwingTiming {
     delayFor(voice) { return readSwing(this.state, voice).fraction * this.duration; }
     planFor(voice, preview = null) {
         if (preview) {
-            const motif = this.state.forSystem(preview.system).getMotif(preview.motifId);
+            const layer = this.state.forSystem(preview.system);
+            const motif = layer.getMotif(preview.motifId).grooveMorph && preview.motifId === layer.playingMotifId
+                ? layer.getOccurrenceMotif() : layer.getMotif(preview.motifId);
             return ratchetPlan(this.duration, 0, motif.ratchets?.[voice]?.[preview.step % 32] ?? 1);
         }
         return ratchetPlan(this.duration, this.delayFor(voice), readRatchet(this.state, voice));

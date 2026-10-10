@@ -134,6 +134,8 @@ export class LaunchpadMini {
         this.atPadHold = null;
         this.atBlinkTimer = null;
         this.atLit = true;
+        this.grooveColorPhase = 0;
+        this.grooveColorTimer = null;
         this.actions.onATChange = reason => this.drawATChange(reason);
     }
 
@@ -257,6 +259,9 @@ export class LaunchpadMini {
         this.filterSelectionMode = false;
         this.filterSelectionChanged = false;
         this.filterWasActive = false;
+        clearTimeout(this.grooveColorTimer);
+        this.grooveColorTimer = null;
+        this.grooveColorPhase = 0;
     }
 
     setLed(note, value) {
@@ -353,8 +358,8 @@ export class LaunchpadMini {
 
     hasAssignedAT(voice, step, destination = "STEP") {
         const tx = this.state.atTransaction;
-        if (!tx || tx.kind === "MUTATION") return false;
-        const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
+        if (!tx || ["MUTATION", "GROOVE_MORPH"].includes(tx.kind)) return false;
+        const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId());
         const definition = this.actions.at.definition(tx.slot);
         // Older banks contain event values only; show these at their known step location.
         const assignedDestination = motif.atDestinations?.[definition?.id]?.[voice]?.[step] ?? "STEP";
@@ -363,7 +368,7 @@ export class LaunchpadMini {
     }
 
     hasMotifAT() {
-        return Boolean(this.state.atTransaction && this.state.getMotif(this.actions.at.getEditingMotifId())
+        return Boolean(this.state.atTransaction && this.state.getDisplayMotif(this.actions.at.getEditingMotifId())
             .events.some((row, voice) => row.some((event, step) => (event || this.state.systemName === "MODULATION") && this.hasAssignedAT(voice, step, "MOTIF"))));
     }
 
@@ -377,7 +382,7 @@ export class LaunchpadMini {
         let hasAnyVoice = false;
         let hasSelectedVoice = false;
 
-        const motif = this.state.getMotif(this.actions.at.getEditingMotifId()).events;
+        const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId()).events;
         for (const [voiceId, steps] of motif.entries()) {
             const isInFilter = filter.has(voiceId);
             const isSelectedInstrument = voiceId === selectedVoiceId;
@@ -396,7 +401,7 @@ export class LaunchpadMini {
                 continue;
             }
 
-            if ((this.state.systemName !== "MODULATION" && steps[step]) || Object.values(this.state.getMotif(this.actions.at.getEditingMotifId()).attributes ?? {}).some(rows => rows[voiceId][step] !== null)) {
+            if ((this.state.systemName !== "MODULATION" && steps[step]) || Object.values(this.state.getDisplayMotif(this.actions.at.getEditingMotifId()).attributes ?? {}).some(rows => rows[voiceId][step] !== null)) {
                 if (target && this.hasAssignedAT(voiceId, step)) return this.colors.DIM_RED;
                 hasAnyVoice = true;
                 // In Modulation, an A/T cell occupies the same visual role as
@@ -439,7 +444,7 @@ export class LaunchpadMini {
     drawTimelineSelection() {
         const previous = this.mapping.TOP_CONTROLS.PREVIOUS;
         const next = this.mapping.TOP_CONTROLS.NEXT;
-        if (this.state.atTransaction?.slot === 8 && this.state.atTransaction?.kind !== "MUTATION") {
+        if (this.state.atTransaction?.slot === 8 && !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind)) {
             this.setTopLed(previous, this.atLit ? this.colors.RED : this.colors.OFF);
             this.setTopLed(next, this.atLit ? this.colors.RED : this.colors.OFF);
             return;
@@ -514,7 +519,7 @@ export class LaunchpadMini {
 
     getInstrumentColor(i) {
         if (this.state.atTransaction) {
-            const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
+            const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId());
             const events = motif.events[i];
             const step = this.state.playheadPosition % 32;
             const event = this.state.systemName === "MODULATION"
@@ -536,7 +541,7 @@ export class LaunchpadMini {
 
         if (this.filterSelectionMode && isInFilter) return this.colors.YELLOW;
         if (this.stepInstrumentFeedback && this.state.transportState !== "PLAY") {
-            return this.state.getMotif(this.actions.at.getEditingMotifId()).events[i]?.[this.state.playheadPosition]
+            return this.state.getDisplayMotif(this.actions.at.getEditingMotifId()).events[i]?.[this.state.playheadPosition]
                 ? this.colors.GREEN : this.colors.DIM_GREEN;
         }
         const hasEvent = this.instrumentPulses.get(i)?.timer != null;
@@ -635,6 +640,13 @@ export class LaunchpadMini {
     }
 
     getLibraryMotifColor(id) {
+        if (this.state.systemName === "MOTIF" && this.state.getMotif(id)?.grooveMorph &&
+            !this.copyDeniedPads.has(id) && id !== this.copySuccessPad && !this.copyStage) {
+            const active = id === this.state.currentMotifId ||
+                this.state.transportState !== "STOP" && id === this.state.playingMotifId ||
+                this.state.atTransaction?.kind === "GROOVE_MORPH" && id === this.state.atTransaction.editingMotifId;
+            return (active ? ["GREEN", "AMBER", "RED"] : ["DIM_GREEN", "DIM_AMBER", "DIM_RED"])[this.grooveColorPhase];
+        }
         let color = this.getLibraryMotifBaseColor(id);
         // COPY/refusal and FOCUS keep their existing visual priority.
         if (this.copyDeniedPads.has(id) || id === this.copySuccessPad ||
@@ -664,6 +676,7 @@ export class LaunchpadMini {
         return color;
     }
     getLibraryMotifBaseColor(id) {
+        if (this.state.atTransaction?.kind === "GROOVE_MORPH" && id === this.state.atTransaction.editingMotifId) return "YELLOW";
         if (this.copyDeniedPads.has(id)) return "RED";
         if (id === this.copySuccessPad) return "YELLOW";
         if (this.copyStage === "TARGET" && this.copySource?.kind === "BANK_MOTIF" &&
@@ -697,7 +710,7 @@ export class LaunchpadMini {
             if (id === this.state.nextMotifId) return this.nextMotifLit ? "GREEN" : "DIM_GREEN";
         }
         const motif = this.state.getMotif(id);
-        const hasData = motif && (motif.motifLength !== null ||
+        const hasData = motif && (motif.grooveMorph || motif.motifLength !== null ||
             motif.voiceLengths.some(length => length !== null) ||
             motif.events.some(row => row.some(Boolean)) || Object.values(motif.attributes ?? {}).some(rows => rows.some(row => row.some(v => v !== null))));
         return hasData ? this.layout.BOOKS.MOTIF_LIBRARY_IDLE : "OFF";
@@ -724,6 +737,20 @@ export class LaunchpadMini {
     }
 
     drawBooks() {
+        const showGroove = this.state.currentView === "MOTIF_LIBRARY" && this.state.systemName === "MOTIF" &&
+            (!this.state.atTransaction || ["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction.kind)) &&
+            this.state.motifs.some(motif => motif.grooveMorph);
+        if (!showGroove) {
+            clearTimeout(this.grooveColorTimer);
+            this.grooveColorTimer = null;
+            this.grooveColorPhase = 0;
+        } else if (this.grooveColorTimer === null) {
+            this.grooveColorTimer = setTimeout(() => {
+                this.grooveColorTimer = null;
+                this.grooveColorPhase = (this.grooveColorPhase + 1) % 3;
+                this.drawBooks();
+            }, 400);
+        }
         if (!this.state.chainEnabled || !["STOP", "PAUSE"].includes(this.state.transportState)) {
             clearTimeout(this.chainNavigationFlashTimer);
             this.chainNavigationFlashTimer = null;
@@ -746,7 +773,7 @@ export class LaunchpadMini {
         const books = this.mapping.BOOKS;
 
         for (let i = 0; i < books.length; i++) {
-            const colorName = this.state.atTransaction && this.state.atTransaction.kind !== "MUTATION" ? this.getATBookColor(i)
+            const colorName = this.state.atTransaction && !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction.kind) ? this.getATBookColor(i)
                 : this.chainNavigationFlashColor ?? (this.state.currentView === "MOTIF_LIBRARY"
                 ? this.getLibraryMotifColor(i) : this.getATBookColor(i));
 
@@ -760,7 +787,7 @@ export class LaunchpadMini {
         if (slot === 1 && !this.state.colorEnabled) return "DIM_RED";
         const familyColor = slot < 8 ? "RED" : "YELLOW";
         if (!implemented) return slot < 8 ? "DIM_RED" : "DIM_AMBER";
-        return this.state.atTransaction?.kind !== "MUTATION" && this.state.atTransaction?.slot === slot && !this.atLit ? "OFF" : familyColor;
+        return !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind) && this.state.atTransaction?.slot === slot && !this.atLit ? "OFF" : familyColor;
     }
 
     drawTopControls() {
@@ -781,7 +808,7 @@ export class LaunchpadMini {
 
     drawMutationStatus() {
         this.setTopLed(this.mapping.TOP_CONTROLS.MUTATION,
-            this.state.atTransaction?.kind === "MUTATION"
+            ["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind)
                 ? this.atLit ? this.colors.RED : this.colors.DIM_RED : this.colors.DIM_RED);
     }
 
@@ -918,7 +945,7 @@ export class LaunchpadMini {
             try {
                 if (this.lastPlayheadStep !== undefined && this.lastPlayheadStep !== step) this.drawMotifStep(this.lastPlayheadStep);
                 this.lastPlayheadStep = step;
-                const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
+                const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId());
                 const voices = this.state.atTransaction.instruments;
                 const occupied = motif.events.some((row, id) => (!voices.size || voices.has(id)) && row[step]);
                 const modulation = this.state.systemName === "MODULATION";
@@ -1292,7 +1319,7 @@ export class LaunchpadMini {
         const velocities = new Set();
         let colorCount = 0;
         if (tx) {
-            const motif = this.state.getMotif(this.actions.at.getEditingMotifId());
+            const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId());
             const step = this.state.playheadPosition % 32;
             if (!tx.steps.size || tx.steps.has(step)) {
                 for (let voice = 0; voice < 16; voice++) {
@@ -1310,7 +1337,7 @@ export class LaunchpadMini {
             }
         }
         for (const [index, note] of this.mapping.AT_VALUE.entries()) {
-            const color = tx?.kind === "MUTATION" ? index === tx.valueIndex ? this.colors.RED : this.colors.DIM_AMBER
+            const color = ["MUTATION", "GROOVE_MORPH"].includes(tx?.kind) ? index === tx.valueIndex ? this.colors.RED : this.colors.DIM_AMBER
                 : tx?.slot === 8 ? this.colors.OFF : tx?.slot === 1
                 ? index !== 0 ? this.colors.OFF : colorCount ? this.colors.RED : this.colors.DIM_AMBER
                 : tx ? (velocities.has(this.actions.at.definition(tx.slot).values[index]) ? this.colors.RED : this.colors.DIM_AMBER)
@@ -1336,7 +1363,7 @@ export class LaunchpadMini {
                     try {
                         this.drawBooks();
                         this.drawMutationStatus();
-                        if (this.state.atTransaction?.slot === 8 && this.state.atTransaction?.kind !== "MUTATION") this.drawTimelineSelection();
+                        if (this.state.atTransaction?.slot === 8 && !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind)) this.drawTimelineSelection();
                     }
                     finally { this.collectATLEDs = false; }
                     blink();
@@ -1387,9 +1414,9 @@ export class LaunchpadMini {
             if (value > 0) {
                 this.atHeld.add(key);
                 const tx = this.state.atTransaction;
-                if (tx && tx.kind !== "MUTATION" || this.atPadHold || this.deleteArmed || this.copyStage || this.shiftPressed) return true;
-                const active = tx?.kind === "MUTATION";
-                if (!active && !this.actions.at.beginMutation()) return true;
+                if (tx && !["MUTATION", "GROOVE_MORPH"].includes(tx.kind) || this.atPadHold || this.deleteArmed || this.copyStage) return true;
+                const active = ["MUTATION", "GROOVE_MORPH"].includes(tx?.kind);
+                if (!active && !(this.shiftPressed ? this.actions.at.beginGrooveMorph() : this.actions.at.beginMutation())) return true;
                 const hold = { key, mutation: true, active, fired: false, timer: null };
                 this.atPadHold = hold;
                 if (active) hold.timer = setTimeout(() => {
@@ -1399,12 +1426,19 @@ export class LaunchpadMini {
             }
             return true;
         }
-        if (this.state.atTransaction?.kind === "MUTATION" && status === 0x90 &&
+        if (this.state.atTransaction?.kind === "GROOVE_MORPH" && status === 0x90 && this.mapping.BOOKS.includes(number)) {
+            if (value > 0) {
+                this.atHeld.add(key);
+                this.actions.at.selectGrooveBlock(this.mapping.BOOKS.indexOf(number));
+            }
+            return true;
+        }
+        if (["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind) && status === 0x90 &&
             [...this.mapping.BOOKS, ...this.mapping.INSTRUMENTS, ...this.mapping.MOTIF].includes(number)) {
             if (value > 0) this.atHeld.add(key);
             return true;
         }
-        if (this.state.atTransaction?.slot === 8 && this.state.atTransaction?.kind !== "MUTATION" && status === 0xB0 &&
+        if (this.state.atTransaction?.slot === 8 && !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind) && status === 0xB0 &&
             [this.mapping.TOP_CONTROLS.PREVIOUS, this.mapping.TOP_CONTROLS.NEXT].includes(number)) {
             if (value > 0) {
                 this.atHeld.add(key);

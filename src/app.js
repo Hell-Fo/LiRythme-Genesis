@@ -650,7 +650,8 @@ function triggerMotifStep(step) {
     state.noteTiming?.beginStep();
     const triggeredInstruments = [];
     for (let voiceId = 0; voiceId < 16; voiceId++) {
-        const playingMotif = previewMotifId !== null ? previewState.getMotif(previewMotifId)
+        const playingMotif = previewMotifId !== null ? previewState.getMotif(previewMotifId).grooveMorph && previewMotifId === previewState.playingMotifId
+            ? previewState.getOccurrenceMotif() : previewState.getMotif(previewMotifId)
             : state.getPlaybackMotifForVoice?.(voiceId) ?? state.getMotif(state.playingMotifId);
         const steps = playingMotif.events[voiceId];
         const localStep = previewMotifId !== null ? step % 32 : state.getVoiceStep?.(voiceId, step) ?? step;

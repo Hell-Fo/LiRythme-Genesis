@@ -15,6 +15,7 @@ Elias (OpenAI)
 */
 
 import { PadConfiguration } from "./PadConfiguration.js";
+import { composeGroove } from "./ATTransaction.mjs";
 
 export class LiRythmeState {
     constructor({ system = "MOTIF" } = {}) {
@@ -206,7 +207,38 @@ export class LiRythmeState {
     }
 
     getPlaybackMotifForVoice(voiceId) {
-        return this.liveLengthCycle?.doubleVoices?.get(voiceId) ?? this.getMotif(this.playingMotifId);
+        return this.liveLengthCycle?.doubleVoices?.get(voiceId) ?? this.getOccurrenceMotif();
+    }
+
+    getDisplayMotif(id) {
+        return id === this.playingMotifId && this.getMotif(id)?.grooveMorph
+            ? this.getOccurrenceMotif() : this.getMotif(id);
+    }
+
+    getOccurrenceMotif() {
+        const recipe = this.getMotif(this.playingMotifId);
+        if (!recipe.grooveMorph || !this.chainEnabled || this.chainPlayingDetached || this.chainPlayingIndex < 0) return recipe;
+        const index = this.chainPlayingIndex, size = this.chain.length;
+        if (this.groovePass && this.groovePass.index === index && this.groovePass.recipe === recipe &&
+            this.transportState === "PLAY" && this.playheadPosition > 0) return this.groovePass.motif;
+        // Resolve surrounding ordinary motifs without recursive Morph composition.
+        const neighbor = direction => {
+            for (let offset = 1; offset < size; offset++) {
+                const i = direction > 0 && this.chainLoopMasterIndex === index ? (offset - 1) % size
+                    : direction < 0 && index === 0 && this.chainLoopMasterIndex !== null
+                        ? (this.chainLoopMasterIndex - offset + 1 + size) % size
+                    : (index + direction * offset + size * 2) % size;
+                const motif = this.getMotif(this.chain[i]);
+                if (motif && !motif.grooveMorph) return motif;
+            }
+            return null;
+        };
+        const previous = neighbor(-1), next = neighbor(1);
+        const key = JSON.stringify([index, previous, next, recipe]);
+        // Source changes take effect on the next entry.
+        if (this.groovePass?.key !== key) this.groovePass = { key, index, recipe,
+            motif: composeGroove(previous, next, recipe) };
+        return this.groovePass.motif;
     }
 
     // Snapshot only temporal playback; the bank remains immediately editable.
@@ -222,7 +254,7 @@ export class LiRythmeState {
         let snapshot;
         for (const id of wholeMotif ? Array.from({ length: 16 }, (_, id) => id) : voices) {
             if (!cycle.doubleVoices.has(id)) {
-                snapshot ??= structuredClone(this.getMotif(this.playingMotifId));
+                snapshot ??= structuredClone(this.getOccurrenceMotif());
                 cycle.doubleVoices.set(id, snapshot);
             }
         }

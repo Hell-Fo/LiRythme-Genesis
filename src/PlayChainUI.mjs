@@ -9,7 +9,7 @@ export function readPlayChain(state, system) {
         ? state.chainPlayingIndex : -1;
     const next = enabled ? (stopped ? 0 : state.getChainNextIndex()) : -1;
     return chain.map((id, index) => ({
-        label: `[${String(id + 1).padStart(2, "0")}]`,
+        label: state.getMotif?.(id)?.grooveMorph ? "[GM]" : `[${String(id + 1).padStart(2, "0")}]`,
         playing: index === playing,
         selected: enabled && stopped && !state.chainPlayingDetached && index === state.chainPlayingIndex,
         loopMaster: enabled && index === state.chainLoopMasterIndex,

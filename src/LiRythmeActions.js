@@ -15,7 +15,7 @@ Elias (OpenAI)
 
 ===============================================================================
 */
-import { visitPlaybackAttributes, ATTransaction, validSwings, validSwingRow, validRatchets, validRatchetRow, createAttributeRows, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes } from "./ATTransaction.mjs";
+import { visitPlaybackAttributes, ATTransaction, validSwings, validSwingRow, validRatchets, validRatchetRow, createAttributeRows, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes, validGrooveMorph } from "./ATTransaction.mjs";
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
     constructor(state, clock) {
@@ -201,6 +201,7 @@ export class LiRythmeActions {
     captureMotifCopy(id) {
         const motif = this.state.getMotif(id);
         return motif ? { kind: "BANK_MOTIF", sourceId: id,
+            ...(motif.grooveMorph ? { grooveMorph: structuredClone(motif.grooveMorph) } : {}),
             ...(this.state.systemName === "MODULATION" ? { system: "MODULATION" } : {}),
             ...(motif.attributes !== undefined ? { attributes: structuredClone(motif.attributes) } : {}),
             ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
@@ -247,9 +248,11 @@ export class LiRythmeActions {
             (copy.colors !== undefined && !validColors(copy.colors)) ||
             (copy.swings !== undefined && !validSwings(copy.swings)) ||
             (copy.ratchets !== undefined && !validRatchets(copy.ratchets)) ||
+            (copy.grooveMorph !== undefined && (!validGrooveMorph(copy.grooveMorph) || this.state.systemName !== "MOTIF" || copy.events.some(row => row.some(Boolean)))) ||
             (copy.atDestinations !== undefined && !validATDestinations(copy.atDestinations)) ||
             (copy.attributes !== undefined && !validExplicitAttributes(copy.attributes))) return false;
         this.replaceMotif(id, { events: copy.events.map(row => row.slice()),
+            ...(copy.grooveMorph ? { grooveMorph: structuredClone(copy.grooveMorph) } : {}),
             ...(copy.attributes !== undefined ? { attributes: structuredClone(copy.attributes) } : {}),
             ...(copy.velocities ? { velocities: copy.velocities.map(row => row.slice()) } : {}),
             ...(copy.colors ? { colors: copy.colors.map(row => row.slice()) } : {}),
@@ -283,6 +286,7 @@ export class LiRythmeActions {
         delete motif.colors;
         delete motif.swings;
         delete motif.ratchets;
+        delete motif.grooveMorph;
         delete motif.atDestinations;
         if (motif.attributes !== undefined) motif.attributes = {};
         for (let index = this.state.chain.length - 1; index >= 0; index--) {
@@ -592,6 +596,7 @@ export class LiRythmeActions {
     }
 
     toggleInstrumentStep(stepIndex) {
+        if (this.state.getMotif(this.state.currentMotifId).grooveMorph) return;
         // Modulation edits only A/T cells, never note events.
         if (this.state.systemName === "MODULATION") return false;
         if (this.state.selectedInstrument === null) {
@@ -786,6 +791,7 @@ export class LiRythmeActions {
         delete motif.colors;
         delete motif.swings;
         delete motif.ratchets;
+        delete motif.grooveMorph;
         delete motif.atDestinations;
         if (motif.attributes !== undefined) motif.attributes = {};
         this.state.onBankChange?.();
