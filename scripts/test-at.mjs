@@ -36,7 +36,53 @@ function drainAT(t, c) {
     for (let i = 0; (c.atLEDQueue.size || c.instrumentFeedbackPending) && i < 32; i++) t.mock.timers.tick(4);
     assert.equal(c.atLEDQueue.size, 0);
 }
+test("velocity meter holds the real value full while the dim tail descends every 40ms", t => {
+    const { state, c, leds, tap, begin } = setup(t);
+    state.motif[12][0] = state.motif[12][1] = true;
+    state.transportState = "PLAY";
+    begin(); drainAT(t, c); tap(c.mapping.AT_VALUE[2]); drainAT(t, c);
+    const expectTail = tail => c.mapping.AT_VALUE.forEach((note, row) => {
+        const color = row === 2 ? c.colors.YELLOW : row < tail ? c.colors.OFF : c.colors.DIM_GREEN;
+        assert.equal(leds.get('144:' + note), (color & 0x33) | 4);
+    });
+    expectTail(3);
+    for (let tail = 4; tail <= 8; tail++) {
+        t.mock.timers.tick(40); drainAT(t, c); expectTail(tail);
+    }
+    t.mock.timers.tick(80); drainAT(t, c); expectTail(8);
+    state.playheadPosition = 1; c.drawATValues(); drainAT(t, c); expectTail(3);
+    state.playheadPosition = 2; c.drawATValues(); drainAT(t, c);
+    c.mapping.AT_VALUE.forEach(note => assert.equal(leds.get('144:' + note), (c.colors.OFF & 0x33) | 4));
+    assert.equal(c.velocityMeterTimer, null);
+    state.playheadPosition = 0; c.drawATValues(); drainAT(t, c); expectTail(3);
+    tap(68); drainAT(t, c); assert.equal(c.velocityMeterTimer, null);
+});
 const velocity = (state, voice, step, id = state.currentMotifId) => state.getMotif(id).velocities?.[voice]?.[step] ?? 100;
+
+test("velocity meter follows each timeline step independently of edit step selection", t => {
+    const { state, actions, c, leds, begin } = setup(t);
+    state.motif[12][2] = state.motif[13][4] = true;
+    state.getMotif(0).velocities = createVelocities();
+    state.getMotif(0).velocities[12][2] = 96;
+    state.getMotif(0).velocities[13][4] = 127;
+    begin();
+    const expectMeter = first => {
+        c.drawATValues(); drainAT(t, c);
+        c.mapping.AT_VALUE.forEach((note, row) => {
+            const color = row < first ? c.colors.OFF : row === first ? row === 0 ? c.colors.RED : row <= 2 ? c.colors.YELLOW : c.colors.GREEN
+                : row === 0 ? c.colors.DIM_RED : row <= 2 ? c.colors.DIM_AMBER : c.colors.DIM_GREEN;
+            assert.equal(leds.get(`144:${note}`), (color & 0x33) | 4);
+        });
+    };
+    expectMeter(8);
+    actions.at.select("steps", 4);
+    state.playheadPosition = 2; expectMeter(2);
+    state.playheadPosition = 4; expectMeter(0);
+    actions.at.select("instruments", 12); expectMeter(8);
+    state.playheadPosition = 2; expectMeter(2);
+    assert.deepEqual([...state.atTransaction.steps], [4]);
+    assert.deepEqual([...state.atTransaction.instruments], [12]);
+});
 
 for (const dense of [false, true]) test(`A/T PLAY workload probe (${dense ? 512 : 1} events)`, t => {
     const { state, actions, c, tap, begin } = setup(t);
@@ -89,11 +135,11 @@ test("A/T LED bursts are bounded, coalesced and superseded by current musical fe
     for (let i = 0; i < 32; i++) tap(c.mapping.AT_VALUE[i % 8]);
     assert.equal(c.atBlinkTimer, blink);
     assert.equal(messages.length, 0);
-    assert.equal(c.atLEDQueue.size, 2);
+    assert.equal(c.atLEDQueue.size, 5);
     assert.equal(velocity(state, 0, 0), 16);
     drainAT(t, c);
-    assert.equal(messages.length, 2);
-    assert.deepEqual(messages.find(message => message[1] === c.mapping.AT_VALUE[7]), [0x90, c.mapping.AT_VALUE[7], (c.colors.RED & 0x33) | 4]);
+    assert.equal(messages.length, 5);
+    assert.equal(c.atLEDKnown.get(`144:${c.mapping.AT_VALUE[7]}`), (c.colors.GREEN & 0x33) | 4);
     assert.deepEqual(musicalContext(state, clock), before);
 
     const note = c.mapping.MOTIF[0];
@@ -153,6 +199,28 @@ for (const [name, instruments, steps] of [
     assert.deepEqual(state.motif, events);
 });
 
+for (const [name, voices, steps] of [
+    ["motif", [], []], ["instrument", [12], []],
+    ["instrument then steps", [12], [2, 4]], ["steps only", [], [2, 4]]
+]) test(`hardware velocity selection ${name} after an existing assignment`, t => {
+    const { state, c, tap, press, release, begin } = setup(t);
+    state.motif.forEach(row => row.fill(true));
+    begin(); tap(c.mapping.AT_VALUE[2]);
+    voices.forEach(voice => tap(c.mapping.INSTRUMENTS[voice]));
+    steps.forEach((step, index) => {
+        if (index) press(104, 0xB0);
+        tap(c.mapping.MOTIF[step]);
+        if (index) release(104, 0xB0);
+    });
+    tap(c.mapping.AT_VALUE[4]); drainAT(t, c);
+    for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
+        const selected = (!voices.length || voices.includes(voice)) && (!steps.length || steps.includes(step));
+        assert.equal(velocity(state, voice, step), selected ? 64 : 96, `${voice}:${step}`);
+    }
+    voices.forEach(voice => assert.equal(c.getInstrumentColor(voice), c.colors.YELLOW));
+    steps.forEach(step => assert.equal(c.getMotifStepColor(step), c.colors.YELLOW));
+});
+
 test("independent hardware selection: exclusive, additive toggle, removal, dynamic target", t => {
     const { state, c, tap, press, release, begin } = setup(t);
     state.motif.forEach(row => row.fill(true));
@@ -175,12 +243,18 @@ test("independent hardware selection: exclusive, additive toggle, removal, dynam
 });
 
 test("physical A-H applies all eight values; F/G/H cannot DELETE/COPY/SWITCH", t => {
-    const { state, actions, c, tap, begin } = setup(t);
+    const { state, actions, c, leds, tap, begin } = setup(t);
     state.motif[12][0] = true; begin();
     assert.deepEqual(c.mapping.AT_VALUE, [8, 24, 40, 56, 72, 88, 104, 120]);
     [127, 111, 96, 80, 64, 48, 32, 16].forEach((value, i) => {
         tap(c.mapping.AT_VALUE[i]); assert.equal(velocity(state, 12, 0), value);
         assert.equal(state.atTransaction.valueIndex, i);
+        drainAT(t, c);
+        c.mapping.AT_VALUE.forEach((note, row) => {
+            const color = row < i ? c.colors.OFF : row === i ? row === 0 ? c.colors.RED : row <= 2 ? c.colors.YELLOW : c.colors.GREEN
+                : row === 0 ? c.colors.DIM_RED : row <= 2 ? c.colors.DIM_AMBER : c.colors.DIM_GREEN;
+            assert.equal(leds.get(`144:${note}`), (color & 0x33) | 4, `velocity ${value}, row ${row}`);
+        });
         assert.equal(c.copyStage, null); assert.equal(c.deleteArmed, false); assert.equal(state.currentView, "PLAY");
         assert.equal(actions.toggleView(), "PLAY");
     });
@@ -220,7 +294,7 @@ test("blink, value LEDs and pending COPY feedback survive exit, without held-rel
         press(120); tap(88); tap(104);
         assert.equal(c.copyStage, stage); assert.equal(c.deleteArmed, armed);
         t.mock.timers.tick(160); drainAT(t, c);
-        assert.equal(color(104), (c.colors.RED & 0x33) | 4);
+        assert.equal(color(104), (c.colors.GREEN & 0x33) | 4);
         press(68); t.mock.timers.tick(300); release(68); release(120); drainAT(t, c);
         assert.equal(state.currentView, "PLAY"); assert.equal(state.atTransaction, null);
         assert.equal(c.atBlinkTimer, null); assert.equal(color(120), 4);
@@ -1170,7 +1244,7 @@ for (const slot of [0, 1]) for (const scenario of ["empty", "mixed steps", "mixe
             assert.equal(state.atTransaction.touched.size, 0);
             assert.equal(readATPanel(state).selected, null);
             drainAT(t, c);
-            const expected = c.colors.DIM_AMBER;
+            const expected = slot === 0 ? c.colors.OFF : c.colors.DIM_AMBER;
             assert.equal(f.leds.get(`144:${c.mapping.AT_VALUE[valueIndex]}`), (expected & 0x33) | 4);
             let saves = 0; state.onBankChange = () => saves++;
             actions.at.finish(true); assert.equal(saves, 0);
@@ -1228,7 +1302,7 @@ for (const slot of [null, 0, 1]) test(`STOP preview and cursor render actual edi
     if (slot !== null) assert.equal(leds.get('144:8') & 0x33, c.colors.RED & 0x33);
     tap(c.mapping.TOP_CONTROLS.NEXT, 0xB0); drainAT(t, c);
     assert.equal(messages.length, 1); assert.equal(c.getInstrumentColor(12), c.colors.DIM_GREEN);
-    if (slot !== null) assert.equal(leds.get('144:8') & 0x33, c.colors.DIM_AMBER & 0x33);
+    if (slot !== null) assert.equal(leds.get('144:8') & 0x33, (slot === 0 ? c.colors.OFF : c.colors.DIM_AMBER) & 0x33);
     state.padConfiguration.voices[12].colorNote = 72; offs.forEach(fn => fn());
     assert.deepEqual(messages[1], [0x99, 60, 0]);
     assert.equal(clock.transportRevision, revision); assert.equal(state.transportState, "STOP");
@@ -1387,14 +1461,14 @@ for (const slot of [0, 1]) for (const destination of ["STEP", "INSTRUMENT", "MOT
         }
         actions.at.apply(0); drainAT(t, c);
         const led = (status, note) => leds.get(status + ':' + note) & 0x33;
-        assert.equal(c.getMotifStepColor(3), destination === "STEP" ? c.colors.DIM_RED : c.colors.DIM_AMBER);
-        assert.equal(led(144, c.mapping.MOTIF[0]), (destination === "STEP" ? c.colors.RED : c.colors.GREEN) & 0x33);
-        assert.equal(c.getInstrumentColor(0), destination === "INSTRUMENT" ? c.colors.RED
+        assert.equal(c.getMotifStepColor(3), destination === "STEP" ? slot === 0 ? c.colors.YELLOW : c.colors.DIM_RED : c.colors.DIM_AMBER);
+        assert.equal(led(144, c.mapping.MOTIF[0]), (destination === "STEP" && slot !== 0 ? c.colors.RED : c.colors.GREEN) & 0x33);
+        assert.equal(c.getInstrumentColor(0), destination === "INSTRUMENT" ? slot === 0 ? c.colors.YELLOW : c.colors.RED
             : destination === "STEP" ? c.colors.YELLOW : c.colors.GREEN);
         assert.equal(c.hasMotifAT(), destination === "MOTIF");
         if (destination === "MOTIF") assert.equal(led(176, c.mapping.TOP_CONTROLS.PLAY_STOP), c.colors.DIM_RED & 0x33);
         state.playheadPosition = 2; c.drawPlayhead(); drainAT(t, c);
-        if (destination === "INSTRUMENT") assert.equal(c.getInstrumentColor(0), c.colors.DIM_RED);
+        if (destination === "INSTRUMENT") assert.equal(c.getInstrumentColor(0), slot === 0 ? c.colors.DIM_AMBER : c.colors.DIM_RED);
         if (destination === "MOTIF") {
             state.transportState = "PLAY"; c.pulseTransport();
             assert.equal(led(176, c.mapping.TOP_CONTROLS.PLAY_STOP), c.colors.RED & 0x33);

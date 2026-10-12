@@ -187,6 +187,7 @@ export class LaunchpadMini {
     }
 
     setDeviceName(deviceName) {
+        this.cancelVelocityMeter();
         clearTimeout(this.atLEDTimer);
         this.atLEDTimer = null;
         this.instrumentFeedbackPending = false;
@@ -196,6 +197,7 @@ export class LaunchpadMini {
     }
 
     resetInputState() {
+        this.cancelVelocityMeter();
         this.cancelModulationBeat();
         this.modulationPressed = false;
         clearTimeout(this.atPadHold?.timer);
@@ -381,6 +383,7 @@ export class LaunchpadMini {
 
         let hasAnyVoice = false;
         let hasSelectedVoice = false;
+        let hasAssignedVoice = false;
 
         const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId()).events;
         for (const [voiceId, steps] of motif.entries()) {
@@ -402,7 +405,10 @@ export class LaunchpadMini {
             }
 
             if ((this.state.systemName !== "MODULATION" && steps[step]) || Object.values(this.state.getDisplayMotif(this.actions.at.getEditingMotifId()).attributes ?? {}).some(rows => rows[voiceId][step] !== null)) {
-                if (target && this.hasAssignedAT(voiceId, step)) return this.colors.DIM_RED;
+                if (target && this.hasAssignedAT(voiceId, step)) {
+                    if (target.slot !== 0) return this.colors.DIM_RED;
+                    hasAssignedVoice = true;
+                }
                 hasAnyVoice = true;
                 // In Modulation, an A/T cell occupies the same visual role as
                 // a Motif event, while remaining silent on its own.
@@ -413,7 +419,7 @@ export class LaunchpadMini {
         // Selection remains visible on empty Steps without implying a note.
         // Occupancy is resolved within the selected Voices, not hidden Voices.
         if (target) return target.steps.has(step) ? (hasAnyVoice ? this.colors.YELLOW : this.colors.DIM_GREEN)
-            : hasAnyVoice ? this.colors.DIM_AMBER : this.colors.OFF;
+            : hasAssignedVoice ? this.colors.DIM_RED : hasAnyVoice ? this.colors.DIM_AMBER : this.colors.OFF;
 
         const explicitLength = selectedVoiceId === null
             ? this.state.motifLength : this.state.voiceLengths?.[selectedVoiceId];
@@ -524,10 +530,11 @@ export class LaunchpadMini {
             const step = this.state.playheadPosition % 32;
             const event = this.state.systemName === "MODULATION"
                 ? Object.values(motif.attributes ?? {}).some(rows => rows[i][step] !== null) : events?.[step];
+            const selected = this.state.atTransaction.instruments.has(i);
+            if (selected && this.state.atTransaction.slot === 0) return event ? this.colors.YELLOW : this.colors.DIM_AMBER;
             if (events?.some((occupied, step) => (occupied || this.state.systemName === "MODULATION") && this.hasAssignedAT(i, step, "INSTRUMENT"))) {
                 return event ? this.colors.RED : this.colors.DIM_RED;
             }
-            const selected = this.state.atTransaction.instruments.has(i);
             return selected ? (event ? this.colors.YELLOW : this.colors.DIM_AMBER)
                 : event ? this.colors.GREEN : this.colors.DIM_GREEN;
         }
@@ -1314,14 +1321,35 @@ export class LaunchpadMini {
             [0x90, this.mapping.VALUE_CONTROLS.SWITCH, (color & 0x33) | 0x04]);
     }
 
+    cancelVelocityMeter() {
+        clearTimeout(this.velocityMeterTimer);
+        this.velocityMeterTimer = null;
+        this.velocityMeterSignal = null;
+        this.velocityMeterRow = -1;
+    }
+
+    decayVelocityMeter() {
+        this.velocityMeterTimer = setTimeout(() => {
+            this.velocityMeterTimer = null;
+            this.velocityMeterRow++;
+            const collecting = this.collectATLEDs;
+            this.collectATLEDs = true;
+            try { this.drawATValues(); }
+            finally { this.collectATLEDs = collecting; }
+            if (this.velocityMeterRow < 8 && !this.velocityMeterTimer) this.decayVelocityMeter();
+        }, 40);
+    }
+
     drawATValues() {
         const tx = this.state.atTransaction;
+        const velocityMeter = tx?.slot === 0 && !["MUTATION", "GROOVE_MORPH"].includes(tx?.kind);
         const velocities = new Set();
         let colorCount = 0;
         if (tx) {
             const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId());
             const step = this.state.playheadPosition % 32;
-            if (!tx.steps.size || tx.steps.has(step)) {
+            // Monitoring follows every timeline step; selection only limits editing.
+            if (velocityMeter || !tx.steps.size || tx.steps.has(step)) {
                 for (let voice = 0; voice < 16; voice++) {
                     if ((!tx.instruments.size || tx.instruments.has(voice)) &&
                         (motif.events[voice][step] || motif.attributes !== undefined)) {
@@ -1330,16 +1358,40 @@ export class LaunchpadMini {
                             ? (motif.attributes !== undefined ? motif.attributes.RATCHET?.[voice]?.[step] : motif.ratchets?.[voice]?.[step])
                             : tx.slot === 2
                             ? (motif.attributes !== undefined ? motif.attributes.SWING?.[voice]?.[step] : motif.swings?.[voice]?.[step])
-                            : motif.attributes !== undefined ? motif.attributes.VELOCITY?.[voice]?.[step] : motif.velocities?.[voice]?.[step];
+                            : motif.attributes !== undefined ? motif.attributes.VELOCITY?.[voice]?.[step] : (motif.velocities?.[voice]?.[step] ?? 100);
                         if (velocity != null) velocities.add(velocity);
                     }
                 }
             }
         }
+        const peakVelocity = velocities.size ? Math.max(...velocities) : 0;
+        const meterRow = velocityMeter ? this.actions.at.definition(tx.slot).values.findIndex(value => peakVelocity >= value) : -1;
+        let tailRow = meterRow + 1;
+        if (velocityMeter && this.state.transportState === "PLAY") {
+            if (this.velocityMeterTransaction !== tx) {
+                this.cancelVelocityMeter();
+                this.velocityMeterTransaction = tx;
+            }
+            const signal = `${this.state.playheadPosition}:${peakVelocity}:${tx.valueIndex}:${[...tx.instruments]}`;
+            if (signal !== this.velocityMeterSignal) {
+                this.velocityMeterSignal = signal;
+                clearTimeout(this.velocityMeterTimer);
+                this.velocityMeterTimer = null;
+                this.velocityMeterRow = meterRow >= 0 ? meterRow + 1 : 8;
+                if (meterRow >= 0) {
+                    if (this.velocityMeterRow < 8) this.decayVelocityMeter();
+                }
+            }
+            tailRow = this.velocityMeterRow;
+        } else this.cancelVelocityMeter();
         for (const [index, note] of this.mapping.AT_VALUE.entries()) {
             const color = ["MUTATION", "GROOVE_MORPH"].includes(tx?.kind) ? index === tx.valueIndex ? this.colors.RED : this.colors.DIM_AMBER
                 : tx?.slot === 8 ? this.colors.OFF : tx?.slot === 1
                 ? index !== 0 ? this.colors.OFF : colorCount ? this.colors.RED : this.colors.DIM_AMBER
+                : velocityMeter ? (meterRow < 0 || index < meterRow ? this.colors.OFF : index === meterRow
+                    ? index === 0 ? this.colors.RED : index <= 2 ? this.colors.YELLOW : this.colors.GREEN
+                    : index < tailRow ? this.colors.OFF
+                    : index === 0 ? this.colors.DIM_RED : index <= 2 ? this.colors.DIM_AMBER : this.colors.DIM_GREEN)
                 : tx ? (velocities.has(this.actions.at.definition(tx.slot).values[index]) ? this.colors.RED : this.colors.DIM_AMBER)
                 : this.colors.OFF;
             this.sendController(this.deviceName, [0x90, note, (color & 0x33) | 4]);
