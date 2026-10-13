@@ -120,15 +120,15 @@ test('PLAY context arrows coalesce controller redraws without synchronous MIDI b
     assert.ok(controller.atLEDQueue.size <= 80);
 });
 
-test('MOD Chain beat palette follows effective activity, independently of editing context', t => {
+test('MOD Chain beat palette follows requested activity, independently of editing context', t => {
     const { state, modulation, controller, messages } = setup(t);
     const color = () => (messages.filter(m => m[0] === 0xB0 && m[1] === 105).at(-1)[2] & 0x33) | 12;
     modulation.chainEnabled = true;
     state.transportState = 'PLAY';
     for (const context of ['MOTIF', 'MODULATION']) for (const active of [false, true]) {
         state.currentTimeline = context;
-        state.modulationActive = active;
-        state.modulationRequested = !active; // Pending intent must not announce activation early.
+        state.modulationActive = !active;
+        state.modulationRequested = active; // LED follows intent before the cycle applies it.
         controller.drawModulationStatus();
         assert.equal(color(), active ? controller.colors.RED : controller.colors.DIM_RED);
         controller.pulseModulationBeat();
@@ -145,7 +145,7 @@ test('MOD Chain beat palette follows effective activity, independently of editin
     state.transportState = 'PLAY'; controller.pulseModulationBeat();
     modulation.chainEnabled = false; controller.drawModulationStatus();
     assert.equal(controller.modulationBeatTimer, null);
-    assert.equal(color(), controller.colors.DIM_RED);
+    assert.equal(color(), controller.colors.RED);
     controller.pulseModulationBeat(); assert.equal(controller.modulationBeatTimer, null);
 });
 
@@ -758,6 +758,28 @@ test('Modulation Timeline uses Voice selection and filters to display A/T occupa
     state.filterMode = true; state.visibleInstrumentFilter = new Set([12]);
     assert.equal(c.getMotifStepColor(2), 0);
     state.selectedInstrument = 13; assert.equal(c.getMotifStepColor(2), c.colors.YELLOW);
+});
+
+test('Modulation LED follows the button immediately while activation waits for the cycle', t => {
+    const { state, modulation, actions, controller: c, messages, tap, tick } = setup(t);
+    modulation.chainEnabled = true;
+    state.motifLength = modulation.motifLength = 4;
+    actions.startPlayback(); tick();
+    const color = () => messages.filter(([status, note]) => status === 0xb0 && note === c.mapping.TOP_CONTROLS.MODULATION).at(-1)[2];
+    const value = name => (c.colors[name] & 0x33) | 4;
+    tap(c.mapping.TOP_CONTROLS.MODULATION, 0xb0);
+    assert.equal(state.modulationRequested, true);
+    assert.equal(state.modulationActive, false);
+    assert.equal(color(), value('RED'));
+    for (let i = 0; i < 4; i++) tick();
+    assert.equal(state.modulationActive, true);
+    c.cancelModulationBeat();
+    tap(c.mapping.TOP_CONTROLS.MODULATION, 0xb0);
+    assert.equal(state.modulationRequested, false);
+    assert.equal(state.modulationActive, true);
+    assert.equal(color(), value('DIM_RED'));
+    for (let i = 0; i < 4; i++) tick();
+    assert.equal(state.modulationActive, false);
 });
 
 test('controller initialization reflects restored requested activation instead of the reserved static palette', t => {

@@ -45,6 +45,7 @@ export function initializePlayATUI({ state, document = globalThis.document }) {
         field("play-at-target").textContent = status.target;
         field("play-at-motif").textContent = `${status.system ?? "MOTIF"} ${String(status.motif).padStart(2, "0")}`;
         for (let index = 0; index < 8; index++) {
+        field("play-at-octave").hidden = status.name !== "KEY GROUP";
             const value = status.values[index];
             const row = field(`play-at-value-${index}`);
             row.hidden = value === undefined;

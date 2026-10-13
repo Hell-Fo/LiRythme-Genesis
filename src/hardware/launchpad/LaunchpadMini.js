@@ -1274,7 +1274,7 @@ export class LaunchpadMini {
     drawModulationStatus() {
         const chain = this.rootState.forSystem("MODULATION").chainEnabled;
         if (!chain) this.cancelModulationBeat();
-        const active = chain ? this.rootState.modulationActive : this.rootState.modulationRequested;
+        const active = this.rootState.modulationRequested;
         const beat = chain && this.modulationBeatLit && this.rootState.transportState === "PLAY";
         const color = active ? (beat ? this.colors.YELLOW : this.colors.RED)
             : (beat ? this.colors.DIM_AMBER : this.colors.DIM_RED);
