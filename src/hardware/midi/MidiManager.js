@@ -190,7 +190,7 @@ export class MidiManager {
         });
     }
 
-    send(outputName, message, timestamp, { preview = false } = {}) {
+    send(outputName, message, timestamp, { preview = false, keyGroup = false } = {}) {
         const output = this.findOutput(outputName);
 
         if (!output) {
@@ -205,6 +205,7 @@ export class MidiManager {
                         : "SEND_NOTES",
                 name: outputName,
                 message: Array.from(message),
+                ...(keyGroup ? { keyGroup: true } : {}),
                 ...(preview ? { previewEpoch: this.previewEpoch, previewExpiresAt: Date.now() + 50 } : {})
             });
             return;

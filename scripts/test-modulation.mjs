@@ -807,3 +807,34 @@ test('Modulation preview is silent even for legacy notes; Audio only plays compo
     state.muteActive = true; state.muteSelection.add(13); trigger(0); assert.equal(audio.length, 1);
     actions.selectModulationTimeline();
 });
+
+for (const transport of ['STOP', 'PAUSE']) test(`long presses select timelines in ${transport} without transport or activation changes`, t => {
+    const { state, controller: c, press, release } = setup(t);
+    state.transportState = transport;
+    state.playheadPosition = 3;
+    press(c.mapping.TOP_CONTROLS.MODULATION, 0xB0);
+    t.mock.timers.tick(299);
+    assert.equal(state.currentTimeline, 'MOTIF');
+    t.mock.timers.tick(1);
+    assert.equal(state.currentTimeline, 'MODULATION');
+    release(c.mapping.TOP_CONTROLS.MODULATION, 0xB0);
+    assert.equal(state.modulationRequested, false);
+    press(c.mapping.TOP_CONTROLS.PLAY_STOP, 0xB0);
+    t.mock.timers.tick(300);
+    assert.equal(state.currentTimeline, 'MOTIF');
+    release(c.mapping.TOP_CONTROLS.PLAY_STOP, 0xB0);
+    assert.equal(state.transportState, transport);
+    assert.equal(state.playheadPosition, 3);
+});
+
+for (const transport of ['STOP', 'PAUSE']) test(`long Play press in Motif performs STOP from ${transport}`, t => {
+    const { state, controller: c, press, release } = setup(t);
+    state.transportState = transport;
+    state.playheadPosition = 3;
+    press(c.mapping.TOP_CONTROLS.PLAY_STOP, 0xB0);
+    t.mock.timers.tick(300);
+    release(c.mapping.TOP_CONTROLS.PLAY_STOP, 0xB0);
+    assert.equal(state.currentTimeline, 'MOTIF');
+    assert.equal(state.transportState, 'STOP');
+    assert.equal(state.playheadPosition, 0);
+});

@@ -1,4 +1,4 @@
-import { AT_SLOTS, hasTargetEvents } from "./ATTransaction.mjs";
+import { AT_SLOTS, hasTargetEvents, SCALES, keyGroupFeedback } from "./ATTransaction.mjs";
 import { MUTATION_METHODS } from "./Mutation.mjs";
 import { GROOVE_METHODS } from "./GrooveMorph.mjs";
 
@@ -19,11 +19,13 @@ export function readATPanel(state) {
     const instruments = [...tx.instruments].sort((a, b) => a - b).map(id =>
         state.padConfiguration.voices[id]?.name || `VOICE ${String(id + 1).padStart(2, "0")}`).join("+");
     const steps = [...tx.steps].sort((a, b) => a - b).map(id => String(id + 1).padStart(2, "0")).join("·");
-    return { name: definition.id, target: instruments
+    const key = tx.slot === 4 ? keyGroupFeedback(state, tx, false) : null;
+    return { name: definition.id === "KEY_GROUP" ? "KEY GROUP" : definition.id, target: key ? `${instruments || "VOICES KEY GROUP"}${steps ? ` · ${steps}` : ""}` : instruments
         ? instruments + (steps ? ` · ${steps}` : "") : steps ? `STEPS ${steps}` : "MOTIF",
         motif: (tx.editingMotifId ?? state.currentMotifId) + 1,
         ...(tx.system === "MODULATION" ? { system: "MODULATION" } : {}),
-        values: definition.id === "ROTATION" ? ["<<  −1 STEP", ">>  +1 STEP"]
+        values: key ? definition.values.map(degree => degree >= key.count ? undefined : tx.system === "MODULATION"
+            ? `+${degree} degré${degree === 1 ? "" : "s"}` : `Degré ${degree + 1} · +${SCALES[state.keyGroup.scale][degree]}`) : definition.id === "ROTATION" ? ["<<  −1 STEP", ">>  +1 STEP"]
             : definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.id === "SWING" ? definition.values.map(value => `${value} %`) : definition.id === "RATCHET" ? definition.values.map(value => `${value}×`) : definition.values,
         selected: definition.id === "COLOR" ? (valueIndex === null ? null : 0) : valueIndex };
 }
@@ -43,9 +45,9 @@ export function initializePlayATUI({ state, document = globalThis.document }) {
         title.textContent = status?.name ?? "SELECTION";
         if (!status) return;
         field("play-at-target").textContent = status.target;
+        field("play-at-octave").hidden = status.name !== "KEY GROUP";
         field("play-at-motif").textContent = `${status.system ?? "MOTIF"} ${String(status.motif).padStart(2, "0")}`;
         for (let index = 0; index < 8; index++) {
-        field("play-at-octave").hidden = status.name !== "KEY GROUP";
             const value = status.values[index];
             const row = field(`play-at-value-${index}`);
             row.hidden = value === undefined;

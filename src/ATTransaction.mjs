@@ -1,3 +1,5 @@
+import { SCALES, defaultKeyGroup, validKeyCell, readKeyCell, applyKeyPatch, keyNote, keyGroupFeedback } from "./KeyGroup.mjs";
+export { SCALES, defaultKeyGroup, validKeySettings, validKeyCell, validKeyRow, validKeyGroups, readKeyCell, keyNote, keyGroupFeedback } from "./KeyGroup.mjs";
 import { mutateMotif } from "./Mutation.mjs";
 export { composeGroove, validGrooveMorph } from "./GrooveMorph.mjs";
 export const createVelocities = () => Array.from({ length: 16 }, () => Array(32).fill(100));
@@ -12,9 +14,9 @@ export const createAttributeRows = () => Array.from({ length: 16 }, () => Array(
 export const hasModulationCell = (motif, voice, step) => Boolean(
     Object.values(motif.attributes ?? {}).some(rows => rows[voice][step] !== null));
 export const validExplicitAttributes = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET", "KEY_GROUP"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(row => Array.isArray(row) && row.length === 32 &&
-            row.every(v => v === null || (key === "COLOR" ? typeof v === "boolean" : key === "SWING" ? SWING_VALUES.includes(v) : key === "RATCHET" ? RATCHET_VALUES.includes(v) : Number.isInteger(v) && v >= 1 && v <= 127))));
+            row.every(v => v === null || (key === "KEY_GROUP" ? validKeyCell(v) : key === "COLOR" ? typeof v === "boolean" : key === "SWING" ? SWING_VALUES.includes(v) : key === "RATCHET" ? RATCHET_VALUES.includes(v) : Number.isInteger(v) && v >= 1 && v <= 127))));
 function applyExplicitAttribute(motif, { instruments, steps }, key, value) {
     let changed = false;
     const rows = motif.attributes[key] ??= createAttributeRows();
@@ -28,7 +30,7 @@ function applyExplicitAttribute(motif, { instruments, steps }, key, value) {
 export const validATDestinationRow = row => Array.isArray(row) && row.length === 32 &&
     row.every(v => v === null || ["STEP", "INSTRUMENT", "MOTIF"].includes(v));
 export const validATDestinations = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET", "ROTATION"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET", "KEY_GROUP", "ROTATION"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(validATDestinationRow));
 export const hasTargetEvents = (motif, target) => Boolean(motif && target && motif.events.some((row, voice) =>
     (!target.instruments.size || target.instruments.has(voice)) &&
@@ -124,10 +126,19 @@ export const AT_SLOTS = Object.freeze([
             return changed;
         }
     }),
-    ...Array(4).fill(null),
+    Object.freeze({ id: "KEY_GROUP", values: Object.freeze([7,6,5,4,3,2,1,0]),
+        isAssigned: (motif, voice, step) => readKeyCell(motif, voice, step) !== null,
+        capture: motif => structuredClone(motif.keyGroups),
+        restore(motif, snapshot) {
+            if (snapshot === undefined) delete motif.keyGroups;
+            else motif.keyGroups = structuredClone(snapshot);
+        },
+        apply: applyKeyPatch
+    }),
+    ...Array(3).fill(null),
     Object.freeze({ id: "ROTATION", values: Object.freeze([]),
         isAssigned: (motif, voice, step) => Boolean(motif.atDestinations?.ROTATION?.[voice]?.[step]),
-        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "ratchets", "atDestinations", "attributes", "grooveMorph"]
+        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "ratchets", "keyGroups", "atDestinations", "attributes", "grooveMorph"]
             .map(key => [key, structuredClone(motif[key])])),
         restore(motif, snapshot) {
             for (const [key, value] of Object.entries(snapshot)) {
@@ -167,7 +178,7 @@ function applyAttribute(motif, target, definition, value, scope = target) {
     return true;
 }
 function clearAttributes(motif) {
-    for (const key of ["velocities", "colors", "swings", "ratchets", "atDestinations"]) delete motif[key];
+    for (const key of ["velocities", "colors", "swings", "ratchets", "keyGroups", "atDestinations"]) delete motif[key];
     if (motif.attributes !== undefined) motif.attributes = {};
 }
 
@@ -285,6 +296,7 @@ export class ATTransaction {
             return true;
         }
         const definition = AT_SLOTS[tx.slot];
+        if (definition.id === "KEY_GROUP") return this.applyKeyGroup({ degree: definition.values[index] });
         if (definition.id === "ROTATION") return false; // Controlled exclusively by << / >>.
         if (definition.id === "COLOR") {
             if (index !== 0) return false;
@@ -313,6 +325,46 @@ export class ATTransaction {
         this.changed("value");
         return true;
     }
+    keyGroupStatus() { return keyGroupFeedback(this.state, this.state.atTransaction); }
+    transposeKeyGroup(direction) {
+        return [-1, 1].includes(direction) && this.applyKeyGroup({ octaveDelta: direction });
+    }
+    applyKeyGroup(patch) {
+        const tx = this.state.atTransaction;
+        if (tx?.slot !== 4) return false;
+        const settings = this.rootState.keyGroup ?? defaultKeyGroup();
+        const modulation = this.state.systemName === "MODULATION";
+        if (!SCALES[settings.scale] || patch.degree !== undefined && (!Number.isInteger(patch.degree) || patch.degree < 0 || patch.degree > 7 ||
+            !modulation && SCALES[settings.scale][patch.degree] === undefined)) return false;
+        const instruments = new Set(this.state.padConfiguration.voices.flatMap((v, id) =>
+            v.type === "KEY GROUP" && (!tx.instruments.size || tx.instruments.has(id)) ? [id] : []));
+        if (!instruments.size) return false;
+        const id = this.getEditingMotifId(), motif = this.state.getMotif(id), definition = AT_SLOTS[4];
+        const targets = [[motif, instruments]];
+        visitPlaybackAttributes(this.state, id, instruments, (snapshot, voices) => targets.push([snapshot, voices]));
+        const candidates = targets.map(([m, voices]) => {
+            const copy = structuredClone(m), target = { instruments: voices, steps: tx.steps };
+            const changed = applyAttribute(copy, target, definition, patch, tx);
+            const valid = [...voices].every(v => Array.from({ length: 32 }, (_, step) => step).every(step =>
+                tx.steps.size && !tx.steps.has(step) || m.attributes === undefined && !m.events[v][step] ||
+                validKeyCell(readKeyCell(copy, v, step)) && (modulation || keyNote(settings, readKeyCell(copy, v, step)) !== null)));
+            return { copy, target, changed, valid };
+        });
+        if (!candidates[0].changed || candidates.some(c => !c.valid)) return false;
+        for (const [n, [m]] of targets.entries()) {
+            if (n) {
+                tx.liveAttributeSnapshots ??= new Map();
+                if (!tx.liveAttributeSnapshots.has(m)) tx.liveAttributeSnapshots.set(m, {
+                    value: definition.capture(m), attributes: structuredClone(m.attributes), destinations: structuredClone(m.atDestinations)
+                });
+            }
+            applyAttribute(m, candidates[n].target, definition, patch, tx);
+        }
+        tx.touched.add(id);
+        if (patch.degree !== undefined) tx.valueIndex = definition.values.indexOf(patch.degree);
+        this.changed("value");
+        return true;
+    }
     rotate(direction) {
         const tx = this.state.atTransaction;
         if (tx?.slot !== 8 || tx.kind === "MUTATION" || tx.kind === "GROOVE_MORPH" || ![-1, 1].includes(direction)) return false;
@@ -333,6 +385,7 @@ export class ATTransaction {
                 color: motif.colors?.[voice][step] ?? false,
                 swing: motif.swings?.[voice][step] ?? null,
                 ratchet: motif.ratchets?.[voice][step] ?? null,
+                keyGroup: structuredClone(motif.keyGroups?.[voice][step] ?? null),
                 destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
                     .map(([key, rows]) => [key, rows[voice][step]])) });
         }
@@ -361,6 +414,7 @@ export class ATTransaction {
                 color: motif.colors?.[voice][to] ?? false,
                 swing: motif.swings?.[voice][to] ?? null,
                 ratchet: motif.ratchets?.[voice][to] ?? null,
+                keyGroup: structuredClone(motif.keyGroups?.[voice][to] ?? null),
                 destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
                     .map(([key, rows]) => [key, rows[voice][to]])) });
         }
@@ -372,6 +426,7 @@ export class ATTransaction {
             if (motif.colors) motif.colors[voice][step] = false;
             if (motif.swings) motif.swings[voice][step] = null;
             if (motif.ratchets) motif.ratchets[voice][step] = null;
+            if (motif.keyGroups) motif.keyGroups[voice][step] = null;
             for (const rows of Object.values(motif.attributes ?? {})) rows[voice][step] = null;
             for (const rows of Object.values(motif.atDestinations)) rows[voice][step] = null;
         }
@@ -383,16 +438,18 @@ export class ATTransaction {
             if (motif.colors) motif.colors[voice][to] = move.color;
             if (motif.swings) motif.swings[voice][to] = move.swing;
             if (motif.ratchets) motif.ratchets[voice][to] = move.ratchet;
+            if (motif.keyGroups) motif.keyGroups[voice][to] = structuredClone(move.keyGroup);
             for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = move.destinations[key] ?? null;
             motif.atDestinations.ROTATION[voice][to] = destination;
         }
-        for (const { voice, to, event, attributes, velocity, color, swing, ratchet, destinations } of displaced) {
+        for (const { voice, to, event, attributes, velocity, color, swing, ratchet, keyGroup, destinations } of displaced) {
             motif.events[voice][to] = event;
             for (const [key, rows] of Object.entries(motif.attributes ?? {})) rows[voice][to] = attributes[key] ?? null;
             if (motif.velocities) motif.velocities[voice][to] = velocity;
             if (motif.colors) motif.colors[voice][to] = color;
             if (motif.swings) motif.swings[voice][to] = swing;
             if (motif.ratchets) motif.ratchets[voice][to] = ratchet;
+            if (motif.keyGroups) motif.keyGroups[voice][to] = structuredClone(keyGroup);
             for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = destinations[key] ?? null;
         }
         if (tx.steps.size) {

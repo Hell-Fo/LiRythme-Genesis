@@ -15,7 +15,7 @@ Elias (OpenAI)
 */
 
 import { PadConfiguration } from "./PadConfiguration.js";
-import { composeGroove } from "./ATTransaction.mjs";
+import { composeGroove, defaultKeyGroup, readKeyCell, keyNote } from "./ATTransaction.mjs";
 
 export class LiRythmeState {
     constructor({ system = "MOTIF" } = {}) {
@@ -38,6 +38,7 @@ export class LiRythmeState {
 
         this.freezeMode = false;
         this.colorEnabled = false;
+        this.keyGroup = defaultKeyGroup();
         this.atTransaction = null;
         this.lockMode = false;
 
@@ -124,6 +125,16 @@ export class LiRythmeState {
         const root = this.rootState ?? this;
         if (!["MOTIF", "MODULATION"].includes(name)) throw new Error("Unknown musical system");
         return name === "MOTIF" ? root : root.modulation;
+    }
+
+    getKeyGroupNote(voice, preview = null) {
+        const root = this.rootState ?? this;
+        const base = root.forSystem("MOTIF"), mod = root.forSystem("MODULATION");
+        const cell = preview ? readKeyCell(preview.motif, voice, preview.step)
+            : readKeyCell(base.getPlaybackMotifForVoice(voice), voice, base.getVoiceStep(voice));
+        const overlay = !preview && root.modulationActive
+            ? readKeyCell(mod.getPlaybackMotifForVoice(voice), voice, mod.getVoiceStep(voice)) : null;
+        return keyNote(root.keyGroup, cell, overlay);
     }
 
     getPlayingEvent(voiceId, position = this.playheadPosition) {

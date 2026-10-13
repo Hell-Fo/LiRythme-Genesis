@@ -12,6 +12,7 @@ class NativeMidiBridge {
         this.notesOutput = null;
         this.notesOutputName = null;
         this.workerOutputName = null;
+        this.additionalNotesOutputs = new Map();
     }
 
     listPorts() {
@@ -185,6 +186,30 @@ class NativeMidiBridge {
         this.notesOutput.sendMessage(message);
     }
 
+    sendAdditionalNotes(name, message) {
+        if (name === this.workerOutputName) throw new Error("MIDI port owned by Clock worker");
+        if (name === this.controllerOutputName && this.controllerOutput) {
+            this.controllerOutput.sendMessage(message);
+            return;
+        }
+        let output = this.additionalNotesOutputs.get(name);
+        if (!output) {
+            output = new midi.Output();
+            try {
+                const index = this.findPortIndex(output, name);
+                if (index < 0) throw new Error(`Native MIDI output not found: ${name}`);
+                output.openPort(index);
+            } catch (error) { output.closePort(); throw error; }
+            this.additionalNotesOutputs.set(name, output);
+        }
+        output.sendMessage(message);
+    }
+
+    closeAdditionalNotesOutput(name) {
+        this.additionalNotesOutputs.get(name)?.closePort();
+        this.additionalNotesOutputs.delete(name);
+    }
+
     openNotesOutput(name) {
         if (name === this.workerOutputName) {
             throw new Error(
@@ -199,6 +224,13 @@ class NativeMidiBridge {
         this.closeNotesOutput();
 
         if (!name) {
+            return;
+        }
+
+        if (this.additionalNotesOutputs.has(name)) {
+            this.notesOutput = this.additionalNotesOutputs.get(name);
+            this.notesOutputName = name;
+            this.additionalNotesOutputs.delete(name);
             return;
         }
 
@@ -234,6 +266,7 @@ class NativeMidiBridge {
     }
 
     close() {
+        for (const name of this.additionalNotesOutputs.keys()) this.closeAdditionalNotesOutput(name);
         this.closeController();
         this.closeClockInput();
         this.closeNotesOutput();

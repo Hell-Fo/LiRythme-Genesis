@@ -1,9 +1,10 @@
 import { initializePadLibraryUI } from "./PadLibraryUI.js";
-import { editPadVoice } from "./PadVoiceEditor.mjs";
+import { editPadVoice, initializeKeyGroupSettings } from "./PadVoiceEditor.mjs";
 
 // UI state is intentionally independent of the musical selection and transport.
 export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     const get = id => document.getElementById(id);
+    const refreshKeyGroup = initializeKeyGroupSettings(state, document);
     const settingsPage = get("settings-page");
     const playPage = get("play-page");
     const helpPanel = get("help-panel");
@@ -113,7 +114,10 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
             input.disabled = locked;
             if (force || locked || document.activeElement !== input) input.value = String(voice[field] ?? "");
         }
-        get("voice-midi-fields").hidden = voice.type !== "MIDI DRUM";
+        get("voice-midi-fields").hidden = !["MIDI DRUM", "KEY GROUP"].includes(voice.type);
+        if (get("voice-fixed-note-field")) get("voice-fixed-note-field").hidden = voice.type === "KEY GROUP";
+        if (get("voice-color-field")) get("voice-color-field").hidden = voice.type === "KEY GROUP";
+        if (get("voice-color-help")) get("voice-color-help").hidden = voice.type === "KEY GROUP";
         if (get("voice-audio-fields")) {
             get("voice-audio-fields").hidden = voice.type !== "AUDIO";
             get("voice-audioOutput").disabled = locked;
@@ -188,6 +192,7 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     });
     tempo.addEventListener("blur", () => renderTempo(true));
     function refresh() {
+        refreshKeyGroup();
         audioPlayer?.sync(state.padConfiguration.voices);
         if (settingsPage.hidden) return;
         renderTempo();

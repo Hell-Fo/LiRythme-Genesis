@@ -1,4 +1,4 @@
-import { AT_SLOTS, validSwings, validRatchets, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph } from "./ATTransaction.mjs";
+import { AT_SLOTS, validKeyGroups, validKeySettings, defaultKeyGroup, validSwings, validRatchets, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph } from "./ATTransaction.mjs";
 
 export function validateMotifBank(value, { modulation = false } = {}) {
     const length = n => n === null || Number.isInteger(n) && n >= 1 && n <= 32;
@@ -13,18 +13,22 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             (m.colors === undefined || validColors(m.colors)) &&
             (m.swings === undefined || validSwings(m.swings)) &&
             (m.ratchets === undefined || validRatchets(m.ratchets)) &&
+            (m.keyGroups === undefined || validKeyGroups(m.keyGroups)) &&
             (m.grooveMorph === undefined || !modulation && validGrooveMorph(m.grooveMorph) && !m.events.some(row => row.some(Boolean))) &&
             (modulation ? validExplicitAttributes(m.attributes) : m.attributes === undefined) &&
             (m.atDestinations === undefined || validATDestinations(m.atDestinations)))) {
         throw new Error("Invalid or unsupported Motif Bank (expected version 1, 16 valid motifs)");
     }
+    if (value.keyGroup !== undefined && !validKeySettings(value.keyGroup)) throw new Error("Invalid Key Group settings");
     // Whitelist and clone; neither transient state nor shared rows cross this boundary.
     const result = { format: "lirythme-motif-bank", version: 1, currentMotifId: value.currentMotifId,
+        ...(value.keyGroup ? { keyGroup: structuredClone(value.keyGroup) } : {}),
         motifs: value.motifs.map(m => ({ events: m.events.map(row => modulation ? Array(32).fill(false) : row.slice()),
             ...(m.velocities ? { velocities: m.velocities.map(row => row.slice()) } : {}),
             ...(m.colors ? { colors: m.colors.map(row => row.slice()) } : {}),
             ...(m.swings ? { swings: m.swings.map(row => row.slice()) } : {}),
             ...(m.grooveMorph ? { grooveMorph: structuredClone(m.grooveMorph) } : {}),
+            ...(m.keyGroups ? { keyGroups: structuredClone(m.keyGroups) } : {}),
             ...(m.ratchets ? { ratchets: m.ratchets.map(row => row.slice()) } : {}),
             ...(m.atDestinations ? { atDestinations: structuredClone(m.atDestinations) } : {}),
             ...(m.attributes !== undefined ? { attributes: structuredClone(m.attributes) } : {}),
@@ -55,7 +59,7 @@ export function snapshotMotifBank(state) {
         else copy.atDestinations = structuredClone(tx.destinationSnapshots[id]);
         return copy;
     }) : state.motifs;
-    const doc = { format: "lirythme-motif-bank", version: 1, currentMotifId: state.currentMotifId, motifs };
+    const doc = { format: "lirythme-motif-bank", version: 1, currentMotifId: state.currentMotifId, motifs, ...(root.keyGroup ? { keyGroup: structuredClone(root.keyGroup) } : {}) };
     if (root.modulation) {
         const m = root.forSystem("MODULATION"), tx = root.atTransaction;
         const motifs = tx?.system === "MODULATION" ? m.motifs.map((motif, id) => {
@@ -75,6 +79,7 @@ export function restoreMotifBank(state, value) {
     const bank = validateMotifBank(value);
     const root = state.rootState ?? state;
     state = root.forSystem?.("MOTIF") ?? root;
+    root.keyGroup = bank.keyGroup ?? defaultKeyGroup();
     state.motifs = bank.motifs;
     state.currentMotifId = bank.currentMotifId;
     state.nextMotifId = null;

@@ -170,7 +170,7 @@ test("A/T navigation is inert; VELOCITY available and COLOR disabled by default 
     }
     actions.toggleView(); actions.toggleView();
     assert.equal(AT_SLOTS.length, 16);
-    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.equal(state.atTransaction.slot, 0);
     assert.deepEqual([...state.atTransaction.instruments], []);
     assert.deepEqual([...state.atTransaction.steps], []);
@@ -404,10 +404,10 @@ for (const commit of [false, true]) test(`existing PLAY A/T surface: all 16 fami
     const { state, c, leds, tap, press, release } = setup(t);
     const colors = () => c.mapping.BOOKS.map(note => leds.get(`144:${note}`));
     const expected = lit => Array.from({ length: 16 }, (_, i) =>
-        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : (i === 2 || i === 3) ? "RED" : i < 8 ? "DIM_RED" : i === 8 ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
+        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : (i === 2 || i === 3 || i === 4) ? "RED" : i < 8 ? "DIM_RED" : i === 8 ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
     assert.equal(state.currentView, "PLAY");
     c.drawBooks(); assert.deepEqual(colors(), expected(true));
-    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 8)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.ok(state.atTransaction); assert.deepEqual(colors(), expected(true));
     t.mock.timers.tick(160); drainAT(t, c); assert.deepEqual(colors(), expected(false));
     c.drawBooks(); assert.deepEqual(colors(), expected(false));
@@ -1182,7 +1182,7 @@ test("COLOR Book regression: real SETTINGS preference drives physical pad 69 and
     const get = id => {
         if (!fields.has(id)) fields.set(id, { textContent: "", value: "", checked: false,
             hidden: false, children: [], options: [], selectedIndex: 0, listeners: {},
-            setAttribute() {}, appendChild(child) { this.children.push(child); },
+            setAttribute() {}, replaceChildren(...children) { this.children = children; }, appendChild(child) { this.children.push(child); },
             addEventListener(name, callback) { this.listeners[name] = callback; } });
         return fields.get(id);
     };

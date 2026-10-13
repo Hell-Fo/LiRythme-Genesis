@@ -237,6 +237,11 @@ export class LaunchpadMini {
         this.cancelTransportPulse();
         clearTimeout(this.playStopTimer);
         this.stopTempoRepeat();
+        clearTimeout(this.modulationHoldTimer);
+        this.modulationHoldTimer = null;
+        this.modulationPressed = false;
+        this.modulationTapPending = false;
+        this.modulationLongPressTriggered = false;
         clearTimeout(this.previousHoldTimer);
         clearInterval(this.previousRepeatTimer);
         clearTimeout(this.nextHoldTimer);
@@ -450,6 +455,12 @@ export class LaunchpadMini {
     drawTimelineSelection() {
         const previous = this.mapping.TOP_CONTROLS.PREVIOUS;
         const next = this.mapping.TOP_CONTROLS.NEXT;
+        if (this.state.atTransaction?.slot === 4) {
+            const { octaves } = this.actions.at.keyGroupStatus();
+            this.setTopLed(previous, [...octaves].some(n => n < 0) ? this.colors.RED : this.colors.DIM_RED);
+            this.setTopLed(next, [...octaves].some(n => n > 0) ? this.colors.RED : this.colors.DIM_RED);
+            return;
+        }
         if (this.state.atTransaction?.slot === 8 && !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind)) {
             this.setTopLed(previous, this.atLit ? this.colors.RED : this.colors.OFF);
             this.setTopLed(next, this.atLit ? this.colors.RED : this.colors.OFF);
@@ -608,7 +619,7 @@ export class LaunchpadMini {
         if (this.stepInstrumentFeedback && this.state.transportState !== "PLAY") return;
         if (this.performanceHolds.size) return;
         if (!Number.isInteger(position) || position < 0 || position >= 16 ||
-            !["MIDI DRUM", "AUDIO"].includes(this.state.padConfiguration.voices[position]?.type)) {
+            !["MIDI DRUM", "AUDIO", "KEY GROUP"].includes(this.state.padConfiguration.voices[position]?.type)) {
             return;
         }
 
@@ -798,12 +809,13 @@ export class LaunchpadMini {
     }
 
     drawTopControls() {
+        this.drawShiftStatus();
         this.drawPersistentControls();
         this.drawViewStatus();
         for (const [name, controller] of Object.entries(
             this.mapping.TOP_CONTROLS
         )) {
-            if (name === "MODULATION" || name === "MUTATION") continue;
+            if (name === "SHIFT" || name === "MODULATION" || name === "MUTATION") continue;
             const colorName = this.layout.TOP_CONTROLS[name];
             const colorValue = this.colors[colorName];
 
@@ -1271,6 +1283,11 @@ export class LaunchpadMini {
         this.drawCopyStatus();
         this.drawDeleteStatus();
     }
+    drawShiftStatus() {
+        const color = this.shiftPressed ? this.colors.GREEN : this.colors.OFF;
+        this.sendController(this.deviceName,
+            [0xB0, this.mapping.TOP_CONTROLS.SHIFT, (color & 0x33) | 4]);
+    }
     drawModulationStatus() {
         const chain = this.rootState.forSystem("MODULATION").chainEnabled;
         if (!chain) this.cancelModulationBeat();
@@ -1384,8 +1401,11 @@ export class LaunchpadMini {
             }
             tailRow = this.velocityMeterRow;
         } else this.cancelVelocityMeter();
+        const keyGroup = tx?.slot === 4 ? this.actions.at.keyGroupStatus() : null;
+        if (keyGroup) this.drawTimelineSelection();
         for (const [index, note] of this.mapping.AT_VALUE.entries()) {
             const color = ["MUTATION", "GROOVE_MORPH"].includes(tx?.kind) ? index === tx.valueIndex ? this.colors.RED : this.colors.DIM_AMBER
+                : keyGroup ? 7 - index >= keyGroup.count ? this.colors.OFF : keyGroup.degrees.has(7 - index) ? this.colors.YELLOW : this.colors.DIM_AMBER
                 : tx?.slot === 8 ? this.colors.OFF : tx?.slot === 1
                 ? index !== 0 ? this.colors.OFF : colorCount ? this.colors.RED : this.colors.DIM_AMBER
                 : velocityMeter ? (meterRow < 0 || index < meterRow ? this.colors.OFF : index === meterRow
@@ -1490,6 +1510,17 @@ export class LaunchpadMini {
             if (value > 0) this.atHeld.add(key);
             return true;
         }
+        if (this.state.atTransaction?.slot === 4 && status === 0xB0 &&
+            [this.mapping.TOP_CONTROLS.PREVIOUS, this.mapping.TOP_CONTROLS.NEXT].includes(number)) {
+            if (value > 0) {
+                // A simultaneous chord is consumed; it must not leak into FOCUS/navigation.
+                const other = number === this.mapping.TOP_CONTROLS.PREVIOUS ? this.mapping.TOP_CONTROLS.NEXT : this.mapping.TOP_CONTROLS.PREVIOUS;
+                const chord = this.atHeld.has(`${status}:${other}`);
+                this.atHeld.add(key);
+                if (!chord) this.actions.at.transposeKeyGroup(number === this.mapping.TOP_CONTROLS.PREVIOUS ? -1 : 1);
+            }
+            return true;
+        }
         if (this.state.atTransaction?.slot === 8 && !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind) && status === 0xB0 &&
             [this.mapping.TOP_CONTROLS.PREVIOUS, this.mapping.TOP_CONTROLS.NEXT].includes(number)) {
             if (value > 0) {
@@ -1556,6 +1587,11 @@ export class LaunchpadMini {
         const status = rawStatus === 0x80 ? 0x90 : rawStatus;
         const value = rawStatus === 0x80 ? 0 : rawValue;
         const inputKey = status + ":" + number;
+        if (status === 0xB0 && number === this.mapping.TOP_CONTROLS.SHIFT) {
+            this.shiftPressed = value > 0;
+            this.drawShiftStatus();
+            return;
+        }
         const sequenceButton = status === 0xB0 &&
             [this.mapping.TOP_CONTROLS.PLAY_STOP, this.mapping.TOP_CONTROLS.MODULATION].includes(number);
         if (sequenceButton && this.deleteConsumedInputs.has(inputKey)) {
@@ -1581,8 +1617,7 @@ export class LaunchpadMini {
             return;
         }
         if (status === 0xB0 && number === this.mapping.TOP_CONTROLS.MODULATION) {
-            if (value > 0 && !this.modulationPressed) {
-                this.modulationPressed = true;
+            const toggle = () => {
                 const collecting = this.collectATLEDs;
                 this.collectATLEDs ||= Boolean(this.rootState.atTransaction);
                 try {
@@ -1590,7 +1625,31 @@ export class LaunchpadMini {
                     else this.actions.toggleModulation();
                     this.drawBooks();
                 } finally { this.collectATLEDs = collecting; }
-            } else if (value === 0) this.modulationPressed = false;
+            };
+            if (value > 0 && !this.modulationPressed) {
+                this.modulationPressed = true;
+                this.modulationLongPressTriggered = false;
+                this.modulationTapPending = !this.shiftPressed && this.rootState.transportState !== "PLAY";
+                if (this.modulationTapPending) {
+                    this.modulationHoldTimer = setTimeout(() => {
+                        if (!this.modulationPressed || this.rootState.transportState === "PLAY") return;
+                        this.modulationLongPressTriggered = true;
+                        this.actions.selectModulationTimeline();
+                        this.drawTimelineSelection();
+                        this.drawBooks();
+                        this.drawMotif();
+                        this.drawPlayhead();
+                        this.drawInstruments();
+                        this.swapBuffers();
+                    }, 300);
+                } else toggle();
+            } else if (value === 0 && this.modulationPressed) {
+                this.modulationPressed = false;
+                clearTimeout(this.modulationHoldTimer);
+                this.modulationHoldTimer = null;
+                if (this.modulationTapPending && !this.modulationLongPressTriggered) toggle();
+                this.modulationTapPending = false;
+            }
             return;
         }
         if (this.handleATInput(status, number, value, inputKey)) return;
@@ -1892,13 +1951,6 @@ export class LaunchpadMini {
             }
             return;
         }
-        if (controlName === "SHIFT") {
-            this.shiftPressed = value > 0;
-
-            console.log("SHIFT:", this.shiftPressed);
-
-            return;
-        }
         if (["PREVIOUS", "NEXT"].includes(controlName) && this.state.chainEnabled &&
             this.state.transportState !== "PLAY") {
             if (value > 0) {
@@ -2158,6 +2210,8 @@ export class LaunchpadMini {
                     return;
                 }
 
+                const selectMotifOnHold = this.rootState.transportState !== "PLAY" &&
+                    this.rootState.currentTimeline === "MODULATION";
                 this.playStopTimer = setTimeout(() => {
                     if (
                         !this.playStopPressed ||
@@ -2167,7 +2221,12 @@ export class LaunchpadMini {
                     }
 
                     this.playStopLongPressTriggered = true;
-                    this.actions.stop();
+                    if (selectMotifOnHold && this.rootState.transportState !== "PLAY" &&
+                        this.rootState.currentTimeline === "MODULATION") {
+                        this.actions.selectMotifTimeline();
+                        this.drawBooks();
+                        this.drawInstruments();
+                    } else this.actions.stop();
                     this.drawTransport();
                     this.drawTimelineSelection();
                     this.drawMotif();

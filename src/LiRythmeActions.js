@@ -15,7 +15,7 @@ Elias (OpenAI)
 
 ===============================================================================
 */
-import { visitPlaybackAttributes, ATTransaction, validSwings, validSwingRow, validRatchets, validRatchetRow, createAttributeRows, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes, validGrooveMorph } from "./ATTransaction.mjs";
+import { visitPlaybackAttributes, ATTransaction, validKeyGroups, validKeyRow, validSwings, validSwingRow, validRatchets, validRatchetRow, createAttributeRows, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes, validGrooveMorph } from "./ATTransaction.mjs";
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
     constructor(state, clock) {
@@ -208,6 +208,7 @@ export class LiRythmeActions {
             ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
             ...(motif.swings ? { swings: motif.swings.map(row => row.slice()) } : {}),
             ...(motif.ratchets ? { ratchets: motif.ratchets.map(row => row.slice()) } : {}),
+            ...(motif.keyGroups ? { keyGroups: structuredClone(motif.keyGroups) } : {}),
             ...(motif.atDestinations ? { atDestinations: structuredClone(motif.atDestinations) } : {}),
             events: motif.events.map(row => row.slice()),
             voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength } : null;
@@ -248,6 +249,7 @@ export class LiRythmeActions {
             (copy.colors !== undefined && !validColors(copy.colors)) ||
             (copy.swings !== undefined && !validSwings(copy.swings)) ||
             (copy.ratchets !== undefined && !validRatchets(copy.ratchets)) ||
+            (copy.keyGroups !== undefined && !validKeyGroups(copy.keyGroups)) ||
             (copy.grooveMorph !== undefined && (!validGrooveMorph(copy.grooveMorph) || this.state.systemName !== "MOTIF" || copy.events.some(row => row.some(Boolean)))) ||
             (copy.atDestinations !== undefined && !validATDestinations(copy.atDestinations)) ||
             (copy.attributes !== undefined && !validExplicitAttributes(copy.attributes))) return false;
@@ -258,6 +260,7 @@ export class LiRythmeActions {
             ...(copy.colors ? { colors: copy.colors.map(row => row.slice()) } : {}),
             ...(copy.swings ? { swings: copy.swings.map(row => row.slice()) } : {}),
             ...(copy.ratchets ? { ratchets: copy.ratchets.map(row => row.slice()) } : {}),
+            ...(copy.keyGroups ? { keyGroups: structuredClone(copy.keyGroups) } : {}),
             ...(copy.atDestinations ? { atDestinations: structuredClone(copy.atDestinations) } : {}),
             voiceLengths: copy.voiceLengths.slice(), motifLength: copy.motifLength });
         return true;
@@ -286,6 +289,7 @@ export class LiRythmeActions {
         delete motif.colors;
         delete motif.swings;
         delete motif.ratchets;
+        delete motif.keyGroups;
         delete motif.grooveMorph;
         delete motif.atDestinations;
         if (motif.attributes !== undefined) motif.attributes = {};
@@ -618,6 +622,8 @@ export class LiRythmeActions {
         if (swings) swings[voiceId][stepIndex] = null;
         const ratchets = this.state.getMotif(this.state.currentMotifId).ratchets;
         if (ratchets) ratchets[voiceId][stepIndex] = null;
+        const keyGroups = this.state.getMotif(this.state.currentMotifId).keyGroups;
+        if (keyGroups) keyGroups[voiceId][stepIndex] = null;
         const editingMotif = this.state.getMotif(this.state.currentMotifId);
         if (editingMotif.attributes === undefined) for (const rows of Object.values(editingMotif.atDestinations ?? {})) rows[voiceId][stepIndex] = null;
         this.state.onBankChange?.();
@@ -686,19 +692,21 @@ export class LiRythmeActions {
                 ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
                 ...(motif.swings ? { swings: motif.swings.map(row => row.slice()) } : {}),
                 ...(motif.ratchets ? { ratchets: motif.ratchets.map(row => row.slice()) } : {}),
+                ...(motif.keyGroups ? { keyGroups: structuredClone(motif.keyGroups) } : {}),
                 ...(motif.atDestinations ? { atDestinations: structuredClone(motif.atDestinations) } : {}),
                 voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength };
         }
         if (kind !== "VOICE" || !Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return null;
         return { kind, events: motif.events[voiceId].slice(), length: motif.voiceLengths[voiceId],
             ...(this.state.systemName === "MODULATION" ? { system: "MODULATION" } : {}),
-            ...(motif.attributes !== undefined ? { attributes: Object.fromEntries(Object.entries(motif.attributes).map(([key, rows]) => [key, rows[voiceId].slice()])) } : {}),
+            ...(motif.attributes !== undefined ? { attributes: Object.fromEntries(Object.entries(motif.attributes).map(([key, rows]) => [key, structuredClone(rows[voiceId])])) } : {}),
             ...(motif.velocities ? { velocities: motif.velocities[voiceId].slice() } : {}),
             ...(motif.colors ? { colors: motif.colors[voiceId].slice() } : {}),
             ...(motif.swings ? { swings: motif.swings[voiceId].slice() } : {}),
             ...(motif.ratchets ? { ratchets: motif.ratchets[voiceId].slice() } : {}),
+            ...(motif.keyGroups ? { keyGroups: structuredClone(motif.keyGroups[voiceId]) } : {}),
             ...(motif.atDestinations ? { atDestinations: Object.fromEntries(Object.entries(motif.atDestinations)
-                .map(([key, rows]) => [key, rows[voiceId].slice()])) } : {}) };
+                .map(([key, rows]) => [key, structuredClone(rows[voiceId])])) } : {}) };
     }
 
     applyVoiceCopy(copy, target) {
@@ -713,9 +721,10 @@ export class LiRythmeActions {
                 !copy.colors.every(n => typeof n === "boolean"))) ||
             (copy.swings !== undefined && !validSwingRow(copy.swings)) ||
             (copy.ratchets !== undefined && !validRatchetRow(copy.ratchets)) ||
+            (copy.keyGroups !== undefined && !validKeyRow(copy.keyGroups)) ||
             (copy.atDestinations !== undefined && (!copy.atDestinations || typeof copy.atDestinations !== "object" ||
                 Array.isArray(copy.atDestinations) || !Object.entries(copy.atDestinations).every(([key, row]) =>
-                    ["VELOCITY", "COLOR", "SWING", "RATCHET", "ROTATION"].includes(key) && validATDestinationRow(row))))) return false;
+                    ["VELOCITY", "COLOR", "SWING", "RATCHET", "KEY_GROUP", "ROTATION"].includes(key) && validATDestinationRow(row))))) return false;
         if (copy.attributes !== undefined && (!copy.attributes || typeof copy.attributes !== "object" || Array.isArray(copy.attributes) ||
             !validExplicitAttributes(Object.fromEntries(Object.entries(copy.attributes)
             .map(([key, row]) => [key, Array.from({ length: 16 }, () => row)]))))) return false;
@@ -727,7 +736,7 @@ export class LiRythmeActions {
         if (motif.attributes !== undefined) {
             for (const key of new Set([...Object.keys(motif.attributes), ...Object.keys(copy.attributes ?? {})])) {
                 motif.attributes[key] ??= Array.from({ length: 16 }, () => Array(32).fill(null));
-                motif.attributes[key][target] = copy.attributes?.[key]?.slice() ?? Array(32).fill(null);
+                motif.attributes[key][target] = structuredClone(copy.attributes?.[key] ?? Array(32).fill(null));
             }
         }
         if (copy.velocities || motif.velocities) {
@@ -737,6 +746,10 @@ export class LiRythmeActions {
         if (copy.swings || motif.swings) {
             motif.swings ??= createAttributeRows();
             motif.swings[target] = copy.swings?.slice() ?? Array(32).fill(null);
+        }
+        if (copy.keyGroups || motif.keyGroups) {
+            motif.keyGroups ??= createAttributeRows();
+            motif.keyGroups[target] = structuredClone(copy.keyGroups ?? Array(32).fill(null));
         }
         if (copy.ratchets || motif.ratchets) {
             motif.ratchets ??= createAttributeRows();
@@ -791,6 +804,7 @@ export class LiRythmeActions {
         delete motif.colors;
         delete motif.swings;
         delete motif.ratchets;
+        delete motif.keyGroups;
         delete motif.grooveMorph;
         delete motif.atDestinations;
         if (motif.attributes !== undefined) motif.attributes = {};
@@ -815,6 +829,8 @@ export class LiRythmeActions {
         else for (const rows of Object.values(motif.atDestinations ?? {})) rows[voiceId].fill(null);
         if (voiceId === null) delete motif.swings;
         else motif.swings?.[voiceId].fill(null);
+        if (voiceId === null) delete motif.keyGroups;
+        else motif.keyGroups?.[voiceId].fill(null);
         if (voiceId === null) delete motif.ratchets;
         else motif.ratchets?.[voiceId].fill(null);
         if (voiceId === null) delete motif.colors;
@@ -848,10 +864,10 @@ export class LiRythmeActions {
                 }
             }
             for (const rows of Object.values(next.atDestinations ?? {})) {
-                for (let step = 0; step < length; step++) rows[id][step + length] = rows[id][step];
+                for (let step = 0; step < length; step++) rows[id][step + length] = structuredClone(rows[id][step]);
             }
             for (const rows of Object.values(next.attributes ?? {})) {
-                for (let step = 0; step < length; step++) rows[id][step + length] = rows[id][step];
+                for (let step = 0; step < length; step++) rows[id][step + length] = structuredClone(rows[id][step]);
             }
             next.voiceLengths[id] = length * 2;
         }

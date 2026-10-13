@@ -93,6 +93,8 @@
                     <label class="field" for="midi-clock-input">Clock IN<select id="midi-clock-input"></select></label>
                     <label class="field" for="midi-clock-output">Clock OUT<select id="midi-clock-output"></select></label>
                     <label class="field" for="midi-output">Default MIDI Output<select id="midi-output"></select></label>
+                    <label class="field" for="key-group-output">Key Group MIDI Output<select id="key-group-output"></select></label>
+                    <p id="key-group-output-status" class="muted"></p>
                 </section>
                 <section class="panel" aria-labelledby="tempo-title">
                     <h2 id="tempo-title">TEMPO</h2>
@@ -107,9 +109,10 @@
                 </section>
                 <section class="panel" aria-labelledby="key-title">
                     <h2 id="key-title">KEY GROUP</h2>
-                    <p class="muted">Non implémenté.</p>
-                    <label class="field">Root<select disabled><option>Non disponible</option></select></label>
-                    <label class="field">Scale<select disabled><option>Non disponible</option></select></label>
+                    <p class="muted">Tonalité commune aux Voices Key Group. Do = note MIDI 60.</p>
+                    <label class="field">Root Note MIDI<input id="key-root" type="number" min="0" max="127" step="1" value="60"></label>
+                    <label class="field">Scale<select id="key-scale"></select></label>
+                    <p id="key-status" class="muted" role="status"></p>
                 </section>
                 <section class="panel wide" aria-labelledby="pads-title">
                     <h2 id="pads-title">PAD CONFIGURATION</h2>
@@ -142,7 +145,7 @@
                         <h3 id="voice-editor-title">VOICE 01</h3>
                         <p id="voice-editor-status" class="muted"></p>
                         <label class="field">NAME<input id="voice-name" type="text" autocomplete="off" aria-describedby="voice-error"></label>
-                        <label class="field">TYPE<select id="voice-type" aria-describedby="voice-error"><option>NONE</option><option>MIDI DRUM</option><option value="AUDIO">Audio</option></select></label>
+                        <label class="field">TYPE<select id="voice-type" aria-describedby="voice-error"><option>NONE</option><option>MIDI DRUM</option><option value="AUDIO">Audio</option><option value="KEY GROUP">Key Group</option></select></label>
                         <div id="voice-audio-fields" hidden>
                             <label class="field">OUTPUT<select id="voice-audioOutput"><option value="LEFT">Left</option><option value="RIGHT">Right</option><option value="STEREO">Stereo</option></select></label>
                             <label class="field">SOURCE WAV<input id="voice-source" type="text" readonly></label>
@@ -153,8 +156,8 @@
                             <label class="field">OUTPUT<select id="voice-output" disabled><option>DEFAULT</option></select></label>
                             <p id="voice-output-status" class="muted"></p>
                             <label class="field">CHANNEL<input id="voice-channel" type="number" min="1" max="16" step="1" required aria-describedby="voice-error"></label>
-                            <label class="field">NOTE<input id="voice-note" type="number" min="0" max="127" step="1" required aria-describedby="voice-error"></label>
-                            <label class="field">COLOR NOTE (optionnelle)<input id="voice-colorNote" type="number" min="0" max="127" step="1" aria-describedby="voice-error voice-color-help"></label>
+                            <label class="field" id="voice-fixed-note-field">NOTE<input id="voice-note" type="number" min="0" max="127" step="1" required aria-describedby="voice-error"></label>
+                            <label class="field" id="voice-color-field">COLOR NOTE (optionnelle)<input id="voice-colorNote" type="number" min="0" max="127" step="1" aria-describedby="voice-error voice-color-help"></label>
                             <p id="voice-color-help" class="muted">Vide : COLOR utilise la note principale.</p>
                         </div>
                         <p id="voice-error" role="alert" style="white-space:pre-wrap"></p>
@@ -213,10 +216,10 @@
                 <div id="play-at" hidden aria-live="polite">
                     <p id="play-at-motif" class="muted"></p>
                     <p id="play-at-target" class="selection-name"></p>
+                    <p id="play-at-octave" hidden><strong>&lt;-+&gt;  Octave</strong></p>
                     <ol class="at-values" aria-label="Valeurs A–H">
                         <li id="play-at-value-0"></li><li id="play-at-value-1"></li>
                         <li id="play-at-value-2"></li><li id="play-at-value-3"></li>
-                    <p id="play-at-octave" hidden><strong>&lt;-+&gt;  Octave</strong></p>
                         <li id="play-at-value-4"></li><li id="play-at-value-5"></li>
                         <li id="play-at-value-6"></li><li id="play-at-value-7"></li>
                     </ol>

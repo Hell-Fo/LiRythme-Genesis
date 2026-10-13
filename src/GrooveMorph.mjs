@@ -12,7 +12,7 @@ export function composeGroove(previous, next, recipe) {
     const result = structuredClone(recipe);
     delete result.grooveMorph;
     const length = recipe.motifLength ?? 32, level = recipe.grooveMorph.level;
-    const fields = { events: false, velocities: 100, colors: false, swings: null, ratchets: null };
+    const fields = { events: false, velocities: 100, colors: false, swings: null, ratchets: null, keyGroups: null };
     for (const [field, value] of Object.entries(fields)) result[field] =
         Array.from({ length: 16 }, () => Array(32).fill(value));
     delete result.atDestinations;
@@ -29,7 +29,7 @@ export function composeGroove(previous, next, recipe) {
         const source = progress >= threshold ? next : previous;
         result.events[voice][step] = a && b || read(source, "events", voice, step);
         for (const field of Object.keys(fields).filter(key => key !== "events")) {
-            result[field][voice][step] = read(source, field, voice, step);
+            result[field][voice][step] = structuredClone(read(source, field, voice, step));
         }
         for (const key of destinations) result.atDestinations[key][voice][step] = source?.atDestinations?.[key]?.[voice]?.[
             step % Math.min(source.voiceLengths[voice] ?? 32, source.motifLength ?? 32)] ?? null;
@@ -42,7 +42,7 @@ export function composeGroove(previous, next, recipe) {
     for (let voice = 0; voice < 16; voice++) for (let step = 0; step < Math.min(length, recipe.voiceLengths[voice] ?? 32); step++) {
         const common = read(previous, "events", voice, step) && read(next, "events", voice, step);
         const edge = step === 0 || step === Math.min(length, recipe.voiceLengths[voice] ?? 32) - 1;
-        if (common || edge) for (const field of Object.keys(fields)) changed[field][voice][step] = result[field][voice][step];
+        if (common || edge) for (const field of Object.keys(fields)) changed[field][voice][step] = structuredClone(result[field][voice][step]);
         if (common || edge) for (const key of destinations) changed.atDestinations[key][voice][step] = result.atDestinations[key][voice][step];
         if (level >= 6 && changed.events[voice][step] && !common && !edge && step >= length * 0.65)
             changed.ratchets[voice][step] = level === 7 ? 3 : 2;

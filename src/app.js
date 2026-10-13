@@ -1,4 +1,5 @@
 import { SwingTiming } from "./SwingTiming.mjs";
+import { initializeKeyGroupOutput } from "./KeyGroupOutputUI.mjs";
 import { LiRythmeState } from "./LiRythmeState.js";
 import { LiRythmeClock } from "./LiRythmeClock.js";
 import { MidiManager } from "./hardware/midi/MidiManager.js";
@@ -106,6 +107,8 @@ await midiManager.initialize({
 
 const controllerSelector =
     document.getElementById("midi-controller");
+
+initializeKeyGroupOutput({ state, midiManager, document, storage: localStorage });
 
 const savedMidiController =
     localStorage.getItem("midiController");
@@ -665,8 +668,10 @@ function triggerMotifStep(step) {
         }
 
         const voice = structuredClone(state.padConfiguration.voices[voiceId]);
-        const midiOutputName = voice?.type === "MIDI DRUM"
-            ? midiOutputSelector.options[midiOutputSelector.selectedIndex]?.textContent : null;
+        const keyGroupNote = voice?.type === "KEY GROUP" ? state.getKeyGroupNote(voiceId,
+            previewMotifId !== null ? { motif: playingMotif, step: localStep } : null) : null;
+        const midiOutputName = ["MIDI DRUM", "KEY GROUP"].includes(voice?.type)
+            ? (voice.type === "KEY GROUP" && state.keyGroupOutputName) || midiOutputSelector.options[midiOutputSelector.selectedIndex]?.textContent : null;
         const delay = previewMotifId === null ? state.noteTiming?.delayFor(voiceId) ?? 0 : 0;
         const plan = state.noteTiming?.planFor(voiceId, previewMotifId === null ? null
             : { system: previewSystem, motifId: previewMotifId, step }) ?? { offsets: [delay], interval: 0, gate: 50 };
@@ -682,12 +687,12 @@ function triggerMotifStep(step) {
                 if (audioPlayer.trigger(voice, event.velocity)) feedback(delayed);
                 return;
             }
-            if (voice?.type !== "MIDI DRUM" || voice.output?.mode !== "DEFAULT" ||
+            if (!["MIDI DRUM", "KEY GROUP"].includes(voice?.type) || voice.output?.mode !== "DEFAULT" ||
                 !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
-                !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127) {
+                (voice.type === "KEY GROUP" ? keyGroupNote === null : !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127)) {
                 return;
             }
-            const note = event.color &&
+            const note = voice.type === "KEY GROUP" ? keyGroupNote : event.color &&
                 Number.isInteger(voice.colorNote) && voice.colorNote >= 0 && voice.colorNote <= 127
                 ? voice.colorNote : voice.note;
             const status = 0x90 | (voice.channel - 1);
@@ -696,7 +701,7 @@ function triggerMotifStep(step) {
             midiManager.send(
                 midiOutputName,
                 [status, note, event.velocity],
-                undefined, { preview: previewMotifId !== null }
+                undefined, { preview: previewMotifId !== null, keyGroup: voice.type === "KEY GROUP" }
             );
 
             let released = false;
@@ -705,7 +710,7 @@ function triggerMotifStep(step) {
                 released = true;
                 midiManager.send(
                     midiOutputName,
-                    [status, note, 0]
+                    [status, note, 0], undefined, { keyGroup: voice.type === "KEY GROUP" }
                 );
             };
             releasePrevious = release;

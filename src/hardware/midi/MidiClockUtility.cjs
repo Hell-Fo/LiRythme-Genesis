@@ -94,6 +94,11 @@ function routeNotesMessage(name, message, preview = {}) {
         return true;
     }
 
+    if (preview.keyGroup && name !== pendingWorkerDestinationName && name !== getDesiredWorkerDestination()) {
+        nativeMidiBridge.sendAdditionalNotes(name, message);
+        return true;
+    }
+
     return false;
 }
 
@@ -102,7 +107,7 @@ function flushPendingNotesMessages() {
 
     for (const entry of pending) {
         if (
-            entry.name === notesDestinationName &&
+            (entry.name === notesDestinationName || entry.keyGroup) &&
             !routeNotesMessage(entry.name, entry.message, entry)
         ) {
             pendingNotesMessages.push(entry);
@@ -131,6 +136,7 @@ function reconcileOutputRouting() {
     }
 
     if (workerDestinationName !== desiredWorkerDestination) {
+        nativeMidiBridge.closeAdditionalNotesOutput(desiredWorkerDestination);
         if (
             nativeMidiBridge.notesOutputName ===
             desiredWorkerDestination
@@ -288,6 +294,7 @@ process.parentPort.on("message", event => {
                     pendingNotesMessages.push({
                         name: command.command.name,
                         message: command.command.message,
+                        ...(command.command.keyGroup ? { keyGroup: true } : {}),
                         ...(command.command.previewEpoch !== undefined ? {
                             previewEpoch: command.command.previewEpoch,
                             previewExpiresAt: command.command.previewExpiresAt
