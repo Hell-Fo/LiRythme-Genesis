@@ -494,7 +494,11 @@ function switchMidiController(name) {
     return true;
 }
 
-switchMidiController(controllerName);
+// Remember a successfully connected automatic choice for Soundcheck.
+// Keep a saved unavailable device so it can still be reported as missing.
+if (switchMidiController(controllerName) && !savedMidiController?.trim()) {
+    localStorage.setItem("midiController", controllerName);
+}
 
 const midiClockInput = new MidiClockInput(clock);
 const drumBruteProfile =
@@ -553,7 +557,6 @@ function switchMidiClockInput(name) {
             actions.startClock();
         }
 
-        console.log("CLOCK SOURCE: INTERNAL");
 
         return true;
     }
@@ -603,7 +606,6 @@ function switchMidiClockInput(name) {
         return false;
     }
 
-    console.log("CLOCK SOURCE: MIDI", name);
 
     return true;
 }
@@ -753,7 +755,6 @@ actions.setClockStepHandler(() => {
 // ============================================================
 
 actions.setClockBeatHandler(() => {
-    console.log("BEAT");
     launchpad.pulseTransport();
     launchpad.pulseModulationBeat();
 });

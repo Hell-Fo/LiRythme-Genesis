@@ -942,10 +942,6 @@ export class LiRythmeActions {
         this.state.playheadPosition =
             (this.state.playheadPosition + this.state.getMotifDuration() - 1) % this.state.getMotifDuration();
 
-        console.log(
-            "PLAYHEAD:",
-            this.state.playheadPosition
-        );
 
         if (
             preview &&
@@ -991,10 +987,6 @@ export class LiRythmeActions {
             }
         }
 
-        console.log(
-            "PLAYHEAD:",
-            this.state.playheadPosition
-        );
 
         if (
             preview &&

@@ -87,11 +87,6 @@ export class LiRythmeClock {
             10
         );
 
-        console.log(
-            "CLOCK: START",
-            stepDuration,
-            "ms"
-        );
     }
 
     stop() {
@@ -106,7 +101,6 @@ export class LiRythmeClock {
         clearInterval(this.timer);
         this.timer = null;
 
-        console.log("CLOCK: STOP");
     }
 
     receiveMidiClockPulse() {
