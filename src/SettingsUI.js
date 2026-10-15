@@ -5,6 +5,17 @@ import { editPadVoice, initializeKeyGroupSettings } from "./PadVoiceEditor.mjs";
 export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     const get = id => document.getElementById(id);
     const refreshKeyGroup = initializeKeyGroupSettings(state, document);
+    const projectName = get("project-name");
+    const projectDescription = get("project-description");
+    projectDescription.addEventListener("input", () => {
+        if (!state.projectBook) return;
+        state.projectBook.slots[state.projectBook.active].description = projectDescription.value.slice(0, 2000);
+        state.onBankChange?.();
+    });
+    projectName.addEventListener("change", () => {
+        const name = projectName.value.trim().slice(0, 80);
+        if (name) { state.projectBook.slots[state.projectBook.active].name = name; state.onBankChange?.(); }
+    });
     const settingsPage = get("settings-page");
     const playPage = get("play-page");
     const helpPanel = get("help-panel");
@@ -28,15 +39,12 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
         setText("voice-error", "");
         renderVoice(true);
     }, onBusyChanged: () => renderVoice() });
-    let helpVisible = localStorage.getItem("helpStartup") !== "false";
-    helpStartup.checked = helpVisible;
+    const helpAtStartup = localStorage.getItem("helpStartup") === "true";
+    helpStartup.checked = helpAtStartup;
 
     function renderHelp() {
-        helpPanel.hidden = !helpVisible;
-        get("toggle-help").setAttribute("aria-pressed", String(helpVisible));
-        get("help-content").textContent = page === "SETTINGS"
-            ? "Préparez les connexions MIDI et le tempo interne. Les Voices affichent les capacités actuelles ; leur sélection ici ne change pas la sélection Launchpad."
-            : "Cette page est provisoire. Changer de page ne démarre ni n’arrête le transport.";
+        helpPanel.hidden = page !== "HELP";
+        get("toggle-help").setAttribute("aria-pressed", String(page === "HELP"));
     }
 
     function showPage(nextPage, manual = false) {
@@ -51,8 +59,7 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     }
 
     function toggleHelp() {
-        helpVisible = !helpVisible;
-        renderHelp();
+        showPage("HELP", true);
     }
 
     get("show-settings").addEventListener("click", () => showPage("SETTINGS", true));
@@ -79,7 +86,7 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
         const project = document.createElement("button");
         project.type = "button";
         project.textContent = `PROJECT ${String(i + 1).padStart(2, "0")}`;
-        project.disabled = true;
+        project.addEventListener("click", () => { if (!state.atTransaction) state.projects.select(i); });
         get("project-slots").appendChild(project);
 
         const voice = document.createElement("button");
@@ -108,7 +115,7 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
         }
         const voice = state.padConfiguration.voices[selectedVoice];
         setText("voice-editor-title", `VOICE ${String(selectedVoice + 1).padStart(2, "0")}`);
-        const locked = libraryUI.busy || !libraryUI.hasActivePreset || !["STOP", "PAUSE"].includes(state.transportState);
+        const locked = libraryUI.busy || (!libraryUI.hasActivePreset && !state.projectBook) || !["STOP", "PAUSE"].includes(state.transportState);
         for (const field of ["name", "type", "channel", "note", "colorNote"]) {
             const input = get(`voice-${field}`);
             input.disabled = locked;
@@ -193,6 +200,13 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     tempo.addEventListener("blur", () => renderTempo(true));
     function refresh() {
         refreshKeyGroup();
+        if (state.projectBook && document.activeElement !== projectName) projectName.value = state.projectBook.slots[state.projectBook.active].name;
+        if (state.projectBook && document.activeElement !== projectDescription) projectDescription.value = state.projectBook.slots[state.projectBook.active].description ?? "";
+        for (const [i, button] of [...get("project-slots").children].entries()) {
+            button.textContent = state.projectBook?.slots[i]?.name ?? "PROJECT " + String(i + 1).padStart(2, "0") + " ? vide";
+            button.disabled = Boolean(state.atTransaction);
+            button.setAttribute("aria-pressed", String(i === state.projectBook?.active));
+        }
         audioPlayer?.sync(state.padConfiguration.voices);
         if (settingsPage.hidden) return;
         renderTempo();
@@ -202,7 +216,7 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     // Display observation only; never schedules steps or sends MIDI.
     const refreshTimer = setInterval(refresh, 250);
     window.addEventListener("pagehide", () => clearInterval(refreshTimer), { once: true });
-    showPage("SETTINGS");
+    showPage(helpAtStartup ? "HELP" : "SETTINGS", helpAtStartup);
 
     return {
         ready: libraryUI.ready,

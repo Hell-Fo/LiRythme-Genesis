@@ -27,6 +27,65 @@ function setup() {
     return { state, clock, actions, controller, length };
 }
 
+for (const system of ["MOTIF", "MODULATION"]) test(`SHIFT moves exact active/next Chain occurrences during PLAY: ${system}`, t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller } = setup();
+    t.after(() => controller.resetInputState());
+    state.currentTimeline = system;
+    state.currentView = "MOTIF_LIBRARY";
+    state.transportState = "PLAY";
+    const layer = state.forSystem(system);
+    layer.chainEnabled = true;
+    layer.chain = [0, 4, 4, 2];
+    layer.chainPlayingIndex = 1;
+    layer.chainPlayingDetached = false;
+    layer.playingMotifId = 4;
+    layer.chainViewIndex = 2;
+    layer.chainLoopMasterIndex = 2;
+    layer.playheadPosition = 7;
+    actions.refreshChainNext();
+    const send = (status, note, value) => controller.handleMidiMessage([status, note, value]);
+    const tap = (status, note) => { send(status, note, 127); send(status, note, 0); };
+    const top = controller.mapping.TOP_CONTROLS;
+    send(0xB0, top.SHIFT, 127);
+    tap(0x90, controller.mapping.BOOKS[4]);
+    assert.equal(layer.chainMoveIndex, 1); // Active wins over identical NEXT.
+    tap(0xB0, top.NEXT);
+    assert.deepEqual(layer.chain, [0, 4, 4, 2]);
+    assert.equal(layer.chainPlayingIndex, 2);
+    assert.equal(layer.chainViewIndex, 1);
+    assert.equal(layer.chainLoopMasterIndex, 1);
+    tap(0xB0, top.NEXT);
+    assert.deepEqual(layer.chain, [0, 4, 2, 4]);
+    assert.equal(layer.chainPlayingIndex, 3);
+    assert.equal(layer.playingMotifId, 4);
+    assert.equal(layer.playheadPosition, 7);
+    tap(0xB0, top.NEXT); // No wrap.
+    assert.equal(layer.chainMoveIndex, 3);
+    tap(0x90, controller.mapping.BOOKS[0]); // NEXT wraps to the head.
+    assert.equal(layer.chainMoveIndex, 0);
+    tap(0xB0, top.PREVIOUS);
+    assert.equal(layer.chainMoveIndex, 0);
+    tap(0xB0, top.NEXT);
+    assert.deepEqual(layer.chain, [4, 0, 2, 4]);
+    assert.equal(layer.chainMoveIndex, 1);
+    assert.equal(layer.chainLoopMasterIndex, 0);
+    assert.equal(layer.nextMotifId, 4);
+    // Selection remains tied to its occurrence after playback advances.
+    layer.chainPlayingIndex = 0;
+    layer.playingMotifId = 4;
+    tap(0xB0, top.NEXT);
+    assert.deepEqual(layer.chain, [4, 2, 0, 4]);
+    assert.equal(layer.chainMoveIndex, 2);
+    send(0xB0, top.PREVIOUS, 127);
+    send(0xB0, top.SHIFT, 0);
+    send(0xB0, top.PREVIOUS, 0); // Release cannot navigate or change timelines.
+    assert.equal(layer.chainMoveIndex, null);
+    assert.equal(state.currentTimeline, system);
+    assert.equal(layer.chainFocus, false);
+    assert.equal(controller.chainMotifHolds.size, 0);
+});
+
 test("SHIFT+STEP sets, moves and removes Voice/Motif boundaries; DELETE has no length role", () => {
     const { state, controller } = setup();
     const notes = structuredClone(state.motif);
@@ -2252,7 +2311,7 @@ test("CHAIN correction: reset cancels pending hold and accepted confirmation tim
 });
 
 // Real clock ingress and hardware gestures for the live Loop Point scenarios.
-function setupLoopPerformance({ source = "INTERNAL", ids = [0,4,2,7,3,9], master = null } = {}) {
+function setupLoopPerformance({ timers, source = "INTERNAL", ids = [0,4,2,7,3,9], master = null } = {}) {
     const context = setup();
     const { state, actions, clock, controller } = context;
     state.currentView = "MOTIF_LIBRARY";
@@ -2277,8 +2336,10 @@ function setupLoopPerformance({ source = "INTERNAL", ids = [0,4,2,7,3,9], master
         }
     };
     const shiftBook = id => {
+        // A short SHIFT+Book selects a move; holding keeps Loop Point accessible.
         controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 127]);
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[id], 127]);
+        timers.tick(300);
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[id], 0]);
         controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 0]);
     };
@@ -2337,7 +2398,7 @@ for (const transport of ["STOP", "PAUSE"]) {
 test("LOOP POINT: intermediate LoopMaster repeats the prefix and leaves the tail intact on both clocks", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     for (const source of ["INTERNAL", "MIDI"]) {
-        const { state, clock, controller, steps, transitions, advance } = setupLoopPerformance({ source, master: 2 });
+        const { state, clock, controller, steps, transitions, advance } = setupLoopPerformance({ timers: t.mock.timers, source, master: 2 });
         const revision = clock.transportRevision;
         // Hardware APPEND remains accepted behind the frontier and confirms in GREEN.
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[11], 127]);
@@ -2360,7 +2421,7 @@ test("LOOP POINT: intermediate LoopMaster repeats the prefix and leaves the tail
 test("LOOP POINT: hardware LOOP OFF anywhere in PLAY preserves phase and continues into the tail", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     for (const source of ["INTERNAL", "MIDI"]) for (const playingMaster of [false, true]) {
-        const { state, clock, controller, steps, advance, shiftBook } = setupLoopPerformance({ source, master: 2 });
+        const { state, clock, controller, steps, advance, shiftBook } = setupLoopPerformance({ timers: t.mock.timers, source, master: 2 });
         advance(playingMaster ? 5 : 1); // Step 1 of LoopMaster or the first Motif.
         if (source === "MIDI") clock.receiveMidiClockPulse();
         const before = loopPhase(state, clock), live = state.liveLengthCycle;
@@ -2383,7 +2444,7 @@ test("LOOP POINT: hardware LOOP OFF anywhere in PLAY preserves phase and continu
 test("LOOP POINT: on-the-fly creation uses only the attached PLAYING occurrence without reset or rephase", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     for (const source of ["INTERNAL", "MIDI"]) {
-        const { state, actions, clock, controller, advance, shiftBook } = setupLoopPerformance({ source });
+        const { state, actions, clock, controller, advance, shiftBook } = setupLoopPerformance({ timers: t.mock.timers, source });
         advance(9); // 04 (ID 3), occurrence index 4, step 1.
         assert.equal(state.playingMotifId, 3);
         const before = loopPhase(state, clock), live = state.liveLengthCycle;
@@ -2447,7 +2508,7 @@ test("LOOP POINT: STOP/PAUSE navigation selects and moves the master precisely b
 test("LOOP POINT: duplicate PLAYING creation and pad-based LOOP OFF keep occurrence identity", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     for (const master of [1,2]) {
-        const { state, clock, controller, advance, shiftBook } = setupLoopPerformance({ ids: [0,4,4,2] });
+        const { state, clock, controller, advance, shiftBook } = setupLoopPerformance({ timers: t.mock.timers, ids: [0,4,4,2] });
         advance(master * 2 + 1);
         shiftBook(4);
         assert.equal(state.chainLoopMasterIndex, master);
@@ -2472,7 +2533,7 @@ test("LOOP POINT: duplicate PLAYING creation and pad-based LOOP OFF keep occurre
 
 test("LOOP POINT: emitted LEDs show idle DIM RED, NEXT DIM RED/RED blink, PLAYING YELLOW/DIM RED blink and immediate restoration", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    const { state, controller, advance, shiftBook } = setupLoopPerformance({ master: 2 });
+    const { state, controller, advance, shiftBook } = setupLoopPerformance({ timers: t.mock.timers, master: 2 });
     const leds = new Map();
     controller.midiManager.send = (_, [status, note, color]) => { if (status === 0x90) leds.set(note, color); };
     const color = id => leds.get(controller.mapping.BOOKS[id]);
@@ -2505,7 +2566,7 @@ test("LOOP POINT: emitted LEDs show idle DIM RED, NEXT DIM RED/RED blink, PLAYIN
 test("LOOP POINT: structural insertions and deletions preserve the precise duplicate master, deleting it disables LOOP", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     for (const transport of ["STOP", "PAUSE", "PLAY"]) {
-        const { state, actions, controller, advance } = setupLoopPerformance({ ids: [0,4,4,2], master: 2 });
+        const { state, actions, controller, advance } = setupLoopPerformance({ timers: t.mock.timers, ids: [0,4,4,2], master: 2 });
         if (transport !== "PLAY") {
             if (transport === "STOP") actions.stop();else actions.pausePlayback();
             actions.navigateContext(1); // STOP: head; PAUSE: occurrence 1.
@@ -2540,7 +2601,7 @@ test("LOOP POINT: structural insertions and deletions preserve the precise dupli
 test("LOOP POINT: deleting active LoopMaster finishes its current cycle, then continues at the gap", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     for (const source of ["INTERNAL", "MIDI"]) {
-        const { state, actions, clock, controller, advance } = setupLoopPerformance({ source, master: 2 });
+        const { state, actions, clock, controller, advance } = setupLoopPerformance({ timers: t.mock.timers, source, master: 2 });
         advance(5);
         const revision = clock.transportRevision;
         actions.removeChainOccurrence(2);
@@ -2559,7 +2620,7 @@ test("LOOP POINT: deleting active LoopMaster finishes its current cycle, then co
 
 test("LOOP POINT: DELETE NEXT follows the actual wrap successor and adjusts LoopMaster identity", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    const { state, actions, controller, advance } = setupLoopPerformance({ master: 2 });
+    const { state, actions, controller, advance } = setupLoopPerformance({ timers: t.mock.timers, master: 2 });
     advance(5);assert.equal(state.nextMotifId, 0);
     actions.deleteChainNext();
     assert.deepEqual(state.chain, [4,2,7,3,9]);
@@ -2572,7 +2633,7 @@ test("LOOP POINT: DELETE NEXT follows the actual wrap successor and adjusts Loop
 test("LOOP POINT: DELETE PLAY and deletion of the only occurrence leave an empty Chain with LOOP OFF", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     for (const transport of ["STOP", "PAUSE", "PLAY"]) for (const single of [false,true]) {
-        const { state, actions, clock, controller, advance } = setupLoopPerformance({ ids: single ? [0] : [0,4,2], master: single ? 0 : 1 });
+        const { state, actions, clock, controller, advance } = setupLoopPerformance({ timers: t.mock.timers, ids: single ? [0] : [0,4,2], master: single ? 0 : 1 });
         if (transport === "STOP") actions.stop();else if (transport === "PAUSE") actions.pausePlayback();
         const revision = clock.transportRevision;
         if (single) actions.deleteMotif(0);
@@ -2592,7 +2653,7 @@ test("LOOP POINT: DELETE PLAY and deletion of the only occurrence leave an empty
 test("LOOP POINT: read-only Chain text and selected occurrence remain stable through loop edits", async t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { readPlayChain, initializePlayChainUI } = await import("../src/PlayChainUI.mjs");
-    const { state, controller, advance, shiftBook } = setupLoopPerformance({ master: 2 });
+    const { state, controller, advance, shiftBook } = setupLoopPerformance({ timers: t.mock.timers, master: 2 });
     const container = { children: [], replaceChildren(...children) { this.children = children; } };
     initializePlayChainUI({ state, actions: controller.actions, document: { getElementById: () => container, createElement: () => ({}) } });
     const labels = () => container.children.map(element => element.textContent).join("");
@@ -2609,7 +2670,7 @@ test("LOOP POINT: read-only Chain text and selected occurrence remain stable thr
 test("LOOP POINT: natural lengths explicit, polymetric LCM and default 32 wrap without changing MIDI phase", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     for (const source of ["INTERNAL", "MIDI"]) for (const duration of [3,6,32]) {
-        const { state, clock, controller, steps, advance } = setupLoopPerformance({ source, ids: [0,4,2], master: 1 });
+        const { state, clock, controller, steps, advance } = setupLoopPerformance({ timers: t.mock.timers, source, ids: [0,4,2], master: 1 });
         state.motifs[4].motifLength = duration === 3 ? 3 : null;
         if (duration === 6) { state.motifs[4].voiceLengths[1] = 2;state.motifs[4].voiceLengths[2] = 3; }
         const revision = clock.transportRevision;
@@ -2626,7 +2687,7 @@ test("LOOP POINT: natural lengths explicit, polymetric LCM and default 32 wrap w
 
 test("LOOP POINT: a detached PLAYING Motif cannot create a master on a surviving duplicate", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    const { state, actions, clock, controller, advance, shiftBook } = setupLoopPerformance({ ids: [0,4,4,2] });
+    const { state, actions, clock, controller, advance, shiftBook } = setupLoopPerformance({ timers: t.mock.timers, ids: [0,4,4,2] });
     advance(3);
     actions.removeChainOccurrence(1);
     const before = loopPhase(state, clock);
@@ -2640,7 +2701,7 @@ test("LOOP POINT: a detached PLAYING Motif cannot create a master on a surviving
 
 test("LOOP POINT hardware: PLAYING blinks GREEN/DIM RED for a shared master/NEXT pad and idle LOOP OFF restores DIM AMBER", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    const single = setupLoopPerformance({ ids: [0], master: 0 });
+    const single = setupLoopPerformance({ timers: t.mock.timers, ids: [0], master: 0 });
     assert.equal(single.state.nextMotifId, 0);
     for (const lit of [true,false]) {
         single.controller.nextMotifLit = lit;
@@ -2649,7 +2710,7 @@ test("LOOP POINT hardware: PLAYING blinks GREEN/DIM RED for a shared master/NEXT
     single.advance(4);assert.equal(single.controller.getLibraryMotifColor(0), "DIM_RED");
     single.shiftBook(0);assert.equal(single.controller.getLibraryMotifColor(0), "YELLOW");
     single.controller.resetInputState();
-    const idle = setupLoopPerformance({ master: 2 });
+    const idle = setupLoopPerformance({ timers: t.mock.timers, master: 2 });
     assert.equal(idle.controller.getLibraryMotifColor(2), "DIM_RED");
     idle.shiftBook(2);assert.equal(idle.controller.getLibraryMotifColor(2), "DIM_AMBER");
     idle.controller.resetInputState();
@@ -2692,7 +2753,7 @@ test("LOOP POINT UI: only the master occurrence is red and keeps its PLAYING hig
 
 test("LOOP POINT LED: LOOP OFF during the dim phase restores fixed YELLOW immediately without musical changes", t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    const { state, clock, controller, advance, shiftBook } = setupLoopPerformance({ master: 2 });
+    const { state, clock, controller, advance, shiftBook } = setupLoopPerformance({ timers: t.mock.timers, master: 2 });
     const leds = new Map();
     controller.midiManager.send = (_, [status, note, color]) => { if (status === 0x90) leds.set(note, color); };
     const value = name => (controller.colors[name] & 0x33) | 4;

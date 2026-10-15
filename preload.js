@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
+contextBridge.exposeInMainWorld("usageGuide", { read: () => ipcRenderer.invoke("usage-guide") });
 contextBridge.exposeInMainWorld("audioSampleFiles", {
     pick: () => ipcRenderer.invoke("audio-sample", { action: "pick" }),
     read: path => ipcRenderer.invoke("audio-sample", { action: "read", path })

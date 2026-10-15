@@ -1,3 +1,4 @@
+import { parseConfiguration, serializeConfiguration } from "./PadConfigurationFile.mjs";
 import { AT_SLOTS, validKeyGroups, validKeySettings, defaultKeyGroup, validSwings, validRatchets, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph, validEuclidean } from "./ATTransaction.mjs";
 
 export function validateMotifBank(value, { modulation = false } = {}) {
@@ -45,9 +46,24 @@ export function validateMotifBank(value, { modulation = false } = {}) {
         result.modulation = { currentMotifId: bank.currentMotifId, motifs: bank.motifs, requested: m.requested,
             chainEnabled: m.chainEnabled, chain: m.chain.slice(), loopPoint: m.loopPoint };
     }
+    if (value.projects !== undefined) {
+        const p = value.projects;
+        if (!p || !Number.isInteger(p.active) || p.active < 0 || p.active > 15 || !Array.isArray(p.slots) || p.slots.length !== 16 || !p.slots[p.active]) throw new Error("Invalid Project Book");
+        result.projects = { active: p.active, slots: p.slots.map(slot => {
+            if (slot === null) return null;
+            if (!slot || typeof slot.name !== "string" || !slot.name.trim() || slot.name.length > 80 || slot.bank?.projects !== undefined) throw new Error("Invalid Project");
+            if (slot.description !== undefined && (typeof slot.description !== "string" || slot.description.length > 2000)) throw new Error("Invalid Project description");
+            if (slot.pads !== undefined) parseConfiguration(slot.pads);
+            return { ...(slot.pads !== undefined ? { pads: slot.pads } : {}), name: slot.name, description: slot.description ?? "", bank: validateMotifBank(slot.bank), chain: validateProjectChain(slot.chain) };
+        }) };
+    }
     return result;
 }
-export function snapshotMotifBank(state) {
+function validateProjectChain(chain) {
+    if (!chain || typeof chain.enabled !== "boolean" || !Array.isArray(chain.ids) || !chain.ids.every(id => Number.isInteger(id) && id >= 0 && id < 16) || !(chain.loop === null || Number.isInteger(chain.loop) && chain.loop >= 0 && chain.loop < chain.ids.length)) throw new Error("Invalid Project Chain");
+    return structuredClone(chain);
+}
+export function snapshotMotifBank(state, includeProjects = true) {
     // Autosave may run for an unrelated edit while A/T is auditioning live values.
     // Serialize the BEGIN values until COMMIT; no provisional edit reaches disk.
     const root = state.rootState ?? state;
@@ -75,12 +91,20 @@ export function snapshotMotifBank(state) {
         doc.modulation = { currentMotifId: m.currentMotifId, motifs, requested: root.modulationRequested,
             chainEnabled: m.chainEnabled, chain: m.chain, loopPoint: m.chainLoopMasterIndex };
     }
+    if (includeProjects && root.projectBook) {
+        const p = structuredClone(root.projectBook);
+        p.slots[p.active].pads = serializeConfiguration(root.padConfiguration);
+        p.slots[p.active].bank = validateMotifBank(doc);
+        p.slots[p.active].chain = { enabled: root.chainEnabled, ids: root.chain.slice(), loop: root.chainLoopMasterIndex };
+        doc.projects = p;
+    }
     return validateMotifBank(doc);
 }
 export function restoreMotifBank(state, value) {
     const bank = validateMotifBank(value);
     const root = state.rootState ?? state;
     state = root.forSystem?.("MOTIF") ?? root;
+    if (bank.projects) root.projectBook = structuredClone(bank.projects);
     root.keyGroup = bank.keyGroup ?? defaultKeyGroup();
     state.motifs = bank.motifs;
     state.currentMotifId = bank.currentMotifId;

@@ -5,6 +5,7 @@ import { AT_SLOTS, RATCHET_VALUES } from "../src/ATTransaction.mjs";
 import { SwingTiming, readSwing, readRatchet, ratchetPlan } from "../src/SwingTiming.mjs";
 import { snapshotMotifBank, restoreMotifBank, validateMotifBank } from "../src/MotifBankFormat.mjs";
 import { readATPanel } from "../src/PlayATUI.mjs";
+import { initializeProjectBook, connectProjectController } from "../src/ProjectBook.mjs";
 
 const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), "utf8");
 async function load(file, imports = {}) {
@@ -292,4 +293,74 @@ test('Modulation transposition is immediate, cancellable, captured per ratchet a
     d.time.run(200);assert.ok(d.notes.every(n=>n.msg[1]===72));
     d.actions.at.finish(false);assert.equal(d.state.modulation.motifs[0].attributes.KEY_GROUP,undefined);
     assert.deepEqual(d.state.motifs,original);assert.equal(d.state.getKeyGroupNote(0),71);
+});
+
+for (const transport of ['STOP', 'PLAY']) test(`successive Key Group step selections preserve independent pitches in ${transport}`, t => {
+    t.mock.timers.enable({apis:['setTimeout']});
+    const {state,actions}=setup(); melodic(state,0);
+    state.transportState=transport; state.motif[0][1]=state.motif[0][3]=true;
+    const c=new LaunchpadMini({send:()=>{}},state,actions,'LP');t.after(()=>c.resetInputState());
+    const tap=note=>{c.handleMidiMessage([0x90,note,127]);c.handleMidiMessage([0x90,note,0]);};
+    tap(c.mapping.BOOKS[4]);
+    tap(c.mapping.MOTIF[1]); tap(c.mapping.AT_VALUE[6]);
+    assert.deepEqual([...state.atTransaction.steps],[1]);
+    assert.equal(state.motifs[0].keyGroups[0][1].degree,1);
+    tap(c.mapping.MOTIF[3]); tap(c.mapping.AT_VALUE[3]);
+    assert.deepEqual([...state.atTransaction.steps],[3]);
+    assert.equal(state.motifs[0].keyGroups[0][1].degree,1);
+    assert.equal(state.motifs[0].keyGroups[0][3].degree,4);
+    state.playheadPosition=1; assert.equal(state.getKeyGroupNote(0),62);
+    state.playheadPosition=3; assert.equal(state.getKeyGroupNote(0),67);
+});
+
+test('Project Book preserves banks, chains and keys across switching, copy and persistence', () => {
+    const { state, actions } = setup();
+    initializeProjectBook(state, actions);
+    state.motifs[0].events[0][0] = true;
+    state.chain = [0, 2, 0]; state.chainEnabled = true; state.chainLoopMasterIndex = 2;
+    state.keyGroup.root = 65;
+    state.padConfiguration.voices[8].note = 50;
+    state.projects.select(1);
+    assert.equal(state.motifs[0].events[0][0], false);
+    assert.equal(state.projectBook.slots[1].name, 'Projet 02');
+    assert.equal(state.padConfiguration.voices[8].note, 50);
+    state.padConfiguration.voices[8].note = 51;
+    state.projects.select(0);
+    assert.equal(state.motifs[0].events[0][0], true);
+    assert.deepEqual(state.chain, [0, 2, 0]);
+    assert.equal(state.keyGroup.root, 65);
+    assert.equal(state.padConfiguration.voices[8].note, 50);
+    state.projectBook.slots[0].description = "Ambiance nocturne\nPartie B";
+    state.projects.copy(0, 3);
+    const saved = snapshotMotifBank(state);
+    const fresh = setup(); restoreMotifBank(fresh.state, saved); initializeProjectBook(fresh.state, fresh.actions);
+    fresh.state.projects.restorePads();
+    assert.equal(fresh.state.padConfiguration.voices[8].note, 50);
+    fresh.state.projects.select(3);
+    assert.equal(fresh.state.padConfiguration.voices[8].note, 50);
+    assert.equal(fresh.state.projectBook.slots[3].description, "Ambiance nocturne\nPartie B");
+    assert.equal(fresh.state.motifs[0].events[0][0], true);
+    fresh.state.motifs[0].events[0][0] = false;
+    fresh.state.projects.select(0);
+    assert.equal(fresh.state.motifs[0].events[0][0], true);
+    fresh.state.projects.remove(3);
+    assert.equal(fresh.state.projectBook.slots[3], null);
+    assert.throws(() => validateMotifBank({ ...saved, projects: { active: 0, slots: [] } }));
+});
+
+test('Project controller uses reference keyboard and blocks Voices, MOD and Shift+Play chain', t => {
+    const { state, actions } = setup(); initializeProjectBook(state, actions);
+    const c = new LaunchpadMini({ send() {} }, state, actions, 'LP');
+    t.after(() => c.resetInputState()); connectProjectController(c);
+    const press = (status, note) => { c.handleControllerMessage([status, note, 127]); c.handleControllerMessage([status, note, 0]); };
+    c.handleControllerMessage([0xB0, 104, 127]); press(0x90, 120); c.handleControllerMessage([0xB0, 104, 0]);
+    assert.equal(state.projectMode, true); assert.equal(c.shiftPressed, false);
+    const voice = state.selectedInstrument;
+    press(0x90, 64); press(0xB0, 105);
+    assert.equal(state.selectedInstrument, voice); assert.equal(state.modulationRequested, false);
+    press(0x90, 1); assert.equal(state.keyGroup.root, 61);
+    press(0x90, 69); assert.equal(state.projectBook.active, 1);
+    assert.equal(readATPanel(state).name, 'PROJETS');
+    c.handleControllerMessage([0xB0, 104, 127]); press(0x90, 120); c.handleControllerMessage([0xB0, 104, 0]);
+    assert.equal(state.projectMode, false); assert.equal(c.shiftPressed, false);
 });

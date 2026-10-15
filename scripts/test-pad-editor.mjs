@@ -141,6 +141,20 @@ test("integrated UI: 16 pads, values, immediate names/star, invalid input, SAVE 
         const state = stateFor(); const ui = initializeSettingsUI({ state, clock: { source: "INTERNAL" },
             actions: { at: { setColorEnabled: enabled => { state.colorEnabled = enabled; } } } });
         await ui.ready;
+        const beforeHelp = structuredClone(state);
+        get("toggle-help").listeners.click();
+        assert.equal(get("help-panel").hidden, false);
+        assert.equal(get("play-page").hidden, true);
+        assert.equal(get("settings-page").hidden, true);
+        assert.equal(get("toggle-help").attrs["aria-pressed"], "true");
+        ui.updateSoundCheck([{ id: 0, status: "available", name: "Ready" }]);
+        assert.equal(get("help-panel").hidden, false); // Soundcheck cannot undo manual navigation.
+        get("show-play").listeners.click();
+        assert.equal(get("help-panel").hidden, true);
+        assert.equal(get("play-page").hidden, false);
+        get("show-settings").listeners.click();
+        assert.equal(get("settings-page").hidden, false);
+        assert.deepEqual(state, beforeHelp);
         assert.equal(get("color-enabled").checked, false);
         get("color-enabled").checked = true; get("color-enabled").listeners.change();
         assert.equal(state.colorEnabled, true); assert.equal(preferences.get("colorEnabled"), "true");

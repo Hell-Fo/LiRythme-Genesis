@@ -59,6 +59,7 @@ export class LiRythmeState {
         this.chainFocus = false;
         this.viewMotifId = 0;
         this.chainViewIndex = -1;
+        this.chainMoveIndex = null;
         Object.defineProperty(this, "currentMotifId", {
             enumerable: true,
             get: () => this.chainFocus ? this.viewMotifId : this.playingMotifId,
@@ -100,7 +101,7 @@ export class LiRythmeState {
             Object.defineProperty(this.modulation, "rootState", { value: this });
             const local = new Set(["systemName", "motifs", "motif", "motifLength", "voiceLengths", "currentMotifId",
                 "playingMotifId", "nextMotifId", "playheadPosition", "liveLengthCycle", "chainEnabled", "chain",
-                "chainPlayingIndex", "chainPlayingDetached", "chainLoopMasterIndex", "chainFocus", "viewMotifId", "chainViewIndex"]);
+                "chainPlayingIndex", "chainPlayingDetached", "chainLoopMasterIndex", "chainFocus", "viewMotifId", "chainViewIndex", "chainMoveIndex"]);
             for (const key of Object.keys(this)) if (!local.has(key)) Object.defineProperty(this.modulation, key, {
                 enumerable: true, configurable: true, get: () => this[key], set: value => { this[key] = value; }
             });

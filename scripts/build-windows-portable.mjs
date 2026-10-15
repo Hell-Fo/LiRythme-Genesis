@@ -30,6 +30,7 @@ for (const name of ["main.js", "preload.js", "index.html", "src", "assets"]) {
     await fs.cp(path.join(root, name), path.join(app, name), { recursive: true });
 }
 await fs.mkdir(path.join(app, "docs/examples"), { recursive: true });
+await fs.copyFile(path.join(root, "docs/GUIDE-UTILISATION.md"), path.join(app, "docs/GUIDE-UTILISATION.md"));
 await fs.copyFile(path.join(root, "docs/examples/DrumBrute Impact.lirythme-pads.json"),
     path.join(app, "docs/examples/DrumBrute Impact.lirythme-pads.json"));
 await fs.writeFile(path.join(app, "package.json"), JSON.stringify({

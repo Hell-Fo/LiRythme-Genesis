@@ -168,7 +168,7 @@ test("visual observation propagates selection, name, tempo and source changes wi
 
 test("PLAY has only informational markup and app wires rendering before transport early returns", async () => {
     const html = await source("index.html");
-    const play = html.slice(html.indexOf('<section id="play-page"'), html.indexOf('</main>'));
+    const play = html.slice(html.indexOf('<section id="play-page"'), html.indexOf('<section id="help-panel"'));
     assert.doesNotMatch(play, /<(button|input|select|textarea|a|canvas|summary)\b|\b(?:onclick|onkeydown|tabindex|contenteditable)\s*=/i);
     assert.match(play, /<p id="play-selected"/);
     for (const key of ["state", "bpm", "source"]) {

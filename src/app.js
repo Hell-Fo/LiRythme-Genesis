@@ -1,3 +1,4 @@
+import { initializeProjectBook, connectProjectController } from "./ProjectBook.mjs";
 import { SwingTiming } from "./SwingTiming.mjs";
 import { initializeKeyGroupOutput } from "./KeyGroupOutputUI.mjs";
 import { LiRythmeState } from "./LiRythmeState.js";
@@ -9,6 +10,7 @@ import { DrumBruteImpactProfile } from "./hardware/midi/profiles/DrumBruteImpact
 import { LaunchpadMini } from "./hardware/launchpad/LaunchpadMini.js";
 import { LiRythmeActions } from "./LiRythmeActions.js";
 import { initializeSettingsUI } from "./SettingsUI.js";
+import { initializeHelpUI } from "./HelpUI.mjs";
 import { AudioVoicePlayer } from "./AudioVoicePlayer.mjs";
 import { initializePlayStatusUI } from "./PlayStatusUI.mjs";
 import { initializePlayMotifUI } from "./PlayMotifUI.mjs";
@@ -83,9 +85,12 @@ const modulationChainUI = initializePlayChainUI({ state, system: "MODULATION" })
 actions.onChainChange = () => { motifChainUI.render(); modulationChainUI.render(); };
 const audioPlayer = new AudioVoicePlayer({ files: window.audioSampleFiles });
 document.addEventListener("pointerdown", () => { void audioPlayer.resume(); });
+initializeProjectBook(state, actions);
 const settingsUI = initializeSettingsUI({ state, clock, actions, audioPlayer });
+initializeHelpUI({ readGuide: () => window.usageGuide.read() });
 // Restore before connecting transport/controller input handlers.
 await settingsUI.ready;
+state.projects.restorePads();
 audioPlayer.sync(state.padConfiguration.voices);
 
 console.log(
@@ -434,6 +439,8 @@ const launchpad = new LaunchpadMini(
     actions,
     controllerName
 );
+
+connectProjectController(launchpad);
 
 const handleControllerMessage =
     (data) => launchpad.handleMidiMessage(data);

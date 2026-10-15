@@ -117,5 +117,6 @@ export function activateConfiguration(state, text) {
     const next = parseConfiguration(text);
     if (!["STOP", "PAUSE"].includes(state.transportState)) throw new Error("Fichier valide, activation refusée pendant PLAY. Passez en STOP ou PAUSE, puis réessayez la sélection.");
     state.padConfiguration = next;
+    if (state.projectBook) state.onBankChange?.();
     return next;
 }

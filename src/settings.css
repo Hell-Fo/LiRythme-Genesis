@@ -15,13 +15,15 @@ body:has(#settings-page:not([hidden])) .muted { color: #b9c0c4; }
 #settings-page h3 { color: #f0aa72; }
 body:has(#settings-page:not([hidden])) button,
 #settings-page input:not([type=checkbox]),
-#settings-page select {
+#settings-page select,
+#settings-page textarea {
     color: #f2eee5;
     background: #191d20;
     border: 1px solid #657580;
     border-radius: 4px;
 }
 #settings-page input:not([type=checkbox]) { padding: 8px; }
+#settings-page textarea { padding: 8px; font: inherit; resize: vertical; }
 body:has(#settings-page:not([hidden])) button:not(:disabled):hover {
     background: #35414a;
     border-color: #92c7e1;

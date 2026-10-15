@@ -9,6 +9,14 @@ les gestes de confirmation décrits ici.
 
 ### Parcours de lecture
 
+Dans l’application, **HELP (H)** ouvre ce guide : choisir un sujet dans le
+sommaire ou saisir des mots dans le champ de recherche. Les articles concernés
+s’affichent pendant la saisie, sans distinction d’accents ou de majuscules.
+Effacer la recherche restitue le sommaire ; **PLAY (P)** ou **SETTINGS (S)**
+permet de revenir aux autres pages, sans changer le transport. Les raccourcis
+sont suspendus pendant la saisie. L’option Help au démarrage ouvre directement
+cette page lorsqu’elle est cochée.
+
 - Pour commencer : sections 1 à 4 — principes, surface, sons et première boucle.
 - Pour enrichir le jeu : sections 5 à 7 — A/T, Modulation et Mutation.
 - Pour organiser une performance : sections 8 à 10 — Chain, copies et SOLO/MUTE.
@@ -159,6 +167,14 @@ SWITCH affiche le Book A/T. Les fonctions disponibles sont :
 4. Écouter et ajuster.
 5. **Appui long sur le pad de la fonction** : confirmer.
 6. **Clic court sur ce même pad** : annuler toutes les modifications de cette transaction.
+
+Autre méthode depuis PLAY, hors édition et hors Chain : maintenir **SHIFT** et appuyer sur
+un pad A/T pour consulter son affichage. En gardant SHIFT enfoncé, appuyer sur
+d’autres pads A/T pour parcourir leurs affichages. Les commandes d’édition
+restent bloquées pendant cet aperçu. **Relâcher SHIFT** fait entrer le dernier
+A/T sélectionné en édition ; reprendre ensuite à l’étape 2 ci-dessus.
+Les emplacements vides ou désactivés sont ignorés : le dernier A/T valide reste
+sélectionné et le parcours continue tant que SHIFT est maintenu.
 
 SHIFT permet d’ajouter plusieurs Voices ou Steps à la sélection. Rappuyer sur
 un élément sélectionné le retire. La sélection temporaire commence vide à
@@ -339,6 +355,18 @@ le Motif affecte toutes ses occurrences.
 En STOP/PAUSE, hors FOCUS et hors transaction, << et >> parcourent les maillons.
 Les flèches ne programment pas de notes.
 
+### Déplacer un bloc pendant PLAY
+
+Pendant PLAY, dans le Book Motif ou Modulation, **SHIFT + pad du bloc actif ou
+suivant** sélectionne cette occurrence pour la déplacer (pad rouge). Garder
+SHIFT enfoncé et appuyer sur **<< / >>** pour la déplacer d’une position à
+chaque appui. Le déplacement s’arrête aux extrémités. Relâcher SHIFT termine
+la sélection. La lecture continue sans redémarrer le bloc en cours ; NEXT est
+recalculé selon le nouvel ordre. Si actif et suivant partagent le même pad,
+l’occurrence active est prioritaire. Pour régler le **Loop Point** pendant PLAY,
+maintenir SHIFT et faire un **appui long sur le pad**, sans utiliser les flèches.
+Les gestes Loop Point en STOP/PAUSE restent inchangés.
+
 Hors Chain, sélectionner un autre motif dans le Book pendant PLAY prépare
 **NEXT** : le changement attend la frontière du Motif courant. Sélectionner
 à nouveau PLAYING retire cette demande.
@@ -362,7 +390,8 @@ de PLAYING.
 
 Dans le Book de Chain, **SHIFT + le pad du Motif de l’occurrence courante**
 place ou retire le Loop Point. En STOP/PAUSE, sélectionner d’abord l’occurrence
-avec les flèches ; en PLAY, cibler celle qui joue. Après cette occurrence,
+avec les flèches ; en PLAY, maintenir SHIFT et faire un appui long sur le pad
+de celle qui joue. Après cette occurrence,
 la Chain revient à sa tête. Le Loop Point désigne une occurrence, pas toutes
 les apparitions du même numéro de Motif.
 
@@ -478,6 +507,48 @@ automatique des Motifs n’est pas une sauvegarde complète de projet. La banque
 Modulation conserve aussi sa Chain et son Loop Point. FOCUS, les sélections
 de travail et les transactions ouvertes ne constituent pas un arrangement
 persistant à retrouver tel quel au prochain lancement.
+
+
+### Book Projets — SHIFT + SWITCH
+
+Depuis le Launchpad, **SHIFT + SWITCH** ouvre le mode settings/projet.
+Le même geste restitue l’affichage normal. Terminer une transaction A/T ou
+Mutation avant d’ouvrir ce mode.
+
+Les **16 pads du Book**, en bas à droite, deviennent les emplacements Projets.
+Un clic sélectionne un projet ; un emplacement vide crée un projet nommé
+**Projet 01** à **Projet 16**. Le projet courant est vert vif, les autres pads
+vert atténué. Le changement de projet arrête le transport. Le travail existant
+est conservé dans le premier projet lors de la première utilisation.
+
+La disposition du clavier suit l’image de référence :
+
+- Première rangée : Do♯, Ré♯, Fa♯, Sol♯, La♯ sur les colonnes 2, 3, 5, 6, 7.
+- Deuxième rangée : Do, Ré, Mi, Fa, Sol, La, Si sur les sept premières colonnes.
+- Colonne 8 : **Scale Up** en haut, **Scale Down** en dessous (pads rouges).
+
+Le clavier choisit la Root Note entre MIDI 60 et 71 ; la touche courante
+est verte. Les touches claires sont ambre atténué et les touches noires jaunes.
+Les deux pads Scale parcourent circulairement les gammes de assets/scales.json.
+La Root et la Scale apparaissent avec le nom du projet dans le troisième bloc
+de **PLAY**, à la place de la sélection habituelle. La description apparaît en
+bas de cette colonne, en plus petit, uniquement dans ce mode.
+Les autres pads de Timeline et les Voices restent éteints et inactifs.
+
+**COPY → source → destination** copie un projet indépendant ; une nouvelle
+pression sur COPY annule. **DELETE → projet** efface l’emplacement ; effacer
+le projet actif le réinitialise. PLAY court conserve lecture/pause et PLAY long
+commande STOP. Les autres fonctions de jeu sont bloquées dans ce mode,
+y compris les combinaisons SHIFT avec PLAY ou les flèches.
+
+Dans **SETTINGS → PROJECT**, sélectionner un emplacement et modifier son nom ou sa description
+(texte libre de 2 000 caractères maximum, sauvegardé automatiquement).
+Les banques, Chains et réglages KeyGroup sont sauvegardés automatiquement.
+Chaque projet conserve une copie complète de sa configuration des pads.
+Un nouveau projet reprend la configuration chargée. Charger une autre PAD CONFIG
+ou modifier les Voices remplace la configuration de ce projet. Les projets
+plus anciens sans configuration reprennent celle chargée lors de leur ouverture.
+Les fichiers audio restent externes : seuls leurs chemins sont conservés.
 
 ## 13. Trois exercices pour jouer
 

@@ -318,6 +318,7 @@ export class LiRythmeActions {
         this.clock.setClockBeatHandler(handler);
     }
     toggleChain() {
+        this.state.chainMoveIndex = null;
         if (this.state.chainFocus) this.toggleChainFocus();
         this.state.chainEnabled = !this.state.chainEnabled;
         this.state.chainPlayingIndex = -1;
@@ -339,10 +340,35 @@ export class LiRythmeActions {
         if (notify) this.onNextMotifChange?.();
         if (notify) this.onChainChange?.();
     }
+    selectChainMove(id) {
+        if (!this.state.chainEnabled || this.state.transportState !== "PLAY" || this.rootState.atTransaction) return false;
+        const playing = this.state.chainPlayingIndex, next = this.state.getChainNextIndex();
+        const index = !this.state.chainPlayingDetached && this.state.chain[playing] === id ? playing
+            : next >= 0 && this.state.chain[next] === id ? next : null;
+        this.state.chainMoveIndex = index;
+        this.onChainChange?.();
+        return index !== null;
+    }
+    moveChainSelection(direction) {
+        const index = this.state.chainMoveIndex, destination = index + direction;
+        if (!this.state.chainEnabled || this.state.transportState !== "PLAY" || this.rootState.atTransaction ||
+            index === null || ![-1, 1].includes(direction) || destination < 0 || destination >= this.state.chain.length) return false;
+        [this.state.chain[index], this.state.chain[destination]] = [this.state.chain[destination], this.state.chain[index]];
+        // Every reference follows its occurrence, including repeated motif IDs.
+        const remap = value => value === index ? destination : value === destination ? index : value;
+        if (!this.state.chainPlayingDetached) this.state.chainPlayingIndex = remap(this.state.chainPlayingIndex);
+        this.state.chainViewIndex = remap(this.state.chainViewIndex);
+        this.state.chainLoopMasterIndex = remap(this.state.chainLoopMasterIndex);
+        this.state.chainMoveIndex = destination;
+        this.refreshChainNext();
+        this.state.onBankChange?.();
+        return true;
+    }
     appendChainMotif(id, { afterPlaying = false } = {}) {
         if (!this.state.chainEnabled || !this.state.getMotif(id)) return false;
         const index = afterPlaying ? this.state.chainPlayingIndex + 1 : this.state.chain.length;
         this.state.chain.splice(index, 0, id);
+        if (this.state.chainMoveIndex !== null && this.state.chainMoveIndex >= index) this.state.chainMoveIndex++;
         if (this.state.chainViewIndex >= index) this.state.chainViewIndex++;
         if (this.state.chainLoopMasterIndex !== null && index <= this.state.chainLoopMasterIndex) {
             this.state.chainLoopMasterIndex++;
@@ -399,6 +425,8 @@ export class LiRythmeActions {
     }
     removeChainOccurrence(index) {
         if (!this.state.chainEnabled || index < 0 || index >= this.state.chain.length) return false;
+        if (this.state.chainMoveIndex === index) this.state.chainMoveIndex = null;
+        else if (this.state.chainMoveIndex > index) this.state.chainMoveIndex--;
         this.state.chain.splice(index, 1);
         if (this.state.chainViewIndex === index) this.state.chainViewIndex = -1;
         else if (this.state.chainViewIndex > index) this.state.chainViewIndex--;
@@ -423,6 +451,7 @@ export class LiRythmeActions {
     }
     clearChain() {
         if (!this.state.chainEnabled) return false;
+        this.state.chainMoveIndex = null;
         this.state.chain = [];
         this.state.chainViewIndex = -1;
         this.state.chainLoopMasterIndex = null;

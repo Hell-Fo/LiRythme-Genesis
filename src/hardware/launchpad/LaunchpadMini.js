@@ -204,6 +204,8 @@ export class LaunchpadMini {
         clearTimeout(this.atPadHold?.timer);
         this.atPadHold = null;
         this.atHeld.clear();
+        this.atBrowsing = false;
+        this.actions.forEachSystem(() => { this.actions.state.chainMoveIndex = null; });
         clearTimeout(this.atBlinkTimer);
         this.atBlinkTimer = null;
         this.actions.at.finish(false);
@@ -710,6 +712,8 @@ export class LaunchpadMini {
         return color;
     }
     getLibraryMotifBaseColor(id) {
+        if (this.shiftPressed && this.state.chainMoveIndex !== null &&
+            this.state.transportState === "PLAY" && this.state.chain[this.state.chainMoveIndex] === id) return "RED";
         if (this.state.atTransaction?.kind === "GROOVE_MORPH" && id === this.state.atTransaction.editingMotifId) return "YELLOW";
         if (this.copyDeniedPads.has(id)) return "RED";
         if (id === this.copySuccessPad) return "YELLOW";
@@ -1498,6 +1502,25 @@ export class LaunchpadMini {
 
     // Contextual layer owns A/T inputs; held releases remain consumed after exit.
     handleATInput(status, number, value, key) {
+        // SHIFT browsing owns the surface until SHIFT is released. Pad releases
+        // never start a hold/confirmation or close the selected preview.
+        const browseSlot = status === 0x90 ? this.mapping.BOOKS.indexOf(number) : -1;
+        if (this.state.currentView === "PLAY" && this.shiftPressed &&
+            (this.atBrowsing || !this.state.chainEnabled && !this.state.atTransaction && !this.deleteArmed && !this.copyStage && !this.atPadHold) &&
+            (browseSlot >= 0 || this.atBrowsing)) {
+            if (value > 0) {
+                this.atHeld.add(key);
+                // Enter browsing even when the first pad is empty/disabled.
+                // Its validity must not decide who owns subsequent inputs.
+                this.atBrowsing = true;
+                if (browseSlot >= 0 && this.actions.at.isEnabled(browseSlot)) {
+                    const previousSlot = this.state.atTransaction?.slot;
+                    if (this.state.atTransaction) this.actions.at.finish(false);
+                    if (!this.actions.at.begin(browseSlot) && previousSlot !== undefined) this.actions.at.begin(previousSlot);
+                }
+            } else this.atHeld.delete(key);
+            return true;
+        }
         if (value === 0 && status === 0x90 && number === this.mapping.AT_VALUE[1]) this.euclideanDurationHeld = false;
         if (this.state.atTransaction?.kind === "EUCLIDEAN" && status === 0x90 &&
             (this.mapping.MOTIF.includes(number) || number === this.mapping.AT_VALUE[1])) {
@@ -1640,6 +1663,12 @@ export class LaunchpadMini {
         const inputKey = status + ":" + number;
         if (status === 0xB0 && number === this.mapping.TOP_CONTROLS.SHIFT) {
             this.shiftPressed = value > 0;
+            if (!this.shiftPressed) this.atBrowsing = false;
+            if (!this.shiftPressed) {
+                for (const hold of this.chainMotifHolds.values()) if (hold.moveIntent) clearTimeout(hold.timer);
+                this.actions.forEachSystem(() => { this.actions.state.chainMoveIndex = null; });
+                this.drawBooks();
+            }
             this.drawShiftStatus();
             return;
         }
@@ -1707,6 +1736,7 @@ export class LaunchpadMini {
         const chainHold = this.chainMotifHolds.get(inputKey);
         if (chainHold) {
             if (value === 0) {
+                if (chainHold.moveIntent) this.deleteConsumedInputs.delete(inputKey);
                 clearTimeout(chainHold.timer);
                 this.chainMotifHolds.delete(inputKey);
                 if (chainHold.deleteIntent) {
@@ -1745,6 +1775,32 @@ export class LaunchpadMini {
             if (this.focusNavigationHeld?.size) this.focusNavigationConsumed = true;
         }
         // Short taps resolve on release; a lone Step hold resolves at UI tempo ticks.
+        if (this.shiftPressed && this.state.chainEnabled && this.state.transportState === "PLAY" &&
+            !atActive && !this.deleteArmed && !this.copyStage && !this.performanceHolds.size) {
+            if (controlType === "BOOK" && this.state.currentView === "MOTIF_LIBRARY" && value > 0) {
+                this.deleteConsumedInputs.add(inputKey);
+                this.actions.selectChainMove(controlPosition);
+                const hold = { moveIntent: true, fired: true, timer: null };
+                this.chainMotifHolds.set(inputKey, hold);
+                hold.timer = setTimeout(() => {
+                    if (!this.shiftPressed) return;
+                    this.state.chainMoveIndex = null;
+                    this.actions.toggleChainLoopPoint(controlPosition);
+                    this.drawBooks();
+                }, TEMPO_HOLD_DELAY_MS);
+                this.drawBooks();
+                return;
+            }
+            if (["PREVIOUS", "NEXT"].includes(controlName) && this.state.chainMoveIndex !== null) {
+                if (value > 0) {
+                    for (const hold of this.chainMotifHolds.values()) clearTimeout(hold.timer);
+                    this.deleteConsumedInputs.add(inputKey);
+                    this.actions.moveChainSelection(controlName === "PREVIOUS" ? -1 : 1);
+                    this.drawBooks();
+                }
+                return;
+            }
+        }
         if (["PREVIOUS", "NEXT"].includes(controlName) &&
             (!this.deleteArmed || atActive) && !this.playStopPressed) {
             this.focusNavigationHeld ??= new Set();

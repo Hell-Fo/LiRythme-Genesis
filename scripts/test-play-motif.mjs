@@ -164,7 +164,7 @@ test("existing PLAY render loop propagates Motif changes read-only and disposes 
 
 test("MOTIF layout preserves order, empty CHAIN and reserved clock without controls", async () => {
     const html = await source("index.html");
-    const zone = html.slice(html.indexOf('<section id="play-motif"'), html.indexOf('</main>'));
+    const zone = html.slice(html.indexOf('<section id="play-motif"'), html.indexOf('<section id="help-panel"'));
     const positions = ["play-motif-title", "DURATION", "play-motif-clock", ">STEP<", "PLAY MODE", ">CHAIN<"].map(label => zone.indexOf(label));
     assert.ok(positions.every((position, index) => position >= 0 && (!index || position > positions[index - 1])));
     assert.doesNotMatch(zone, /<(button|input|select|textarea|a|canvas|svg|summary)\b|\b(onclick|onkeydown|tabindex|contenteditable)\s*=/i);

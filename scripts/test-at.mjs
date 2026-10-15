@@ -36,6 +36,79 @@ function drainAT(t, c) {
     for (let i = 0; (c.atLEDQueue.size || c.instrumentFeedbackPending) && i < 32; i++) t.mock.timers.tick(4);
     assert.equal(c.atLEDQueue.size, 0);
 }
+
+test("SHIFT browses A/T panels without edits and enters the last selection on release", t => {
+    const { state, c, press, release, tap } = setup(t);
+    state.currentView = "PLAY";
+    state.motif[0][0] = true;
+    const shift = c.mapping.TOP_CONTROLS.SHIFT;
+    press(shift, 0xB0);
+    tap(c.mapping.BOOKS[0]);
+    assert.equal(readATPanel(state).name, "VELOCITY");
+    tap(c.mapping.AT_VALUE[0]);
+    assert.equal(state.getMotif(0).velocities?.[0]?.[0] ?? 100, 100);
+    tap(c.mapping.BOOKS[2]);
+    assert.equal(readATPanel(state).name, "SWING");
+    tap(c.mapping.INSTRUMENTS[0]);
+    assert.equal(state.atTransaction.instruments.size, 0);
+    press(c.mapping.BOOKS[3]);
+    assert.equal(readATPanel(state).name, "RATCHET");
+    t.mock.timers.tick(500);
+    assert.ok(state.atTransaction);
+    release(shift, 0xB0);
+    release(c.mapping.BOOKS[3]);
+    assert.equal(state.atTransaction.slot, 3);
+    tap(c.mapping.AT_VALUE[0]);
+    assert.equal(state.getMotif(0).ratchets[0][0], 8);
+    tap(c.mapping.BOOKS[3]);
+    assert.equal(state.atTransaction, null);
+});
+
+test("SHIFT browsing owns inputs even when starting on an empty A/T slot", t => {
+    const { state, c, press, release, tap } = setup(t);
+    const shift = c.mapping.TOP_CONTROLS.SHIFT;
+    press(shift, 0xB0);
+    tap(c.mapping.BOOKS[5]);
+    assert.equal(c.atBrowsing, true);
+    assert.equal(state.atTransaction, null);
+    tap(c.mapping.AT_VALUE[7]);
+    assert.equal(c.switchPressed, false);
+    for (const slot of [0, 5, 2, 6, 3, 7, 4, 15, 8]) {
+        tap(c.mapping.BOOKS[slot]);
+        t.mock.timers.tick(500);
+        assert.equal(c.atBrowsing, true);
+        assert.equal(c.shiftPressed, true);
+        assert.equal(c.atPadHold, null);
+        tap(c.mapping.AT_VALUE[0]);
+        assert.equal(state.atTransaction.touched.size, 0);
+    }
+    release(shift, 0xB0);
+    assert.equal(c.atBrowsing, false);
+    assert.equal(state.atTransaction.slot, 8);
+});
+
+test("SHIFT browsing survives repeated selections and long holds until the actual SHIFT release", t => {
+    const { state, c, press, release, tap } = setup(t);
+    state.currentView = "PLAY";
+    state.motif[0][0] = true;
+    const shift = c.mapping.TOP_CONTROLS.SHIFT;
+    press(shift, 0xB0);
+    for (let index = 0; index < 40; index++) {
+        const slot = [0, 2, 3, 4, 8][index % 5];
+        press(c.mapping.BOOKS[slot]);
+        t.mock.timers.tick(1500);
+        release(c.mapping.BOOKS[slot]);
+        assert.equal(c.shiftPressed, true);
+        assert.equal(c.atBrowsing, true);
+        assert.equal(c.atPadHold, null);
+        assert.equal(state.atTransaction.slot, slot);
+        tap(c.mapping.AT_VALUE[0]);
+        assert.equal(state.atTransaction.touched.size, 0);
+    }
+    release(shift, 0xB0);
+    assert.equal(c.atBrowsing, false);
+    assert.equal(state.atTransaction.slot, 8);
+});
 test("velocity meter holds the real value full while the dim tail descends every 40ms", t => {
     const { state, c, leds, tap, begin } = setup(t);
     state.motif[12][0] = state.motif[12][1] = true;

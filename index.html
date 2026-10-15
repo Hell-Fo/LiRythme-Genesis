@@ -59,13 +59,14 @@
     </style>
     <link rel="stylesheet" href="src/play.css">
     <link rel="stylesheet" href="src/settings.css">
+    <link rel="stylesheet" href="src/help.css">
 </head>
 <body>
     <h1>LiRythme — Genesis</h1>
     <nav aria-label="Pages principales">
         <button id="show-settings" type="button" aria-pressed="true" aria-controls="settings-page">SETTINGS (S)</button>
         <button id="show-play" type="button" aria-pressed="false" aria-controls="play-page">PLAY (P)</button>
-        <button id="toggle-help" type="button" aria-pressed="true" aria-controls="help-panel">Help (H)</button>
+        <button id="toggle-help" type="button" aria-pressed="false" aria-controls="help-panel">HELP (H)</button>
     </nav>
     <main>
         <section id="settings-page" aria-labelledby="settings-title">
@@ -85,6 +86,8 @@
                 <section class="panel wide" aria-labelledby="projects-title">
                     <h2 id="projects-title">PROJECT</h2>
                     <p class="muted">Non implémenté — Load, Save et Rename seront définis ultérieurement.</p>
+                    <label class="field">Nom du projet<input id="project-name" maxlength="80"></label>
+                    <label class="field">Description du projet<textarea id="project-description" rows="3" maxlength="2000"></textarea></label>
                     <div id="project-slots" class="slots" aria-label="16 emplacements Project"></div>
                 </section>
                 <section class="panel" aria-labelledby="midi-title">
@@ -224,19 +227,26 @@
                         <li id="play-at-value-6"></li><li id="play-at-value-7"></li>
                     </ol>
                 </div>
+                <p id="play-project-description" aria-label="Description du projet" hidden></p>
             </section>
             </div>
             <footer id="play-footer-3" class="play-footer-3" aria-label="Footer PLAY">
                 <span id="play-footer-zone1"></span><span id="play-footer-project" aria-label="Projet"></span><span id="play-footer-states" aria-label="États"></span><span id="play-footer-resolution" aria-label="Résolution"></span>
             </footer>
         </section>
-    </main>
-    <aside id="help-panel" aria-labelledby="help-title">
+    <section id="help-panel" aria-labelledby="help-title" hidden>
         <h2 id="help-title">HELP</h2>
-        <p id="help-content"></p>
-        <p>S : SETTINGS · P : page PLAY (sans commande transport) · H : afficher/masquer cette aide pour la session.</p>
-        <p class="muted">Les raccourcis sont suspendus pendant la saisie et dans les sélecteurs.</p>
-    </aside>
+        <p class="help-intro">Guide d’utilisation · Choisissez un sujet ou recherchez un geste, une fonction, un réglage.</p>
+        <label class="field" for="help-search">Rechercher dans le guide
+            <input id="help-search" type="search" placeholder="Ex. : déplacer chaîne, Loop Point, vélocité…" autocomplete="off" aria-controls="help-articles" aria-describedby="help-results-status">
+        </label>
+        <p id="help-results-status" role="status">Chargement du guide…</p>
+        <div class="help-layout">
+            <nav id="help-menu" aria-label="Sommaire du guide"></nav>
+            <div id="help-articles" aria-label="Articles du guide" tabindex="-1"></div>
+        </div>
+    </section>
+    </main>
     <script type="module" src="./src/app.js"></script>
 </body>
 </html>

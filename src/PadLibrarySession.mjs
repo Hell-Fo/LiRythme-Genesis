@@ -4,6 +4,7 @@ import { activateConfiguration, serializeConfiguration } from "./PadConfiguratio
 export class PadLibrarySession {
     constructor(state, api) {
         this.state = state;
+        Object.defineProperty(state, "padLibrarySession", { value: this, configurable: true });
         this.api = api;
         this.active = null;
         this.entries = [];

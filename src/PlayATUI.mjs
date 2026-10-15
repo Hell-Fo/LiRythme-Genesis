@@ -3,6 +3,11 @@ import { MUTATION_METHODS } from "./Mutation.mjs";
 import { GROOVE_METHODS } from "./GrooveMorph.mjs";
 
 export function readATPanel(state) {
+    if (state.projectMode && state.projectBook) return {
+        name: "PROJETS", target: state.projectBook.slots[state.projectBook.active].name,
+        motif: state.projectBook.active + 1, system: "PROJET",
+        values: ["Root : " + ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"][state.keyGroup.root % 12] + " · MIDI " + state.keyGroup.root, "Scale : " + state.keyGroup.scale], selected: null
+    };
     const tx = state.atTransaction;
     if (!tx) return null;
     state = state.forSystem?.(tx.system ?? "MOTIF") ?? state;
@@ -46,6 +51,13 @@ export function initializePlayATUI({ state, document = globalThis.document }) {
     const panel = field("play-at"), title = field("play-selection-title"), normal = field("play-selected");
     let previous;
     function render() {
+        const description = field("play-project-description");
+        const book = (state.rootState ?? state).projectBook;
+        const text = book?.slots[book.active]?.description ?? "";
+        if (description) {
+            if (description.textContent !== text) description.textContent = text;
+            description.hidden = !state.projectMode || !text.trim();
+        }
         const status = readATPanel(state);
         const signature = JSON.stringify(status);
         // Do not mutate the aria-live region on every animation frame.
@@ -62,7 +74,7 @@ export function initializePlayATUI({ state, document = globalThis.document }) {
             const value = status.values[index];
             const row = field(`play-at-value-${index}`);
             row.hidden = value === undefined;
-            row.textContent = value === undefined ? "" : status.name === "ROTATION" ? value : `${String.fromCharCode(65 + index)}   ${value}`;
+            row.textContent = value === undefined ? "" : ["ROTATION", "PROJETS"].includes(status.name) ? value : `${String.fromCharCode(65 + index)}   ${value}`;
             row.classList.toggle("at-selected", status.selected === index);
             row.setAttribute("aria-current", status.selected === index ? "true" : "false");
         }

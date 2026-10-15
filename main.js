@@ -43,6 +43,10 @@ const {
     utilityProcess
 } = require("electron");
 const path = require("node:path");
+ipcMain.handle("usage-guide", async event => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Unauthorized guide request");
+    return require("node:fs/promises").readFile(path.join(__dirname, "docs/GUIDE-UTILISATION.md"), "utf8");
+});
 const { readWav } = require("./src/AudioSampleFiles.cjs");
 ipcMain.handle("audio-sample", async (event, request) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Unauthorized audio request");
