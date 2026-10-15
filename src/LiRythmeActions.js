@@ -15,7 +15,7 @@ Elias (OpenAI)
 
 ===============================================================================
 */
-import { visitPlaybackAttributes, ATTransaction, validKeyGroups, validKeyRow, validSwings, validSwingRow, validRatchets, validRatchetRow, createAttributeRows, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes, validGrooveMorph } from "./ATTransaction.mjs";
+import { visitPlaybackAttributes, ATTransaction, validKeyGroups, validKeyRow, validSwings, validSwingRow, validRatchets, validRatchetRow, createAttributeRows, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes, validGrooveMorph, validEuclidean, validEuclideanVoice } from "./ATTransaction.mjs";
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
     constructor(state, clock) {
@@ -201,6 +201,7 @@ export class LiRythmeActions {
     captureMotifCopy(id) {
         const motif = this.state.getMotif(id);
         return motif ? { kind: "BANK_MOTIF", sourceId: id,
+            ...(motif.euclidean ? { euclidean: structuredClone(motif.euclidean) } : {}),
             ...(motif.grooveMorph ? { grooveMorph: structuredClone(motif.grooveMorph) } : {}),
             ...(this.state.systemName === "MODULATION" ? { system: "MODULATION" } : {}),
             ...(motif.attributes !== undefined ? { attributes: structuredClone(motif.attributes) } : {}),
@@ -250,10 +251,12 @@ export class LiRythmeActions {
             (copy.swings !== undefined && !validSwings(copy.swings)) ||
             (copy.ratchets !== undefined && !validRatchets(copy.ratchets)) ||
             (copy.keyGroups !== undefined && !validKeyGroups(copy.keyGroups)) ||
+            (copy.euclidean !== undefined && (!validEuclidean(copy.euclidean) || copy.grooveMorph || this.state.systemName !== "MOTIF")) ||
             (copy.grooveMorph !== undefined && (!validGrooveMorph(copy.grooveMorph) || this.state.systemName !== "MOTIF" || copy.events.some(row => row.some(Boolean)))) ||
             (copy.atDestinations !== undefined && !validATDestinations(copy.atDestinations)) ||
             (copy.attributes !== undefined && !validExplicitAttributes(copy.attributes))) return false;
         this.replaceMotif(id, { events: copy.events.map(row => row.slice()),
+            ...(copy.euclidean ? { euclidean: structuredClone(copy.euclidean) } : {}),
             ...(copy.grooveMorph ? { grooveMorph: structuredClone(copy.grooveMorph) } : {}),
             ...(copy.attributes !== undefined ? { attributes: structuredClone(copy.attributes) } : {}),
             ...(copy.velocities ? { velocities: copy.velocities.map(row => row.slice()) } : {}),
@@ -291,6 +294,7 @@ export class LiRythmeActions {
         delete motif.ratchets;
         delete motif.keyGroups;
         delete motif.grooveMorph;
+        delete motif.euclidean;
         delete motif.atDestinations;
         if (motif.attributes !== undefined) motif.attributes = {};
         for (let index = this.state.chain.length - 1; index >= 0; index--) {
@@ -614,6 +618,8 @@ export class LiRythmeActions {
 
         this.state.motif[voiceId][stepIndex] =
             !this.state.motif[voiceId][stepIndex];
+        const settings = this.state.getMotif(this.state.currentMotifId).euclidean?.[voiceId];
+        if (settings) settings.hits = this.state.motif[voiceId].slice(0, settings.resolution).filter(Boolean).length;
         const velocities = this.state.getMotif(this.state.currentMotifId).velocities;
         if (velocities) velocities[voiceId][stepIndex] = 100;
         const colors = this.state.getMotif(this.state.currentMotifId).colors;
@@ -686,6 +692,7 @@ export class LiRythmeActions {
         const motif = this.state.getMotif(this.resolveContext().editingMotifId);
         if (kind === "MOTIF") {
             return { kind, events: motif.events.map(row => row.slice()),
+                ...(motif.euclidean ? { euclidean: structuredClone(motif.euclidean) } : {}),
                 ...(this.state.systemName === "MODULATION" ? { system: "MODULATION" } : {}),
                 ...(motif.attributes !== undefined ? { attributes: structuredClone(motif.attributes) } : {}),
                 ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
@@ -698,6 +705,7 @@ export class LiRythmeActions {
         }
         if (kind !== "VOICE" || !Number.isInteger(voiceId) || voiceId < 0 || voiceId >= 16) return null;
         return { kind, events: motif.events[voiceId].slice(), length: motif.voiceLengths[voiceId],
+            ...(motif.euclidean?.[voiceId] ? { euclidean: structuredClone(motif.euclidean[voiceId]) } : {}),
             ...(this.state.systemName === "MODULATION" ? { system: "MODULATION" } : {}),
             ...(motif.attributes !== undefined ? { attributes: Object.fromEntries(Object.entries(motif.attributes).map(([key, rows]) => [key, structuredClone(rows[voiceId])])) } : {}),
             ...(motif.velocities ? { velocities: motif.velocities[voiceId].slice() } : {}),
@@ -722,6 +730,7 @@ export class LiRythmeActions {
             (copy.swings !== undefined && !validSwingRow(copy.swings)) ||
             (copy.ratchets !== undefined && !validRatchetRow(copy.ratchets)) ||
             (copy.keyGroups !== undefined && !validKeyRow(copy.keyGroups)) ||
+            (copy.euclidean !== undefined && (this.state.systemName !== "MOTIF" || !validEuclideanVoice(copy.euclidean))) ||
             (copy.atDestinations !== undefined && (!copy.atDestinations || typeof copy.atDestinations !== "object" ||
                 Array.isArray(copy.atDestinations) || !Object.entries(copy.atDestinations).every(([key, row]) =>
                     ["VELOCITY", "COLOR", "SWING", "RATCHET", "KEY_GROUP", "ROTATION"].includes(key) && validATDestinationRow(row))))) return false;
@@ -738,6 +747,10 @@ export class LiRythmeActions {
                 motif.attributes[key] ??= Array.from({ length: 16 }, () => Array(32).fill(null));
                 motif.attributes[key][target] = structuredClone(copy.attributes?.[key] ?? Array(32).fill(null));
             }
+        }
+        if (copy.euclidean || motif.euclidean) {
+            motif.euclidean ??= Array(16).fill(null);
+            motif.euclidean[target] = structuredClone(copy.euclidean ?? null);
         }
         if (copy.velocities || motif.velocities) {
             motif.velocities ??= createVelocities();
@@ -806,6 +819,7 @@ export class LiRythmeActions {
         delete motif.ratchets;
         delete motif.keyGroups;
         delete motif.grooveMorph;
+        delete motif.euclidean;
         delete motif.atDestinations;
         if (motif.attributes !== undefined) motif.attributes = {};
         this.state.onBankChange?.();
@@ -823,6 +837,8 @@ export class LiRythmeActions {
             if (voiceId === null) motif.attributes = {};
             else for (const rows of Object.values(motif.attributes)) rows[voiceId].fill(null);
         }
+        if (voiceId === null) delete motif.euclidean;
+        else if (motif.euclidean) motif.euclidean[voiceId] = null;
         if (voiceId === null) delete motif.velocities;
         else motif.velocities?.[voiceId].fill(100);
         if (voiceId === null) delete motif.atDestinations;
@@ -870,6 +886,10 @@ export class LiRythmeActions {
                 for (let step = 0; step < length; step++) rows[id][step + length] = structuredClone(rows[id][step]);
             }
             next.voiceLengths[id] = length * 2;
+            if (next.euclidean?.[id]) {
+                next.euclidean[id].resolution = length * 2;
+                next.euclidean[id].hits = next.events[id].slice(0, length * 2).filter(Boolean).length;
+            }
         }
         if (whole) next.motifLength *= 2;
         const playing = context.editingMotifId === this.state.playingMotifId;

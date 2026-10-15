@@ -1033,7 +1033,7 @@ test("THE GATE redraws BOOK on view changes and restores PLAY reservations", () 
         status === 0x90 && controller.mapping.BOOKS.includes(note));
     const expected = library => controller.mapping.BOOKS.map((note, i) => [0x90, note,
         ((library ? (i === 0 ? controller.colors.GREEN : controller.colors.OFF)
-            : i === 0 || i === 2 || i === 3 || i === 4 ? controller.colors.RED : i < 8 ? controller.colors.DIM_RED : i === 8 ? controller.colors.YELLOW : controller.colors.DIM_AMBER) & 0x33) | 4]);
+            : i === 0 || i === 2 || i === 3 || i === 4 ? controller.colors.RED : i < 8 ? controller.colors.DIM_RED : (i === 8 || i === 9) ? controller.colors.YELLOW : controller.colors.DIM_AMBER) & 0x33) | 4]);
     const check = library => {
         assert.deepEqual(bookMessages(), expected(library));
         assert.ok(messages.every(([status, note]) => status === 0x90 &&

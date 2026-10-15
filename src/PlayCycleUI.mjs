@@ -9,7 +9,10 @@ export function readPlayCycle(root, system = "MOTIF") {
     const id = state.selectedInstrument;
     const selected = Number.isInteger(id) && id >= 0 && id < 16;
     const voiceLength = selected ? cycle?.lengths[id] ?? state.getVoiceLength(id, motifId) : null;
-    const voicePosition = selected ? running ? state.getVoiceStep(id) : position % voiceLength : null;
+    const recipe = selected ? running ? state.getPlaybackMotifForVoice(id) : state.getMotif(motifId) : null;
+    const polyrythmic = recipe?.euclidean?.[id]?.mode === "POLYRHYTHMIC";
+    const voicePosition = selected ? polyrythmic ? position * voiceLength / length
+        : running ? state.getVoiceStep(id) : position % voiceLength : null;
     return {
         length, position, motifId,
         viewingOther: motifId !== state.currentMotifId,

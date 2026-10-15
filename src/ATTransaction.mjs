@@ -1,3 +1,5 @@
+import { EUCLIDEAN_SLOT, euclideanDefinition, euclideanPattern } from "./Euclidean.mjs";
+export { EUCLIDEAN_SLOT, validEuclidean, validEuclideanVoice, euclideanOnsets } from "./Euclidean.mjs";
 import { SCALES, defaultKeyGroup, validKeyCell, readKeyCell, applyKeyPatch, keyNote, keyGroupFeedback } from "./KeyGroup.mjs";
 export { SCALES, defaultKeyGroup, validKeySettings, validKeyCell, validKeyRow, validKeyGroups, readKeyCell, keyNote, keyGroupFeedback } from "./KeyGroup.mjs";
 import { mutateMotif } from "./Mutation.mjs";
@@ -147,7 +149,7 @@ export const AT_SLOTS = Object.freeze([
             }
         }
     }),
-    ...Array(7).fill(null)
+    euclideanDefinition, ...Array(6).fill(null)
 ]);
 export const validVelocities = value => Array.isArray(value) && value.length === 16 &&
     value.every(row => Array.isArray(row) && row.length === 32 &&
@@ -195,7 +197,7 @@ export class ATTransaction {
     }
     getEditingState() { return this.state; }
     definition(slot) { return AT_SLOTS[slot]; }
-    isEnabled(slot) { return Boolean(this.definition(slot)) && (slot !== 1 || this.state.colorEnabled === true); }
+    isEnabled(slot) { if (slot === EUCLIDEAN_SLOT && this.state.systemName !== "MOTIF") return false; return Boolean(this.definition(slot)) && (slot !== 1 || this.state.colorEnabled === true); }
     setColorEnabled(enabled) {
         // Disable entry only; an existing transaction retains CANCEL/COMMIT.
         this.state.colorEnabled = Boolean(enabled);
@@ -213,7 +215,7 @@ export class ATTransaction {
     }
     beginGrooveMorph() {
         const id = this.context().editingMotifId, motif = this.state.getMotif(id);
-        if (this.state.systemName !== "MOTIF" || !motif ||
+        if (this.state.systemName !== "MOTIF" || !motif || motif.euclidean ||
             this.state.currentView !== "MOTIF_LIBRARY" && !motif.grooveMorph && motif.events.some(row => row.some(Boolean))) return false;
         if (!this.begin(8, { mutation: true })) return false;
         const tx = this.state.atTransaction;
@@ -226,7 +228,7 @@ export class ATTransaction {
     }
     selectGrooveBlock(id) {
         const tx = this.state.atTransaction, motif = this.state.getMotif(id);
-        if (tx?.kind !== "GROOVE_MORPH" || !tx.chooseBlock || !motif ||
+        if (tx?.kind !== "GROOVE_MORPH" || !tx.chooseBlock || !motif || motif.euclidean ||
             !motif.grooveMorph && motif.events.some(row => row.some(Boolean))) return false;
         tx.editingMotifId = id;
         tx.valueIndex = motif.grooveMorph?.level ?? null;
@@ -235,11 +237,15 @@ export class ATTransaction {
     }
     begin(slot = 0, { mutation = false } = {}) {
         const definition = AT_SLOTS[slot];
+        if (slot === EUCLIDEAN_SLOT) {
+            const motif = this.state.getMotif(this.context().editingMotifId);
+            if (motif?.grooveMorph || !motif?.euclidean && motif?.events.some(row => row.some(Boolean))) return false;
+        }
         if (!this.isEnabled(slot) || this.state.atTransaction ||
             !(this.state.currentView === "PLAY" || mutation && this.state.currentView === "MOTIF_LIBRARY") ||
             mutation && this.state.systemName !== "MOTIF") return false;
         this.state.atTransaction = {
-            ...(mutation ? { kind: "MUTATION" } : {}),
+            ...(mutation ? { kind: "MUTATION" } : slot === EUCLIDEAN_SLOT ? { kind: "EUCLIDEAN" } : {}),
             system: this.state.systemName ?? "MOTIF",
             slot, instruments: new Set(), steps: new Set(), valueIndex: null,
             // CHAIN playback and FOCUS navigation remain independent of A/T's view.
@@ -258,6 +264,12 @@ export class ATTransaction {
         if (tx?.kind === "MUTATION" || tx?.kind === "GROOVE_MORPH") return false;
         const limit = category === "instruments" ? 16 : category === "steps" ? 32 : 0;
         if (!tx || !Number.isInteger(id) || id < 0 || id >= limit) return false;
+        if (tx.kind === "EUCLIDEAN") {
+            if (category !== "instruments") return false;
+            tx.instruments = new Set([id]);
+            this.changed("value");
+            return true;
+        }
         const set = tx[category];
         if (set.has(id)) set.delete(id);
         else { if (!additive) set.clear(); set.add(id); }
@@ -266,9 +278,41 @@ export class ATTransaction {
         this.changed(category);
         return true;
     }
+    setEuclideanStep(step, { resolution = false, duration = false } = {}) {
+        const tx = this.state.atTransaction;
+        if (tx?.kind !== "EUCLIDEAN" || !Number.isInteger(step) || step < 0 || step >= 32) return false;
+        const voice = [...tx.instruments][0];
+        if (!duration && voice === undefined) return false;
+        const motif = this.state.getMotif(tx.editingMotifId);
+        if (this.state.transportState === "PLAY" && tx.editingMotifId === this.state.playingMotifId) this.state.deferDouble([], true);
+        if (duration) motif.motifLength = step + 1;
+        else {
+            motif.euclidean ??= Array(16).fill(null);
+            const settings = motif.euclidean[voice] ??= { resolution: 32, hits: 0, mode: "POLYMETRIC" };
+            if (resolution) { settings.resolution = step + 1; settings.hits = Math.min(settings.hits, settings.resolution); }
+            else settings.hits = Math.min(step + 1, settings.resolution);
+            motif.voiceLengths[voice] = settings.resolution;
+            motif.events[voice] = euclideanPattern(settings.resolution, settings.hits);
+        }
+        tx.touched.add(tx.editingMotifId);
+        this.changed("value");
+        return true;
+    }
     apply(index) {
         const tx = this.state.atTransaction;
         if (!tx || !Number.isInteger(index) || index < 0 || index > 7) return false;
+        if (tx.kind === "EUCLIDEAN") {
+            if (index > 1 || !tx.instruments.size) return false;
+            const motif = this.state.getMotif(tx.editingMotifId), voice = [...tx.instruments][0];
+            if (this.state.transportState === "PLAY" && tx.editingMotifId === this.state.playingMotifId) this.state.deferDouble([], true);
+            motif.euclidean ??= Array(16).fill(null);
+            const settings = motif.euclidean[voice] ??= { resolution: 32, hits: 0, mode: "POLYMETRIC" };
+            settings.mode = index === 0 ? "POLYMETRIC" : "POLYRHYTHMIC";
+            motif.voiceLengths[voice] = settings.resolution;
+            tx.touched.add(tx.editingMotifId);
+            this.changed("value");
+            return true;
+        }
         if (tx.kind === "GROOVE_MORPH") {
             const id = tx.editingMotifId, motif = this.state.getMotif(id);
             if (!motif.grooveMorph && motif.events.some(row => row.some(Boolean))) return false;
@@ -471,8 +515,8 @@ export class ATTransaction {
         if (!tx) return false;
         const definition = AT_SLOTS[tx.slot];
         if (!commit) for (const id of tx.touched) {
-            if (tx.slot === 8 && this.state.transportState === "PLAY" && id === this.state.playingMotifId) {
-                this.state.deferDouble([...tx.rotationVoices], Boolean(tx.rotationWholeMotif));
+            if ((tx.slot === 8 || tx.kind === "EUCLIDEAN") && this.state.transportState === "PLAY" && id === this.state.playingMotifId) {
+                this.state.deferDouble([...(tx.rotationVoices ?? [])], tx.kind === "EUCLIDEAN" || Boolean(tx.rotationWholeMotif));
             }
             definition.restore(this.state.motifs[id], tx.snapshots[id]);
             if (tx.attributeSnapshots[id] === undefined) delete this.state.motifs[id].attributes;

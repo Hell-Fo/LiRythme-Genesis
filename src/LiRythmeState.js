@@ -15,7 +15,7 @@ Elias (OpenAI)
 */
 
 import { PadConfiguration } from "./PadConfiguration.js";
-import { composeGroove, defaultKeyGroup, readKeyCell, keyNote } from "./ATTransaction.mjs";
+import { composeGroove, defaultKeyGroup, readKeyCell, keyNote, euclideanOnsets } from "./ATTransaction.mjs";
 
 export class LiRythmeState {
     constructor({ system = "MOTIF" } = {}) {
@@ -127,20 +127,20 @@ export class LiRythmeState {
         return name === "MOTIF" ? root : root.modulation;
     }
 
-    getKeyGroupNote(voice, preview = null) {
+    getKeyGroupNote(voice, preview = null, eventStep = null) {
         const root = this.rootState ?? this;
         const base = root.forSystem("MOTIF"), mod = root.forSystem("MODULATION");
         const cell = preview ? readKeyCell(preview.motif, voice, preview.step)
-            : readKeyCell(base.getPlaybackMotifForVoice(voice), voice, base.getVoiceStep(voice));
+            : readKeyCell(base.getPlaybackMotifForVoice(voice), voice, (eventStep ?? base.getVoiceStep(voice)));
         const overlay = !preview && root.modulationActive
             ? readKeyCell(mod.getPlaybackMotifForVoice(voice), voice, mod.getVoiceStep(voice)) : null;
         return keyNote(root.keyGroup, cell, overlay);
     }
 
-    getPlayingEvent(voiceId, position = this.playheadPosition) {
+    getPlayingEvent(voiceId, position = this.playheadPosition, eventStep = null) {
         const motif = this.forSystem("MOTIF");
         const modulation = this.forSystem("MODULATION");
-        const base = motif.getPlaybackMotifForVoice(voiceId), baseStep = motif.getVoiceStep(voiceId, position);
+        const base = motif.getPlaybackMotifForVoice(voiceId), baseStep = eventStep ?? motif.getVoiceStep(voiceId, position);
         const overlay = modulation.getPlaybackMotifForVoice(voiceId), overlayStep = modulation.getVoiceStep(voiceId);
         const active = this.modulationActive;
         if (!base.events[voiceId][baseStep]) return null;
@@ -185,7 +185,18 @@ export class LiRythmeState {
         return lengths.reduce((a, b) => (a / gcd(a, b)) * b, 1);
     }
 
+    getVoiceOnsets(voiceId, position = this.playheadPosition) {
+        const motif = this.getPlaybackMotifForVoice(voiceId);
+        return euclideanOnsets(motif, voiceId, position, this.liveLengthCycle?.duration ?? this.getMotifDuration(this.playingMotifId))
+            ?? [{ step: this.getVoiceStep(voiceId, position), offset: 0, interval: 1 }];
+    }
+
     getVoiceStep(voiceId, position = this.playheadPosition) {
+        const motif = this.getPlaybackMotifForVoice(voiceId);
+        if (motif.euclidean?.[voiceId]?.mode === "POLYRHYTHMIC") {
+            const duration = this.liveLengthCycle?.duration ?? this.getMotifDuration(this.playingMotifId);
+            return Math.floor((position % duration) * (motif.voiceLengths[voiceId] ?? motif.euclidean[voiceId].resolution) / duration);
+        }
         if (this.liveLengthCycle && position === this.playheadPosition) {
             return this.liveLengthCycle.steps[voiceId];
         }
@@ -291,7 +302,14 @@ export class LiRythmeState {
             };
         }
         if (id === null) this.motifLength = length;
-        else this.voiceLengths[id] = length;
+        else {
+            this.voiceLengths[id] = length;
+            const motif = this.getMotif(this.currentMotifId), settings = motif.euclidean?.[id];
+            if (settings) {
+                settings.resolution = length ?? 32;
+                settings.hits = motif.events[id].slice(0, settings.resolution).filter(Boolean).length;
+            }
+        }
         this.onBankChange?.();
         if (!defer && (!this.chainFocus || editingPlaying && this.transportState !== "PLAY")) {
             this.liveLengthCycle = null;

@@ -89,6 +89,7 @@ export class LaunchpadMini {
         this.deleteBlinkTimer = null;
         this.deleteBlinkGeneration = 0;
         this.deleteConsumedInputs = new Set();
+        this.euclideanDurationHeld = false;
         this.shiftPressed = false;
         this.doubleNavigationHeld = false;
         this.previousPressed = false;
@@ -258,6 +259,7 @@ export class LaunchpadMini {
         this.tempoChordConsumed = false;
         this.previousTempoMode = false;
         this.nextTempoMode = false;
+        this.euclideanDurationHeld = false;
         this.shiftPressed = false;
         this.doubleNavigationHeld = false;
         this.previousPressed = false;
@@ -380,6 +382,17 @@ export class LaunchpadMini {
     }
 
     getMotifStepColor(step) {
+        if (this.state.atTransaction?.kind === "EUCLIDEAN") {
+            const tx = this.state.atTransaction, motif = this.state.getMotif(tx.editingMotifId);
+            const voice = [...tx.instruments][0], settings = motif.euclidean?.[voice];
+            if (this.euclideanDurationHeld) return step === motif.motifLength - 1 ? this.colors.YELLOW : this.colors.OFF;
+            if (voice === undefined) return this.colors.OFF;
+            const resolution = settings?.resolution ?? 32, hits = settings?.hits ?? 0;
+            if (step === resolution - 1 && step === hits - 1) return this.colors.YELLOW;
+            if (step === resolution - 1) return this.colors.RED;
+            if (step === hits - 1) return this.colors.GREEN;
+            return motif.events[voice][step] ? this.colors.DIM_GREEN : this.colors.OFF;
+        }
         const target = this.state.atTransaction;
         const selectedVoiceId = target ? null : this.state.selectedInstrument;
 
@@ -535,6 +548,9 @@ export class LaunchpadMini {
     }
 
     getInstrumentColor(i) {
+        if (this.state.atTransaction?.kind === "EUCLIDEAN") {
+            return this.state.atTransaction.instruments.has(i) ? this.colors.YELLOW : this.colors.DIM_GREEN;
+        }
         if (this.state.atTransaction) {
             const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId());
             const events = motif.events[i];
@@ -803,6 +819,7 @@ export class LaunchpadMini {
     getATBookColor(slot) {
         const implemented = Boolean(this.actions.at.definition(slot));
         if (slot === 1 && !this.state.colorEnabled) return "DIM_RED";
+        if (this.actions.at.definition(slot)?.id === "EUCLIDEAN" && this.state.systemName !== "MOTIF") return "DIM_AMBER";
         const familyColor = slot < 8 ? "RED" : "YELLOW";
         if (!implemented) return slot < 8 ? "DIM_RED" : "DIM_AMBER";
         return !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind) && this.state.atTransaction?.slot === slot && !this.atLit ? "OFF" : familyColor;
@@ -957,6 +974,7 @@ export class LaunchpadMini {
     }
 
     drawPlayhead(step = this.state.playheadPosition) {
+        if (this.state.atTransaction?.kind === "EUCLIDEAN") return;
         if (this.state.atTransaction) {
             step %= this.mapping.MOTIF.length;
             const collecting = this.collectATLEDs;
@@ -1358,6 +1376,20 @@ export class LaunchpadMini {
     }
 
     drawATValues() {
+        if (this.state.atTransaction?.kind === "EUCLIDEAN") {
+            this.cancelVelocityMeter();
+            const tx = this.state.atTransaction, voice = [...tx.instruments][0];
+            const motif = this.state.getMotif(tx.editingMotifId), settings = motif.euclidean?.[voice];
+            for (const [index, note] of this.mapping.AT_VALUE.entries()) {
+                const selected = voice !== undefined && index === (settings?.mode === "POLYRHYTHMIC" ? 1 : 0);
+                const awaitingDuration = selected && index === 1 && motif.motifLength === null;
+                const color = index === 1 && this.euclideanDurationHeld ? this.colors.YELLOW
+                    : awaitingDuration ? this.atLit ? this.colors.RED : this.colors.OFF
+                    : index < 2 ? selected ? this.colors.RED : this.colors.DIM_AMBER : this.colors.OFF;
+                this.sendController(this.deviceName, [0x90, note, (color & 0x33) | 4]);
+            }
+            return;
+        }
         const tx = this.state.atTransaction;
         const velocityMeter = tx?.slot === 0 && !["MUTATION", "GROOVE_MORPH"].includes(tx?.kind);
         const velocities = new Set();
@@ -1435,6 +1467,7 @@ export class LaunchpadMini {
                     try {
                         this.drawBooks();
                         this.drawMutationStatus();
+                        if (this.state.atTransaction?.kind === "EUCLIDEAN") this.drawATValues();
                         if (this.state.atTransaction?.slot === 8 && !["MUTATION", "GROOVE_MORPH"].includes(this.state.atTransaction?.kind)) this.drawTimelineSelection();
                     }
                     finally { this.collectATLEDs = false; }
@@ -1443,6 +1476,7 @@ export class LaunchpadMini {
             };
             blink();
         } else if (!active) {
+            this.euclideanDurationHeld = false;
             clearTimeout(this.atBlinkTimer);
             this.atBlinkTimer = null;
             this.atLit = true;
@@ -1454,6 +1488,7 @@ export class LaunchpadMini {
         this.collectATLEDs = true;
         try {
             this.drawATValues();
+            if (this.state.atTransaction?.kind === "EUCLIDEAN") this.drawInstruments();
             if (reason === "steps" || reason === "value") { this.drawMotif(); this.drawPlayhead(); }
             else if (reason !== "value") this.drawSelectedMotif();
             this.drawTransport();
@@ -1463,6 +1498,22 @@ export class LaunchpadMini {
 
     // Contextual layer owns A/T inputs; held releases remain consumed after exit.
     handleATInput(status, number, value, key) {
+        if (value === 0 && status === 0x90 && number === this.mapping.AT_VALUE[1]) this.euclideanDurationHeld = false;
+        if (this.state.atTransaction?.kind === "EUCLIDEAN" && status === 0x90 &&
+            (this.mapping.MOTIF.includes(number) || number === this.mapping.AT_VALUE[1])) {
+            if (value > 0) {
+                this.atHeld.add(key);
+                if (number === this.mapping.AT_VALUE[1]) {
+                    this.actions.at.apply(1);
+                    this.euclideanDurationHeld = true;
+                }
+                else this.actions.at.setEuclideanStep(this.mapping.MOTIF.indexOf(number),
+                    { resolution: this.shiftPressed, duration: Boolean(this.euclideanDurationHeld) });
+            } else this.atHeld.delete(key);
+            this.drawMotif();
+            this.drawATValues();
+            return true;
+        }
         if (value === 0 && (this.state.atTransaction || this.atHeld.has(key))) {
             this.deleteConsumedInputs.delete(key);
             if (status === 0x90 && number === this.mapping.VALUE_CONTROLS.SWITCH) this.switchPressed = false;

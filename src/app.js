@@ -658,74 +658,78 @@ function triggerMotifStep(step) {
         const playingMotif = previewMotifId !== null ? previewState.getMotif(previewMotifId).grooveMorph && previewMotifId === previewState.playingMotifId
             ? previewState.getOccurrenceMotif() : previewState.getMotif(previewMotifId)
             : state.getPlaybackMotifForVoice?.(voiceId) ?? state.getMotif(state.playingMotifId);
-        const steps = playingMotif.events[voiceId];
-        const localStep = previewMotifId !== null ? step % 32 : state.getVoiceStep?.(voiceId, step) ?? step;
-        const event = previewMotifId === null && state.getPlayingEvent ? state.getPlayingEvent(voiceId, step)
-            : previewSystem !== "MODULATION" && steps[localStep] ? {
-                velocity: playingMotif.attributes?.VELOCITY?.[voiceId]?.[localStep] ?? playingMotif.velocities?.[voiceId]?.[localStep] ?? 100,
-                color: playingMotif.attributes?.COLOR?.[voiceId]?.[localStep] ?? playingMotif.colors?.[voiceId]?.[localStep] ?? false
-            } : null;
-        if (!event || state.isVoiceAudible?.(voiceId) === false) {
-            continue;
-        }
-
-        const voice = structuredClone(state.padConfiguration.voices[voiceId]);
-        const keyGroupNote = voice?.type === "KEY GROUP" ? state.getKeyGroupNote(voiceId,
-            previewMotifId !== null ? { motif: playingMotif, step: localStep } : null) : null;
-        const midiOutputName = ["MIDI DRUM", "KEY GROUP"].includes(voice?.type)
-            ? (voice.type === "KEY GROUP" && state.keyGroupOutputName) || midiOutputSelector.options[midiOutputSelector.selectedIndex]?.textContent : null;
-        const delay = previewMotifId === null ? state.noteTiming?.delayFor(voiceId) ?? 0 : 0;
-        const plan = state.noteTiming?.planFor(voiceId, previewMotifId === null ? null
-            : { system: previewSystem, motifId: previewMotifId, step }) ?? { offsets: [delay], interval: 0, gate: 50 };
-        const feedback = delayed => {
-            if (delayed) {
-                try { launchpad.pulseInstrument(voiceId); } catch (error) { console.error("Instrument LED feedback failed:", error); }
-            } else triggeredInstruments.push(voiceId);
-        };
+        const onsets = previewMotifId === null ? (state.getVoiceOnsets?.(voiceId, step) ?? [{ step: state.getVoiceStep?.(voiceId, step) ?? step, offset: 0, interval: 1 }]) : [{ step: step % 32, offset: 0, interval: 1 }];
         let releasePrevious = null;
-        const emit = (delayed = false) => {
-            if (state.isVoiceAudible?.(voiceId) === false) return;
-            if (voice?.type === "AUDIO") {
-                if (audioPlayer.trigger(voice, event.velocity)) feedback(delayed);
-                return;
+        for (const [onsetIndex, onset] of onsets.entries()) {
+            const steps = playingMotif.events[voiceId];
+            const localStep = onset.step;
+            const event = previewMotifId === null && state.getPlayingEvent ? state.getPlayingEvent(voiceId, step, localStep)
+                : previewSystem !== "MODULATION" && steps[localStep] ? {
+                    velocity: playingMotif.attributes?.VELOCITY?.[voiceId]?.[localStep] ?? playingMotif.velocities?.[voiceId]?.[localStep] ?? 100,
+                    color: playingMotif.attributes?.COLOR?.[voiceId]?.[localStep] ?? playingMotif.colors?.[voiceId]?.[localStep] ?? false
+                } : null;
+            if (!event || state.isVoiceAudible?.(voiceId) === false) {
+                continue;
             }
-            if (!["MIDI DRUM", "KEY GROUP"].includes(voice?.type) || voice.output?.mode !== "DEFAULT" ||
-                !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
-                (voice.type === "KEY GROUP" ? keyGroupNote === null : !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127)) {
-                return;
-            }
-            const note = voice.type === "KEY GROUP" ? keyGroupNote : event.color &&
-                Number.isInteger(voice.colorNote) && voice.colorNote >= 0 && voice.colorNote <= 127
-                ? voice.colorNote : voice.note;
-            const status = 0x90 | (voice.channel - 1);
-            // A delayed Note Off must never cut the following ratchet strike.
-            releasePrevious?.();
-            midiManager.send(
-                midiOutputName,
-                [status, note, event.velocity],
-                undefined, { preview: previewMotifId !== null, keyGroup: voice.type === "KEY GROUP" }
-            );
 
-            let released = false;
-            const release = () => {
-                if (released) return;
-                released = true;
+            const voice = structuredClone(state.padConfiguration.voices[voiceId]);
+            const keyGroupNote = voice?.type === "KEY GROUP" ? state.getKeyGroupNote(voiceId,
+                previewMotifId !== null ? { motif: playingMotif, step: localStep } : null, localStep) : null;
+            const midiOutputName = ["MIDI DRUM", "KEY GROUP"].includes(voice?.type)
+                ? (voice.type === "KEY GROUP" && state.keyGroupOutputName) || midiOutputSelector.options[midiOutputSelector.selectedIndex]?.textContent : null;
+            const delay = previewMotifId === null ? state.noteTiming?.delayFor(voiceId) ?? 0 : 0;
+            const plan = state.noteTiming?.planFor(voiceId, previewMotifId === null ? null
+                : { system: previewSystem, motifId: previewMotifId, step }, previewMotifId === null && playingMotif.euclidean?.[voiceId]?.mode === "POLYRHYTHMIC" ? onset : null) ?? { offsets: [delay], interval: 0, gate: 50 };
+            const feedback = delayed => {
+                if (delayed) {
+                    try { launchpad.pulseInstrument(voiceId); } catch (error) { console.error("Instrument LED feedback failed:", error); }
+                } else triggeredInstruments.push(voiceId);
+            };
+            const emit = (delayed = false) => {
+                if (state.isVoiceAudible?.(voiceId) === false) return;
+                if (voice?.type === "AUDIO") {
+                    if (audioPlayer.trigger(voice, event.velocity)) feedback(delayed);
+                    return;
+                }
+                if (!["MIDI DRUM", "KEY GROUP"].includes(voice?.type) || voice.output?.mode !== "DEFAULT" ||
+                    !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
+                    (voice.type === "KEY GROUP" ? keyGroupNote === null : !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127)) {
+                    return;
+                }
+                const note = voice.type === "KEY GROUP" ? keyGroupNote : event.color &&
+                    Number.isInteger(voice.colorNote) && voice.colorNote >= 0 && voice.colorNote <= 127
+                    ? voice.colorNote : voice.note;
+                const status = 0x90 | (voice.channel - 1);
+                // A delayed Note Off must never cut the following ratchet strike.
+                releasePrevious?.();
                 midiManager.send(
                     midiOutputName,
-                    [status, note, 0], undefined, { keyGroup: voice.type === "KEY GROUP" }
+                    [status, note, event.velocity],
+                    undefined, { preview: previewMotifId !== null, keyGroup: voice.type === "KEY GROUP" }
                 );
-            };
-            releasePrevious = release;
-            setTimeout(release, plan.gate);
 
-            if (midiManager.findOutput(midiOutputName) !== null) {
-                feedback(delayed);
+                let released = false;
+                const release = () => {
+                    if (released) return;
+                    released = true;
+                    midiManager.send(
+                        midiOutputName,
+                        [status, note, 0], undefined, { keyGroup: voice.type === "KEY GROUP" }
+                    );
+                };
+                releasePrevious = release;
+                setTimeout(release, plan.gate);
+
+                if (midiManager.findOutput(midiOutputName) !== null) {
+                    feedback(delayed);
+                }
+            };
+            for (const [index, offset] of plan.offsets.entries()) {
+                if (offset > 0) state.noteTiming.schedule(offset, () => emit(true),
+                    Math.min(plan.offsets[index + 1] ?? state.noteTiming.duration,
+                        onsets[onsetIndex + 1] ? onsets[onsetIndex + 1].offset * state.noteTiming.duration : state.noteTiming.duration), previewMotifId !== null);
+                else emit();
             }
-        };
-        for (const [index, offset] of plan.offsets.entries()) {
-            if (offset > 0) state.noteTiming.schedule(offset, () => emit(true),
-                plan.offsets[index + 1] ?? state.noteTiming.duration, previewMotifId !== null);
-            else emit();
         }
     }
 

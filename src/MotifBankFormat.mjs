@@ -1,4 +1,4 @@
-import { AT_SLOTS, validKeyGroups, validKeySettings, defaultKeyGroup, validSwings, validRatchets, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph } from "./ATTransaction.mjs";
+import { AT_SLOTS, validKeyGroups, validKeySettings, defaultKeyGroup, validSwings, validRatchets, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph, validEuclidean } from "./ATTransaction.mjs";
 
 export function validateMotifBank(value, { modulation = false } = {}) {
     const length = n => n === null || Number.isInteger(n) && n >= 1 && n <= 32;
@@ -14,6 +14,7 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             (m.swings === undefined || validSwings(m.swings)) &&
             (m.ratchets === undefined || validRatchets(m.ratchets)) &&
             (m.keyGroups === undefined || validKeyGroups(m.keyGroups)) &&
+            (m.euclidean === undefined || !modulation && !m.grooveMorph && validEuclidean(m.euclidean)) &&
             (m.grooveMorph === undefined || !modulation && validGrooveMorph(m.grooveMorph) && !m.events.some(row => row.some(Boolean))) &&
             (modulation ? validExplicitAttributes(m.attributes) : m.attributes === undefined) &&
             (m.atDestinations === undefined || validATDestinations(m.atDestinations)))) {
@@ -27,6 +28,7 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             ...(m.velocities ? { velocities: m.velocities.map(row => row.slice()) } : {}),
             ...(m.colors ? { colors: m.colors.map(row => row.slice()) } : {}),
             ...(m.swings ? { swings: m.swings.map(row => row.slice()) } : {}),
+            ...(m.euclidean ? { euclidean: structuredClone(m.euclidean) } : {}),
             ...(m.grooveMorph ? { grooveMorph: structuredClone(m.grooveMorph) } : {}),
             ...(m.keyGroups ? { keyGroups: structuredClone(m.keyGroups) } : {}),
             ...(m.ratchets ? { ratchets: m.ratchets.map(row => row.slice()) } : {}),

@@ -223,6 +223,16 @@ inspecté ; le panneau PLAY indique le dernier réglage collectif appliqué.
 Sur une Voice MIDI DRUM, COLOR ON utilise sa **COLOR NOTE** si elle est définie,
 sinon sa note habituelle. Les autres attributs restent indépendants.
 
+### EUCLIDIEN
+
+Sur un Motif vide, choisir Euclidien puis un instrument. Shift + Step fixe
+sa résolution (rouge), un clic sur un Step fixe le nombre de frappes (vert).
+A choisit le mode polymétrique ; B choisit le mode polyrythmique. B maintenu
++ Step définit la durée du Motif entier. B clignote jusqu’à ce choix, puis reste
+allumé. La Voice sélectionnée est allumée en jaune. Chaque instrument conserve ses
+propres réglages. Un clic sur Euclidien annule ; un maintien confirme.
+Voir [Euclidien](AT-EUCLIDEAN.md) pour le détail.
+
 ### ROTATION
 
 Après entrée dans ROTATION, << et >> déplacent les événements ciblés d’un

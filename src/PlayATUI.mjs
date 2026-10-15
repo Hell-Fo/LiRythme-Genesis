@@ -14,6 +14,17 @@ export function readATPanel(state) {
         name: "MUTATION", target: "MOTIF", motif: tx.editingMotifId + 1,
         values: MUTATION_METHODS, selected: tx.valueIndex
     };
+    if (tx.kind === "EUCLIDEAN") {
+        const motif = state.getMotif(tx.editingMotifId), voice = [...tx.instruments][0];
+        const settings = motif.euclidean?.[voice];
+        return { name: "EUCLIDIEN", motif: tx.editingMotifId + 1,
+            target: voice === undefined ? "CHOISIR UN INSTRUMENT" :
+                `${state.padConfiguration.voices[voice]?.name || 'VOICE ' + (voice + 1)} · ${settings?.hits ?? 0}/${settings?.resolution ?? 32} · MOTIF ${state.getMotifDuration(tx.editingMotifId)} STEPS`,
+            values: ["Polymétrique", motif.motifLength === null
+                ? "Polyrythmique · B + Step : choisir la durée"
+                : "Polyrythmique · B + Step : modifier la durée"],
+            selected: voice === undefined ? null : settings?.mode === "POLYRHYTHMIC" ? 1 : 0 };
+    }
     const definition = AT_SLOTS[tx.slot];
     const valueIndex = hasTargetEvents(state.getMotif(tx.editingMotifId ?? state.currentMotifId), tx) ? tx.valueIndex : null;
     const instruments = [...tx.instruments].sort((a, b) => a - b).map(id =>
