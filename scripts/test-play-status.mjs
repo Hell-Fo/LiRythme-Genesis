@@ -19,6 +19,33 @@ function setup() {
     return { state, clock, actions, midiManager, read: () => readPlayStatus(state, clock, midiManager) };
 }
 
+test('PLAY GATE text and color follow selected Voice and Key Group transaction', () => {
+    const context = setup(), { state } = context;
+    state.padConfiguration.voices[0] = { id: 0, name: 'Synth', type: 'KEY GROUP' };
+    state.selectedInstrument = 0;
+    const elements = new Map();
+    for (const id of ['selected', 'state', 'bpm', 'source', 'gate', 'gate-current',
+        ...Array.from({ length: 8 }, (_, index) => `gate-value-${index}`)]) {
+        const element = { textContent: '', hidden: false, active: false, style: {} };
+        element.classList = { toggle: (_, active) => { element.active = active; } };
+        elements.set(`play-${id}`, element);
+    }
+    const ui = initializePlayStatusUI({ ...context,
+        document: { getElementById: id => elements.get(id) },
+        window: { requestAnimationFrame() {}, cancelAnimationFrame() {}, addEventListener() {}, removeEventListener() {} } });
+    assert.equal(elements.get('play-gate-current').textContent, 'GATE 12,5 %');
+    assert.equal(elements.get('play-gate-current').style.color, '#ffffff');
+    state.padConfiguration.voices[0].gate = 87.5; ui.render();
+    assert.equal(elements.get('play-gate-current').style.color, '#ff9999');
+    assert.equal(elements.get('play-gate-current').textContent, 'GATE 87,5 %');
+    state.selectedInstrument = null;
+    state.atTransaction = { slot: 4, instruments: new Set([0]) }; ui.render();
+    assert.equal(elements.get('play-gate').hidden, false);
+    state.atTransaction = null; ui.render();
+    assert.equal(elements.get('play-gate').hidden, true);
+    ui.dispose();
+});
+
 test("SELECTED uses the musical selection, including null, unnamed Voices and configuration replacement", () => {
     const { state, actions, read } = setup();
     assert.equal(read().selected, "Kick");
