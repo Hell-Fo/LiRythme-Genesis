@@ -10,6 +10,7 @@ import { readPlayCycle } from '../src/PlayCycleUI.mjs';
 const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), 'utf8');
 async function load(file, imports = {}) {
     let text = await source(file);
+    text = text.replace('"./LaunchpadATInput.mjs"', JSON.stringify(new URL("../src/hardware/launchpad/LaunchpadATInput.mjs", import.meta.url).href));
     imports['./ATTransaction.mjs'] = new URL('../src/ATTransaction.mjs', import.meta.url).href;
     for (const [key, value] of Object.entries(imports)) text = text.replace(JSON.stringify(key), JSON.stringify(value));
     return `data:text/javascript;base64,${Buffer.from(text).toString('base64')}`;
@@ -53,10 +54,12 @@ test('polyrythmic positions are exact fractions, with no duplicates or losses fo
     }
 });
 
-test('entry requires an empty Motif, supports reopening, rejects Modulation and Groove Morph', () => {
+test('entry supports existing Motifs and reopening, rejects Modulation and Groove Morph', () => {
     const { state, actions } = setup();
     state.motif[0][0] = true;
-    assert.equal(actions.at.begin(EUCLIDEAN_SLOT), false);
+    assert.equal(actions.at.begin(EUCLIDEAN_SLOT), true);
+    assert.equal(state.motif[0][0], true);
+    actions.at.finish(false);
     state.motif[0][0] = false;
     state.motifs[0].grooveMorph = { level: 0 };
     assert.equal(actions.at.begin(EUCLIDEAN_SLOT), false);
@@ -251,4 +254,26 @@ test(`actual dispatch ${type}/${sourceName}: fractional and multiple onsets, fee
     trigger(0); state.transportState = 'STOP';
     time.run(origin + duration * 2);
     assert.equal(starts.length, 4);
+});
+
+for (const browse of [false,true]) test(`Euclidean hardware opens a populated Motif, SHIFT preview: ${browse}`, t => {
+    t.mock.timers.enable({apis:['setTimeout']});
+    const {state,actions}=setup(); state.currentView='PLAY';
+    state.chainEnabled=true; state.chain=[0];
+    state.motif[0][0]=true; state.motif[1][3]=true;
+    const before=structuredClone(state.motifs[0]);
+    const c=new LaunchpadMini({send(){}},state,actions,'LP');
+    t.after(()=>c.resetInputState());
+    const press=(note,status=0x90)=>c.handleMidiMessage([status,note,127]);
+    const release=(note,status=0x90)=>c.handleMidiMessage([status,note,0]);
+    if(browse) { actions.at.begin(5); press(c.mapping.TOP_CONTROLS.SHIFT,0xB0); }
+    press(c.mapping.BOOKS[EUCLIDEAN_SLOT]); release(c.mapping.BOOKS[EUCLIDEAN_SLOT]);
+    if(browse) release(c.mapping.TOP_CONTROLS.SHIFT,0xB0);
+    assert.equal(state.atTransaction.kind,'EUCLIDEAN');
+    assert.deepEqual(state.motifs[0],before);
+    configure(actions,0,8,3);
+    assert.deepEqual(state.motif[0],euclideanPattern(8,3));
+    assert.deepEqual(state.motif[1],before.events[1]);
+    actions.at.finish(false);
+    assert.deepEqual(state.motifs[0],before);
 });

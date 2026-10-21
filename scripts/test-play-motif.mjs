@@ -139,7 +139,7 @@ test("existing PLAY render loop propagates Motif changes read-only and disposes 
     const state = new LiRythmeState(), clock = new LiRythmeClock(state);
     const elements = new Map();
     const document = { getElementById(id) {
-        if (!elements.has(id)) elements.set(id, { textContent: "" });
+        if (!elements.has(id)) elements.set(id, { textContent: "", style: {} });
         return elements.get(id);
     } };
     let frame, canceled = false;

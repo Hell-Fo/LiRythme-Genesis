@@ -15,7 +15,7 @@ Elias (OpenAI)
 */
 
 import { PadConfiguration } from "./PadConfiguration.js";
-import { composeGroove, defaultKeyGroup, readKeyCell, keyNote, euclideanOnsets } from "./ATTransaction.mjs";
+import { readCycle, composeGroove, defaultKeyGroup, readKeyCell, keyNote, euclideanOnsets } from "./ATTransaction.mjs";
 
 export class LiRythmeState {
     constructor({ system = "MOTIF" } = {}) {
@@ -90,6 +90,9 @@ export class LiRythmeState {
         this.soloActive = false;
         this.muteActive = false;
         this.liveLengthCycle = null;
+        Object.defineProperty(this, "cyclePasses", { value: [], writable: true });
+        Object.defineProperty(this, "chainOccurrenceRevision", { value: 0, writable: true });
+        Object.defineProperty(this, "grooveEntryToken", { value: 0, writable: true });
         if (system === "MODULATION") {
             for (const motif of this.motifs) motif.attributes = {};
         } else {
@@ -145,6 +148,10 @@ export class LiRythmeState {
         const overlay = modulation.getPlaybackMotifForVoice(voiceId), overlayStep = modulation.getVoiceStep(voiceId);
         const active = this.modulationActive;
         if (!base.events[voiceId][baseStep]) return null;
+        const overlayCycle = active ? readCycle(overlay, voiceId, overlayStep) : null;
+        const cycle = overlayCycle ?? readCycle(base, voiceId, baseStep);
+        const timeline = overlayCycle ? modulation : motif;
+        if (cycle && timeline.getCyclePass(voiceId, cycle.scope) % cycle.value !== 0) return null;
         // Motif alone owns note onsets; Modulation overrides only matching Voice attributes.
         const attributes = active ? overlay.attributes : null;
         return {
@@ -204,7 +211,30 @@ export class LiRythmeState {
         return position % this.getVoiceLength(voiceId, this.playingMotifId);
     }
 
+    resetCyclePasses() { this.cyclePasses = []; this.grooveEntryToken++; }
+
+    getCyclePass(voice, scope) {
+        const passes = this.cyclePasses[this.playingMotifId];
+        return scope === "MOTIF" ? passes?.motif ?? 0 : passes?.voices[voice] ?? 0;
+    }
+
     advanceLiveLengthCycle() {
+        const previous = Array.from({ length: 16 }, (_, voice) => this.getVoiceStep(voice));
+        this.advanceLiveLengthPosition();
+        if (this.transportState !== "PLAY") return;
+        const passes = this.cyclePasses[this.playingMotifId] ??= { motif: 0, voices: Array(16).fill(0) };
+        const boundary = this.playheadPosition === 0;
+        if (boundary) this.grooveEntryToken++;
+        // 840 is divisible by every supported period, keeping counters bounded.
+        if (boundary) passes.motif = (passes.motif + 1) % 840;
+        for (let voice = 0; voice < 16; voice++) {
+            const polyrhythmic = this.getPlaybackMotifForVoice(voice).euclidean?.[voice]?.mode === "POLYRHYTHMIC";
+            if (boundary || !polyrhythmic && this.getVoiceStep(voice) <= previous[voice])
+                passes.voices[voice] = (passes.voices[voice] + 1) % 840;
+        }
+    }
+
+    advanceLiveLengthPosition() {
         const cycle = this.liveLengthCycle;
         if (!cycle) {
             this.playheadPosition = (this.playheadPosition + 1) % this.getMotifDuration(this.playingMotifId);
@@ -243,7 +273,11 @@ export class LiRythmeState {
         if (!recipe.grooveMorph || !this.chainEnabled || this.chainPlayingDetached || this.chainPlayingIndex < 0) return recipe;
         const index = this.chainPlayingIndex, size = this.chain.length;
         if (this.groovePass && this.groovePass.index === index && this.groovePass.recipe === recipe &&
-            this.transportState === "PLAY" && this.playheadPosition > 0) return this.groovePass.motif;
+            this.transportState === "PLAY" && this.groovePass.entryToken === this.grooveEntryToken &&
+            !(this.playheadPosition === 0 && this.groovePass.lastPosition > 0)) {
+            this.groovePass.lastPosition = this.playheadPosition;
+            return this.groovePass.motif;
+        }
         // Resolve surrounding ordinary motifs without recursive Morph composition.
         const neighbor = direction => {
             for (let offset = 1; offset < size; offset++) {
@@ -261,6 +295,8 @@ export class LiRythmeState {
         // Source changes take effect on the next entry.
         if (this.groovePass?.key !== key) this.groovePass = { key, index, recipe,
             motif: composeGroove(previous, next, recipe) };
+        this.groovePass.entryToken = this.grooveEntryToken;
+        this.groovePass.lastPosition = this.playheadPosition;
         return this.groovePass.motif;
     }
 

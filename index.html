@@ -49,6 +49,11 @@
         #play-modulation-active.is-active { color: #c94c4c; font-weight: bold; }
         .chain-occurrence { display: inline-block; }
         .chain-occurrence.is-playing { color: #4a9b6b; }
+        .chain-occurrence.is-entry { animation: chain-entry-flash 160ms steps(1, end); }
+        @keyframes chain-entry-flash {
+            0%, 50% { opacity: .15; }
+            100% { opacity: 1; }
+        }
         .is-modulation .chain-occurrence.is-playing { color: #c94c4c; }
         .chain-occurrence.is-loop-master { color: #c94c4c; }
         .chain-occurrence.is-loop-master.is-playing {
@@ -150,7 +155,7 @@
                         <h3 id="voice-editor-title">VOICE 01</h3>
                         <p id="voice-editor-status" class="muted"></p>
                         <label class="field">NAME<input id="voice-name" type="text" autocomplete="off" aria-describedby="voice-error"></label>
-                        <label class="field">TYPE<select id="voice-type" aria-describedby="voice-error"><option>NONE</option><option>MIDI DRUM</option><option value="AUDIO">Audio</option><option value="KEY GROUP">Key Group</option></select></label>
+                        <label class="field">TYPE<select id="voice-type" aria-describedby="voice-error"><option>NONE</option><option>MIDI DRUM</option><option>MIDI CC</option><option value="AUDIO">Audio</option><option value="KEY GROUP">Key Group</option></select></label>
                         <div id="voice-audio-fields" hidden>
                             <label class="field">OUTPUT<select id="voice-audioOutput"><option value="LEFT">Left</option><option value="RIGHT">Right</option><option value="STEREO">Stereo</option></select></label>
                             <label class="field">SOURCE WAV<input id="voice-source" type="text" readonly></label>
@@ -161,6 +166,10 @@
                             <label class="field">OUTPUT<select id="voice-output" disabled><option>DEFAULT</option></select></label>
                             <p id="voice-output-status" class="muted"></p>
                             <label class="field">CHANNEL<input id="voice-channel" type="number" min="1" max="16" step="1" required aria-describedby="voice-error"></label>
+                            <div id="voice-cc-fields" hidden>
+                                <label class="field">CC<input id="voice-cc" type="number" min="0" max="127" step="1" required aria-describedby="voice-error"></label>
+                                <label class="field">VALUE<input id="voice-value" type="number" min="0" max="127" step="1" required aria-describedby="voice-error"></label>
+                            </div>
                             <label class="field" id="voice-fixed-note-field">NOTE<input id="voice-note" type="number" min="0" max="127" step="1" required aria-describedby="voice-error"></label>
                             <label class="field" id="voice-color-field">COLOR NOTE (optionnelle)<input id="voice-colorNote" type="number" min="0" max="127" step="1" aria-describedby="voice-error voice-color-help"></label>
                             <p id="voice-color-help" class="muted">Vide : COLOR utilise la note principale.</p>

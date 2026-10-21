@@ -309,6 +309,14 @@ function enqueueMidiMessage(message, preview = {}) {
     }
 
     if (noteOff) {
+        // Priority may bypass unrelated notes, never this note's unsent onset.
+        // Keep a reference rather than a global sequence counter: the queue is
+        // bounded and invalidated previews can simply remove the dependency.
+        const precedingNoteOn = pendingMidiMessages.findLast(pending =>
+            (pending[0] & 0xF0) === 0x90 && pending[2] > 0 &&
+            (pending[0] & 0x0F) === (validatedMessage[0] & 0x0F) &&
+            pending[1] === validatedMessage[1]);
+        if (precedingNoteOn) validatedMessage.precedingNoteOn = precedingNoteOn;
         pendingNoteOffMessages.push(validatedMessage);
     } else {
         pendingMidiMessages.push(validatedMessage);
@@ -325,6 +333,11 @@ function enqueueMidiMessage(message, preview = {}) {
 }
 
 function takePendingMidiMessage() {
+    const noteOff = pendingNoteOffMessages[0];
+    if (noteOff?.precedingNoteOn && pendingMidiMessages.includes(noteOff.precedingNoteOn)) {
+        // Drain FIFO up to that onset, preserving simultaneous Voice order.
+        return pendingMidiMessages.shift();
+    }
     return pendingNoteOffMessages.shift() ??
         pendingMidiMessages.shift() ??
         null;
@@ -345,7 +358,7 @@ function sendOnePendingMidiMessage() {
     if (message.previewExpiresAt !== undefined && Date.now() >= message.previewExpiresAt) return true;
 
     try {
-        output.sendMessage(message.previewEpoch !== undefined ? Array.from(message) : message);
+        output.sendMessage(message.previewEpoch !== undefined || message.precedingNoteOn ? Array.from(message) : message);
     } catch (error) {
         recordMidiDrop();
         post({

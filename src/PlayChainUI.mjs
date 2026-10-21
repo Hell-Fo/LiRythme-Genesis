@@ -20,18 +20,24 @@ export function readPlayChain(state, system) {
 export function initializePlayChainUI({ state, actions, system, document = globalThis.document }) {
     const container = document.getElementById(system === "MODULATION" ? "play-modulation-chain-occurrences" : "play-chain-occurrences");
     let previous = "";
+    let previousEntry = null;
     function render() {
         const occurrences = readPlayChain(state, system);
+        const layer = system ? (state.forSystem?.(system) ?? state) : (state.editingState ?? state);
+        const entry = layer.chainOccurrenceRevision ?? 0;
+        const running = layer.transportState === "PLAY";
+        const flash = running && entry !== previousEntry;
         const modulation = (system ?? state.currentTimeline) === "MODULATION";
-        const signature = JSON.stringify([modulation, occurrences]);
+        const signature = JSON.stringify([modulation, occurrences, entry, running]);
         if (signature === previous) return;
         previous = signature;
+        previousEntry = entry;
         container.classList?.toggle("is-modulation", modulation);
         const title = document.getElementById(system === "MODULATION" ? "modulation-chain-title" : "motif-chain-title");
         if (title) title.textContent = modulation ? "CHAIN MODULATION" : "CHAIN";
         container.replaceChildren(...occurrences.map(occurrence => {
             const element = document.createElement("span");
-            element.className = `chain-occurrence${occurrence.playing || occurrence.selected ? " is-playing" : ""}${occurrence.loopMaster ? " is-loop-master" : ""}`;
+            element.className = `chain-occurrence${occurrence.playing || occurrence.selected ? " is-playing" : ""}${occurrence.loopMaster ? " is-loop-master" : ""}${flash && occurrence.playing ? " is-entry" : ""}`;
             element.textContent = occurrence.label;
             return element;
         }));

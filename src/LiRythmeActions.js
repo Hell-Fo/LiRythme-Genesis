@@ -15,7 +15,7 @@ Elias (OpenAI)
 
 ===============================================================================
 */
-import { visitPlaybackAttributes, ATTransaction, validKeyGroups, validKeyRow, validSwings, validSwingRow, validRatchets, validRatchetRow, createAttributeRows, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes, validGrooveMorph, validEuclidean, validEuclideanVoice } from "./ATTransaction.mjs";
+import { hasCycles, createCycles, validCycles, validVoiceCycle, visitPlaybackAttributes, ATTransaction, validKeyGroups, validKeyRow, validSwings, validSwingRow, validRatchets, validFlams, validRatchetRow, validFlamRow, createAttributeRows, createVelocities, validVelocities, createColors, validColors, validATDestinations, validATDestinationRow, validExplicitAttributes, validGrooveMorph, validEuclidean, validEuclideanVoice } from "./ATTransaction.mjs";
 console.log("LOADED: src/LiRythmeActions.js");
 export class LiRythmeActions {
     constructor(state, clock) {
@@ -94,17 +94,28 @@ export class LiRythmeActions {
         if (selected !== null && (!Number.isInteger(selected) || selected < 0 || selected >= 16)) return false;
         const voices = selected === null ? Array.from({ length: 16 }, (_, id) => id) : [selected];
         const id = this.resolveContext().editingMotifId, motif = this.state.getMotif(id);
-        const matrices = [...Object.values(motif.attributes ?? {}), ...Object.values(motif.atDestinations ?? {})];
+        const matrices = [...(motif.cycles ? [motif.cycles.steps] : []), ...Object.values(motif.attributes ?? {}), ...Object.values(motif.atDestinations ?? {})];
         if (!voices.some(voice => matrices.some(rows => rows[voice][step] != null))) return true;
         for (const rows of matrices) for (const voice of voices) rows[voice][step] = null;
         visitPlaybackAttributes(this.state, id, new Set(voices), (snapshot, activeVoices) => {
-            for (const rows of [...Object.values(snapshot.attributes ?? {}), ...Object.values(snapshot.atDestinations ?? {})]) {
+            for (const rows of [...(snapshot.cycles ? [snapshot.cycles.steps] : []), ...Object.values(snapshot.attributes ?? {}), ...Object.values(snapshot.atDestinations ?? {})]) {
                 for (const voice of activeVoices) rows[voice][step] = null;
             }
         });
         this.state.onBankChange?.();
         return true;
     }
+    adjustKeyGroupGate(voiceId, direction) {
+        const voice = this.rootState.padConfiguration.voices[voiceId];
+        if (voice?.type !== "KEY GROUP" || ![-1, 1].includes(direction)) return false;
+        const values = [12.5, 25, 37.5, 50, 62.5, 75, 87.5, 100];
+        const current = voice.gate ?? 12.5;
+        voice.gate = direction > 0 ? values.find(value => value > current) ?? 100
+            : values.findLast(value => value < current) ?? 12.5;
+        this.rootState.onBankChange?.();
+        return true;
+    }
+
     navigate(direction) {
         const tx = this.rootState.atTransaction;
         if (tx && this.state.systemName !== tx.system) return this.inSystem(tx.system, () => this.navigate(direction));
@@ -172,7 +183,7 @@ export class LiRythmeActions {
         const motif = this.state.getMotif(id);
         if (!this.state.chainFocus || !motif || !(this.state.chain.includes(id) ||
             motif.motifLength !== null || motif.voiceLengths.some(n => n !== null) ||
-            motif.events.some(row => row.some(Boolean)) || Object.values(motif.attributes ?? {}).some(rows => rows.some(row => row.some(value => value !== null))))) return false;
+            hasCycles(motif) || motif.events.some(row => row.some(Boolean)) || Object.values(motif.attributes ?? {}).some(rows => rows.some(row => row.some(value => value !== null))))) return false;
         this.state.chainViewIndex = this.state.chain.indexOf(id);
         this.state.currentMotifId = id;
         this.onMotifChange?.(id);
@@ -208,7 +219,9 @@ export class LiRythmeActions {
             ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
             ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
             ...(motif.swings ? { swings: motif.swings.map(row => row.slice()) } : {}),
+            ...(motif.cycles ? { cycles: structuredClone(motif.cycles) } : {}),
             ...(motif.ratchets ? { ratchets: motif.ratchets.map(row => row.slice()) } : {}),
+            ...(motif.flams ? { flams: motif.flams.map(row => row.slice()) } : {}),
             ...(motif.keyGroups ? { keyGroups: structuredClone(motif.keyGroups) } : {}),
             ...(motif.atDestinations ? { atDestinations: structuredClone(motif.atDestinations) } : {}),
             events: motif.events.map(row => row.slice()),
@@ -249,7 +262,9 @@ export class LiRythmeActions {
             (copy.velocities !== undefined && !validVelocities(copy.velocities)) ||
             (copy.colors !== undefined && !validColors(copy.colors)) ||
             (copy.swings !== undefined && !validSwings(copy.swings)) ||
+            (copy.cycles !== undefined && !validCycles(copy.cycles)) ||
             (copy.ratchets !== undefined && !validRatchets(copy.ratchets)) ||
+            (copy.flams !== undefined && !validFlams(copy.flams)) ||
             (copy.keyGroups !== undefined && !validKeyGroups(copy.keyGroups)) ||
             (copy.euclidean !== undefined && (!validEuclidean(copy.euclidean) || copy.grooveMorph || this.state.systemName !== "MOTIF")) ||
             (copy.grooveMorph !== undefined && (!validGrooveMorph(copy.grooveMorph) || this.state.systemName !== "MOTIF" || copy.events.some(row => row.some(Boolean)))) ||
@@ -262,7 +277,9 @@ export class LiRythmeActions {
             ...(copy.velocities ? { velocities: copy.velocities.map(row => row.slice()) } : {}),
             ...(copy.colors ? { colors: copy.colors.map(row => row.slice()) } : {}),
             ...(copy.swings ? { swings: copy.swings.map(row => row.slice()) } : {}),
+            ...(copy.cycles ? { cycles: structuredClone(copy.cycles) } : {}),
             ...(copy.ratchets ? { ratchets: copy.ratchets.map(row => row.slice()) } : {}),
+            ...(copy.flams ? { flams: copy.flams.map(row => row.slice()) } : {}),
             ...(copy.keyGroups ? { keyGroups: structuredClone(copy.keyGroups) } : {}),
             ...(copy.atDestinations ? { atDestinations: structuredClone(copy.atDestinations) } : {}),
             voiceLengths: copy.voiceLengths.slice(), motifLength: copy.motifLength });
@@ -292,6 +309,8 @@ export class LiRythmeActions {
         delete motif.colors;
         delete motif.swings;
         delete motif.ratchets;
+        delete motif.flams;
+        delete motif.cycles;
         delete motif.keyGroups;
         delete motif.grooveMorph;
         delete motif.euclidean;
@@ -465,6 +484,7 @@ export class LiRythmeActions {
     flushChainOccurrence() {
         if (!this.chainOccurrencePending) return;
         this.chainOccurrencePending = false;
+        this.state.chainOccurrenceRevision++;
         this.onChainOccurrence?.();
         this.onChainChange?.();
     }
@@ -521,7 +541,7 @@ export class LiRythmeActions {
 
         this.stopClock();
 
-        this.forEachSystem(() => { this.state.liveLengthCycle = null; this.state.playheadPosition = 0; });
+        this.forEachSystem(() => { this.state.liveLengthCycle = null; this.state.playheadPosition = 0; this.state.resetCyclePasses(); });
         this.rootState.modulationActive = this.rootState.modulationRequested;
         this.clock.resetMidiPhase();
         this.state.transportState = "PLAY";
@@ -596,7 +616,7 @@ export class LiRythmeActions {
             this.chainOccurrencePending = false;
         } });
         this.state.lockMode = false;
-        this.forEachSystem(() => { this.state.liveLengthCycle = null; this.state.playheadPosition = 0; });
+        this.forEachSystem(() => { this.state.liveLengthCycle = null; this.state.playheadPosition = 0; this.state.resetCyclePasses(); });
         this.rootState.modulationActive = this.rootState.modulationRequested;
         this.clock.resetMidiPhase();
         this.notifyTransportTransition(previousState, origin);
@@ -656,7 +676,11 @@ export class LiRythmeActions {
         const swings = this.state.getMotif(this.state.currentMotifId).swings;
         if (swings) swings[voiceId][stepIndex] = null;
         const ratchets = this.state.getMotif(this.state.currentMotifId).ratchets;
+        const flams = this.state.getMotif(this.state.currentMotifId).flams;
         if (ratchets) ratchets[voiceId][stepIndex] = null;
+        if (flams) flams[voiceId][stepIndex] = null;
+        const cycles = this.state.getMotif(this.state.currentMotifId).cycles;
+        if (cycles && !this.state.motif[voiceId][stepIndex]) cycles.steps[voiceId][stepIndex] = null;
         const keyGroups = this.state.getMotif(this.state.currentMotifId).keyGroups;
         if (keyGroups) keyGroups[voiceId][stepIndex] = null;
         const editingMotif = this.state.getMotif(this.state.currentMotifId);
@@ -727,7 +751,9 @@ export class LiRythmeActions {
                 ...(motif.velocities ? { velocities: motif.velocities.map(row => row.slice()) } : {}),
                 ...(motif.colors ? { colors: motif.colors.map(row => row.slice()) } : {}),
                 ...(motif.swings ? { swings: motif.swings.map(row => row.slice()) } : {}),
+                ...(motif.cycles ? { cycles: structuredClone(motif.cycles) } : {}),
                 ...(motif.ratchets ? { ratchets: motif.ratchets.map(row => row.slice()) } : {}),
+                ...(motif.flams ? { flams: motif.flams.map(row => row.slice()) } : {}),
                 ...(motif.keyGroups ? { keyGroups: structuredClone(motif.keyGroups) } : {}),
                 ...(motif.atDestinations ? { atDestinations: structuredClone(motif.atDestinations) } : {}),
                 voiceLengths: motif.voiceLengths.slice(), motifLength: motif.motifLength };
@@ -740,7 +766,9 @@ export class LiRythmeActions {
             ...(motif.velocities ? { velocities: motif.velocities[voiceId].slice() } : {}),
             ...(motif.colors ? { colors: motif.colors[voiceId].slice() } : {}),
             ...(motif.swings ? { swings: motif.swings[voiceId].slice() } : {}),
+            ...(motif.cycles ? { cycles: { voice: motif.cycles.voices[voiceId], steps: motif.cycles.steps[voiceId].slice() } } : {}),
             ...(motif.ratchets ? { ratchets: motif.ratchets[voiceId].slice() } : {}),
+            ...(motif.flams ? { flams: motif.flams[voiceId].slice() } : {}),
             ...(motif.keyGroups ? { keyGroups: structuredClone(motif.keyGroups[voiceId]) } : {}),
             ...(motif.atDestinations ? { atDestinations: Object.fromEntries(Object.entries(motif.atDestinations)
                 .map(([key, rows]) => [key, structuredClone(rows[voiceId])])) } : {}) };
@@ -757,12 +785,14 @@ export class LiRythmeActions {
             (copy.colors !== undefined && (!Array.isArray(copy.colors) || copy.colors.length !== 32 ||
                 !copy.colors.every(n => typeof n === "boolean"))) ||
             (copy.swings !== undefined && !validSwingRow(copy.swings)) ||
+            (copy.cycles !== undefined && !validVoiceCycle(copy.cycles)) ||
             (copy.ratchets !== undefined && !validRatchetRow(copy.ratchets)) ||
+            (copy.flams !== undefined && !validFlamRow(copy.flams)) ||
             (copy.keyGroups !== undefined && !validKeyRow(copy.keyGroups)) ||
             (copy.euclidean !== undefined && (this.state.systemName !== "MOTIF" || !validEuclideanVoice(copy.euclidean))) ||
             (copy.atDestinations !== undefined && (!copy.atDestinations || typeof copy.atDestinations !== "object" ||
                 Array.isArray(copy.atDestinations) || !Object.entries(copy.atDestinations).every(([key, row]) =>
-                    ["VELOCITY", "COLOR", "SWING", "RATCHET", "KEY_GROUP", "ROTATION"].includes(key) && validATDestinationRow(row))))) return false;
+                    ["VELOCITY", "COLOR", "SWING", "RATCHET", "FLAM", "KEY_GROUP", "CYCLE", "ROTATION"].includes(key) && validATDestinationRow(row))))) return false;
         if (copy.attributes !== undefined && (!copy.attributes || typeof copy.attributes !== "object" || Array.isArray(copy.attributes) ||
             !validExplicitAttributes(Object.fromEntries(Object.entries(copy.attributes)
             .map(([key, row]) => [key, Array.from({ length: 16 }, () => row)]))))) return false;
@@ -793,9 +823,16 @@ export class LiRythmeActions {
             motif.keyGroups ??= createAttributeRows();
             motif.keyGroups[target] = structuredClone(copy.keyGroups ?? Array(32).fill(null));
         }
-        if (copy.ratchets || motif.ratchets) {
-            motif.ratchets ??= createAttributeRows();
-            motif.ratchets[target] = copy.ratchets?.slice() ?? Array(32).fill(null);
+        if (copy.cycles || motif.cycles) {
+            motif.cycles ??= createCycles();
+            motif.cycles.voices[target] = copy.cycles?.voice ?? null;
+            motif.cycles.steps[target] = copy.cycles?.steps.slice() ?? Array(32).fill(null);
+        }
+        for (const field of ['ratchets', 'flams']) {
+            if (copy[field] || motif[field]) {
+                motif[field] ??= createAttributeRows();
+                motif[field][target] = copy[field]?.slice() ?? Array(32).fill(null);
+            }
         }
         if (copy.colors || motif.colors) {
             motif.colors ??= createColors();
@@ -846,6 +883,8 @@ export class LiRythmeActions {
         delete motif.colors;
         delete motif.swings;
         delete motif.ratchets;
+        delete motif.flams;
+        delete motif.cycles;
         delete motif.keyGroups;
         delete motif.grooveMorph;
         delete motif.euclidean;
@@ -876,8 +915,12 @@ export class LiRythmeActions {
         else motif.swings?.[voiceId].fill(null);
         if (voiceId === null) delete motif.keyGroups;
         else motif.keyGroups?.[voiceId].fill(null);
+        if (voiceId === null) delete motif.cycles;
+        else if (motif.cycles) { motif.cycles.voices[voiceId] = null; motif.cycles.steps[voiceId].fill(null); }
         if (voiceId === null) delete motif.ratchets;
         else motif.ratchets?.[voiceId].fill(null);
+        if (voiceId === null) delete motif.flams;
+        else motif.flams?.[voiceId].fill(null);
         if (voiceId === null) delete motif.colors;
         else motif.colors?.[voiceId].fill(false);
         this.state.onBankChange?.();
@@ -914,6 +957,8 @@ export class LiRythmeActions {
             for (const rows of Object.values(next.attributes ?? {})) {
                 for (let step = 0; step < length; step++) rows[id][step + length] = structuredClone(rows[id][step]);
             }
+            if (next.cycles) for (let step = 0; step < length; step++)
+                next.cycles.steps[id][step + length] = motif.cycles.steps[id][step];
             next.voiceLengths[id] = length * 2;
             if (next.euclidean?.[id]) {
                 next.euclidean[id].resolution = length * 2;

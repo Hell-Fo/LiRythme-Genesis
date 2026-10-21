@@ -1,3 +1,4 @@
+import { noteOns, assertReleasedNotes } from './midi-assertions.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -7,6 +8,7 @@ const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), "
 const url = text => `data:text/javascript;base64,${Buffer.from(text.replace('"./ATTransaction.mjs"', JSON.stringify(new URL("../src/ATTransaction.mjs", import.meta.url).href))).toString("base64")}`;
 async function load(file, imports = {}) {
     let text = await source(file);
+    text = text.replace('"./LaunchpadATInput.mjs"', JSON.stringify(new URL("../src/hardware/launchpad/LaunchpadATInput.mjs", import.meta.url).href));
     for (const [name, value] of Object.entries(imports)) text = text.replace(JSON.stringify(name), JSON.stringify(value));
     return url(text);
 }
@@ -26,6 +28,63 @@ function setup() {
     const length = (id, n) => { state.selectedInstrument = id; return actions.setSelectedLength(n); };
     return { state, clock, actions, controller, length };
 }
+
+for (const system of ["MOTIF", "MODULATION"]) for (const transport of ["STOP", "PAUSE", "PLAY"])
+test(`SHIFT + short Motif click toggles Loop Point in library: ${system}/${transport}`, t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, clock, controller } = setup();
+    t.after(() => controller.resetInputState());
+    state.currentTimeline = system;
+    const layer = state.forSystem(system);
+    layer.chainEnabled = true; layer.chain = [0, 1, 1, 2];
+    layer.chainPlayingIndex = 2; layer.chainPlayingDetached = false;
+    layer.playingMotifId = 1; layer.currentMotifId = 1;
+    state.currentView = "MOTIF_LIBRARY"; state.transportState = transport;
+    const before = loopPhase(layer, clock);
+    const shift = controller.mapping.TOP_CONTROLS.SHIFT, pad = controller.mapping.BOOKS[1];
+    const tap = () => {
+        controller.handleMidiMessage([0xB0, shift, 127]);
+        controller.handleMidiMessage([0x90, pad, 127]);
+        controller.handleMidiMessage([0xB0, shift, 0]);
+        controller.handleMidiMessage([0x90, pad, 0]);
+    };
+    tap();
+    assert.equal(layer.chainLoopMasterIndex, 2);
+    assert.equal(state.atTransaction, null);
+    assert.equal(controller.atBrowsing, false);
+    assert.deepEqual(loopPhase(layer, clock), before);
+    tap(); assert.equal(layer.chainLoopMasterIndex, null);
+    assert.equal(controller.deleteConsumedInputs.size, 0);
+});
+
+for (const source of ["INTERNAL", "MIDI"]) for (const ids of [[0, 1, 1, 2], [0]])
+test(`CHAIN entry flashes each occurrence, including repeated IDs: ${source}/${ids}`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller, advance } = setupLoopPerformance({ timers: t.mock.timers, source, ids });
+    t.after(() => controller.resetInputState());
+    const { initializePlayChainUI } = await import("../src/PlayChainUI.mjs");
+    const container = { children: [], replaceChildren(...items) { this.children = items; } };
+    const ui = initializePlayChainUI({ state, actions, system: "MOTIF", document: {
+        getElementById: id => id === "play-chain-occurrences" ? container : null,
+        createElement: () => ({ className: "", textContent: "" })
+    } });
+    let previous = container.children[state.chainPlayingIndex];
+    for (let i = 0; i < ids.length + 1; i++) {
+        const revision = state.chainOccurrenceRevision;
+        advance(2);
+        const current = container.children[state.chainPlayingIndex];
+        assert.equal(state.chainOccurrenceRevision, revision + 1);
+        assert.notEqual(current, previous);
+        assert.ok(current.className.includes("is-entry"));
+        assert.equal(container.children.filter(e => e.className.includes("is-entry")).length, 1);
+        ui.render(); assert.equal(container.children[state.chainPlayingIndex], current);
+        previous = current;
+    }
+    actions.pausePlayback(); ui.render();
+    assert.ok(container.children.every(e => !e.className.includes("is-entry")));
+    actions.continuePlayback(); ui.render();
+    assert.ok(container.children.every(e => !e.className.includes("is-entry")));
+});
 
 for (const system of ["MOTIF", "MODULATION"]) test(`SHIFT moves exact active/next Chain occurrences during PLAY: ${system}`, t => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -48,7 +107,7 @@ for (const system of ["MOTIF", "MODULATION"]) test(`SHIFT moves exact active/nex
     const tap = (status, note) => { send(status, note, 127); send(status, note, 0); };
     const top = controller.mapping.TOP_CONTROLS;
     send(0xB0, top.SHIFT, 127);
-    tap(0x90, controller.mapping.BOOKS[4]);
+    send(0x90, controller.mapping.BOOKS[4], 127);
     assert.equal(layer.chainMoveIndex, 1); // Active wins over identical NEXT.
     tap(0xB0, top.NEXT);
     assert.deepEqual(layer.chain, [0, 4, 4, 2]);
@@ -62,7 +121,8 @@ for (const system of ["MOTIF", "MODULATION"]) test(`SHIFT moves exact active/nex
     assert.equal(layer.playheadPosition, 7);
     tap(0xB0, top.NEXT); // No wrap.
     assert.equal(layer.chainMoveIndex, 3);
-    tap(0x90, controller.mapping.BOOKS[0]); // NEXT wraps to the head.
+    send(0x90, controller.mapping.BOOKS[4], 0);
+    send(0x90, controller.mapping.BOOKS[0], 127); // NEXT wraps to the head.
     assert.equal(layer.chainMoveIndex, 0);
     tap(0xB0, top.PREVIOUS);
     assert.equal(layer.chainMoveIndex, 0);
@@ -78,6 +138,7 @@ for (const system of ["MOTIF", "MODULATION"]) test(`SHIFT moves exact active/nex
     assert.deepEqual(layer.chain, [4, 2, 0, 4]);
     assert.equal(layer.chainMoveIndex, 2);
     send(0xB0, top.PREVIOUS, 127);
+    send(0x90, controller.mapping.BOOKS[0], 0);
     send(0xB0, top.SHIFT, 0);
     send(0xB0, top.PREVIOUS, 0); // Release cannot navigate or change timelines.
     assert.equal(layer.chainMoveIndex, null);
@@ -347,7 +408,7 @@ test("real note dispatch uses local index, free Voice loops at 32, Note Off surv
         { send: (output, data) => events.push([output, data]), findOutput: () => ({}) },
         { pulseInstrument() {} }, fn => pending.push(fn));
     for (let step = 0; step < 35; step++) trigger(step);
-    const ons = events.map(([, data]) => data);
+    const ons = noteOns(events).map(([, data]) => data);
     assert.equal(ons.filter(data => data[1] === 36).length, 7);
     assert.equal(ons.filter(data => data[1] === 37).length, 5);
     assert.equal(ons.filter(data => data[1] === 38).length, 3); // 0,31,32
@@ -355,10 +416,9 @@ test("real note dispatch uses local index, free Voice loops at 32, Note Off surv
     actions.nextStep(); trigger(state.playheadPosition);
     length(null, 16);
     actions.stop();
-    const noteOns = events.slice();
     state.padConfiguration.voices[12].note = 99;
     pending.forEach(fn => fn());
-    assert.deepEqual(events.slice(noteOns.length), noteOns.map(([output, [status, note]]) => [output, [status, note, 0]]));
+    assertReleasedNotes(events);
 });
 
 test("physical playhead remains within 32 pads when resolution exceeds 32", () => {
@@ -484,8 +544,8 @@ test("live Note On indices and captured Note Offs survive Leader/Follower length
         const ons = events.slice();
         state.padConfiguration.voices[12].note = 99;
         pending.forEach(fn => fn());
-        assert.equal(ons.length, 7);
-        assert.deepEqual(events.slice(ons.length), ons.map(([output, [status, note]]) => [output, [status, note, 0]]));
+        assert.equal(noteOns(ons).length, 7);
+        assertReleasedNotes(events);
     }
 });
 
@@ -988,7 +1048,7 @@ test("SOLO/MUTE filter actual notes while phases and scheduled Note Offs survive
         assert.equal(state.transportState, "PLAY");
         assert.equal(events.filter(m => m[1] === 37).length, 1);
         const ons = events.slice(); pending.forEach(fn => fn());
-        assert.deepEqual(events.slice(ons.length), ons.map(([status, note]) => [status, note, 0]));
+        assertReleasedNotes(events);
     }
 });
 
@@ -1078,9 +1138,9 @@ test("THE GATE keeps Leader/Follower polymetric playback and scheduled Note Offs
             assert.equal(state.transportState, "PLAY");
             assert.equal(clock.transportRevision, revision);
         }
-        assert.equal(events.length, 142);
+        assert.equal(noteOns(events).length, 142);
         const ons = events.slice(); pending.forEach(fn => fn());
-        assert.deepEqual(events.slice(ons.length), ons.map(([status, note]) => [status, note, 0]));
+        assertReleasedNotes(events);
     }
 });
 
@@ -1092,7 +1152,7 @@ test("THE GATE redraws BOOK on view changes and restores PLAY reservations", () 
         status === 0x90 && controller.mapping.BOOKS.includes(note));
     const expected = library => controller.mapping.BOOKS.map((note, i) => [0x90, note,
         ((library ? (i === 0 ? controller.colors.GREEN : controller.colors.OFF)
-            : i === 0 || i === 2 || i === 3 || i === 4 ? controller.colors.RED : i < 8 ? controller.colors.DIM_RED : (i === 8 || i === 9) ? controller.colors.YELLOW : controller.colors.DIM_AMBER) & 0x33) | 4]);
+            : i === 0 || i === 2 || i === 3 || i === 4 || i === 5 || i === 6 ? controller.colors.RED : i < 8 ? controller.colors.DIM_RED : (i === 8 || i === 9) ? controller.colors.YELLOW : controller.colors.DIM_AMBER) & 0x33) | 4]);
     const check = library => {
         assert.deepEqual(bookMessages(), expected(library));
         assert.ok(messages.every(([status, note]) => status === 0x90 &&
@@ -1323,7 +1383,7 @@ test("PHASE A: paused motif selection preserves captured Note Offs and resumes t
         assert.equal(ons.length, 1);
         actions.pausePlayback(); actions.selectMotif(1);
         pending.splice(0).forEach(fn => fn());
-        assert.deepEqual(events.slice(ons.length), ons.map(([status, note]) => [status, note, 0]));
+        assertReleasedNotes(events);
         actions.continuePlayback();
         clock.setClockStepHandler(() => trigger(state.playheadPosition));
         for (let i = 1; i <= 35; i++) {
@@ -1333,7 +1393,7 @@ test("PHASE A: paused motif selection preserves captured Note Offs and resumes t
             assert.equal(state.getVoiceStep(12), (i % 35) % 5);
             assert.equal(state.getVoiceStep(13), (i % 35) % 7);
         }
-        assert.equal(events.length, 37);
+        assert.equal(noteOns(events).length, 36);
         pending.splice(0).forEach(fn => fn());
         assert.deepEqual(state.getMotif(0), original);
         assert.equal(state.currentMotifId, 1);
@@ -1509,13 +1569,13 @@ test("NEXT: polymetric boundary dispatches new step zero exactly once, with cloc
             assert.deepEqual(steps[2244],[6,0]);
             assert.equal(state.nextMotifId,null); assert.equal(clock.transportRevision,revision);
             assert.equal(state.transportState,"PLAY");
-            for(let i=0;i<4;i++) assert.deepEqual(notes.filter(n=>n.id===0&&n.m[1]===60+i).map(n=>n.tick),
+            for(let i=0;i<4;i++) assert.deepEqual(noteOns(notes).filter(n=>n.id===0&&n.m[1]===60+i).map(n=>n.tick),
                 Array.from({length:2240},(_,n)=>n).filter(n=>on[i].includes(n%periods[i])));
-            assert.deepEqual(notes.filter(n=>n.id===6).map(n=>n.tick),[2240,2245]);
+            assert.deepEqual(noteOns(notes).filter(n=>n.id===6).map(n=>n.tick),[2240,2245]);
             assert.equal(notes.some(n=>n.id===4),false);
             assert.equal(order[order.indexOf("view")-1],"note");
-            const ons = notes.map(n=>n.m); offs.forEach(fn=>fn());
-            assert.deepEqual(notes.slice(ons.length).map(n=>n.m),ons.map(([s,n])=>[s,n,0]));
+            offs.forEach(fn=>fn());
+            assertReleasedNotes(notes);
             assert.deepEqual(state.motifs,bank);
             controller.resetInputState();
         }
@@ -1991,9 +2051,9 @@ test("CHAIN: real note dispatcher emits one step zero per occurrence and preserv
             if(mode==="MIDI") for(let p=0;p<6;p++) clock.receiveMidiClockPulse();
             else clock.receiveInternalClockStep({sequence:tick,transportRevision:revision});
         }
-        assert.equal(messages.length,12);assert.equal(offs.length,12);
-        const ons=messages.slice();offs.forEach(fn=>fn());
-        assert.deepEqual(messages.slice(12),ons.map(([s,n])=>[s,n,0]));
+        assert.equal(noteOns(messages).length,12);assert.equal(offs.length,12);
+        offs.forEach(fn=>fn());
+        assertReleasedNotes(messages);
         assert.equal(clock.transportRevision,revision);
         for(let i=1;i<order.length;i++) if(order[i]==="view") assert.equal(order[i-1],"note");
         controller.resetInputState();
@@ -2104,7 +2164,7 @@ test("CHAIN BOOK: CHAIN palette, shared repeated pads and COPY priority", t => {
  }
 });
 
-test("CHAIN BOOK: timer is scoped to library view and cleaned up; PLAY screen has original static styles", async t => {
+test("CHAIN BOOK: timer is scoped to library view; PLAY keeps colors with a brief entry flash", async t => {
     t.mock.timers.enable({apis:["setTimeout"]});
     const {state,actions,controller:c}=setup();
     actions.toggleChain();actions.requestMotif(4);assert.equal(c.nextMotifBlinkTimer,null);
@@ -2117,6 +2177,7 @@ test("CHAIN BOOK: timer is scoped to library view and cleaned up; PLAY screen ha
     assert.match(html,/#play-chain-occurrences \{ font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; \}/);
     assert.match(html,/\.chain-occurrence \{ display: inline-block; \}/);
     assert.doesNotMatch(html,/\.chain-occurrence\.is-next/);
+    assert.match(html,/\.chain-occurrence\.is-entry \{ animation: chain-entry-flash 160ms/);
 });
 
 test("R1-R3: hardware target routing, current BOOK deletion, Voice COPY/DELETE and autosave notifications", t => {
@@ -2273,8 +2334,8 @@ test("CHAIN B: repeated LoopMaster wraps preserve real dispatcher Note Off callb
  actions.toggleChain();[0,0].forEach(id=>actions.requestMotif(id));actions.navigateContext(1);actions.navigateContext(1);actions.toggleChainLoopPoint(0);actions.appendChainMotif(4);
  actions.setClockStepHandler(()=>trigger(state.playheadPosition));actions.startPlayback();clock.advanceStepPipeline();clock.advanceStepPipeline();
  assert.equal(c.getLibraryMotifColor(0),"YELLOW");t.mock.timers.tick(120);c.nextMotifLit=false;assert.equal(c.getLibraryMotifColor(0),"DIM_RED");
- clock.advanceStepPipeline();clock.advanceStepPipeline();assert.equal(state.transportState,"PLAY");assert.equal(c.getLibraryMotifColor(0),"YELLOW");assert.equal(state.chainPlayingIndex,0);assert.equal(notes.length,2);assert.equal(offs.length,2);
- const ons=notes.slice();offs.forEach(fn=>fn());assert.deepEqual(notes.slice(2),ons.map(([s,n])=>[s,n,0]));c.resetInputState();
+ clock.advanceStepPipeline();clock.advanceStepPipeline();assert.equal(state.transportState,"PLAY");assert.equal(c.getLibraryMotifColor(0),"YELLOW");assert.equal(state.chainPlayingIndex,0);assert.equal(noteOns(notes).length,2);assert.equal(offs.length,2);
+ offs.forEach(fn=>fn());assertReleasedNotes(notes);c.resetInputState();
 });
 
 
@@ -2336,10 +2397,9 @@ function setupLoopPerformance({ timers, source = "INTERNAL", ids = [0,4,2,7,3,9]
         }
     };
     const shiftBook = id => {
-        // A short SHIFT+Book selects a move; holding keeps Loop Point accessible.
+        // SHIFT + a short Motif click toggles Loop Point on release.
         controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 127]);
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[id], 127]);
-        timers.tick(300);
         controller.handleMidiMessage([0x90, controller.mapping.BOOKS[id], 0]);
         controller.handleMidiMessage([0xB0, controller.mapping.TOP_CONTROLS.SHIFT, 0]);
     };
@@ -2358,9 +2418,9 @@ function loopPhase(state, clock) {
 }
 
 for (const transport of ["STOP", "PAUSE"]) {
-    test(`LOOP POINT hardware: ${transport} creates and removes the selected 05b in both views`, t => {
+    test(`LOOP POINT hardware: ${transport} creates and removes the selected 05b in the Motif library`, t => {
         t.mock.timers.enable({ apis: ["setTimeout"] });
-        for (const view of ["PLAY", "MOTIF_LIBRARY"]) {
+        for (const view of ["MOTIF_LIBRARY"]) {
             const { state, actions, clock, controller } = setup();
             state.currentView = view;
             actions.toggleChain();
@@ -3424,10 +3484,10 @@ test("DOUBLE: real dispatch snapshots velocity and preserves Note Offs at natura
             if (source === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
             else clock.receiveInternalClockStep({ sequence: tick, transportRevision: revision });
         }
-        assert.deepEqual(notes.filter(msg => msg[1] === 36).map(msg => msg[2]), [48, 111]);
+        assert.deepEqual(noteOns(notes).filter(msg => msg[1] === 36).map(msg => msg[2]), [48, 111]);
         assert.equal(clock.transportRevision, revision);
-        const ons = notes.slice(); actions.stop(); offs.forEach(fn => fn());
-        assert.deepEqual(notes.slice(ons.length), ons.map(([s, n]) => [s, n, 0]));
+        actions.stop(); offs.forEach(fn => fn());
+        assertReleasedNotes(notes);
         controller.resetInputState();
     }
 });

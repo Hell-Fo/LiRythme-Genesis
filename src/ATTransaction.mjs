@@ -1,12 +1,17 @@
+export { hasCycles, readCycle, createCycles, validCycles, validVoiceCycle } from "./Cycle.mjs";
 import { EUCLIDEAN_SLOT, euclideanDefinition, euclideanPattern } from "./Euclidean.mjs";
 export { EUCLIDEAN_SLOT, validEuclidean, validEuclideanVoice, euclideanOnsets } from "./Euclidean.mjs";
 import { SCALES, defaultKeyGroup, validKeyCell, readKeyCell, applyKeyPatch, keyNote, keyGroupFeedback } from "./KeyGroup.mjs";
 export { SCALES, defaultKeyGroup, validKeySettings, validKeyCell, validKeyRow, validKeyGroups, readKeyCell, keyNote, keyGroupFeedback } from "./KeyGroup.mjs";
+import { cycleDefinition, readCycle } from "./Cycle.mjs";
 import { mutateMotif } from "./Mutation.mjs";
 export { composeGroove, validGrooveMorph } from "./GrooveMorph.mjs";
 export const createVelocities = () => Array.from({ length: 16 }, () => Array(32).fill(100));
 export const SWING_VALUES = Object.freeze([75, 72, 69, 66, 63, 58, 54, 50]);
 export const RATCHET_VALUES = Object.freeze([8, 7, 6, 5, 4, 3, 2, 1]);
+export const FLAM_VALUES = Object.freeze([100, 75, 50, 35, 20, 10, 5, 0]);
+export const validFlamRow = row => Array.isArray(row) && row.length === 32 && row.every(v => v === null || Number.isInteger(v) && v >= 0 && v <= 100);
+export const validFlams = rows => Array.isArray(rows) && rows.length === 16 && rows.every(validFlamRow);
 export const validRatchetRow = row => Array.isArray(row) && row.length === 32 && row.every(v => v === null || RATCHET_VALUES.includes(v));
 export const validRatchets = rows => Array.isArray(rows) && rows.length === 16 && rows.every(validRatchetRow);
 export const validSwingRow = row => Array.isArray(row) && row.length === 32 && row.every(v => v === null || SWING_VALUES.includes(v));
@@ -14,11 +19,11 @@ export const validSwings = rows => Array.isArray(rows) && rows.length === 16 && 
 export const createColors = () => Array.from({ length: 16 }, () => Array(32).fill(false));
 export const createAttributeRows = () => Array.from({ length: 16 }, () => Array(32).fill(null));
 export const hasModulationCell = (motif, voice, step) => Boolean(
-    Object.values(motif.attributes ?? {}).some(rows => rows[voice][step] !== null));
+    readCycle(motif, voice, step) !== null || Object.values(motif.attributes ?? {}).some(rows => rows[voice][step] !== null));
 export const validExplicitAttributes = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET", "KEY_GROUP"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET", "FLAM", "KEY_GROUP"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(row => Array.isArray(row) && row.length === 32 &&
-            row.every(v => v === null || (key === "KEY_GROUP" ? validKeyCell(v) : key === "COLOR" ? typeof v === "boolean" : key === "SWING" ? SWING_VALUES.includes(v) : key === "RATCHET" ? RATCHET_VALUES.includes(v) : Number.isInteger(v) && v >= 1 && v <= 127))));
+            row.every(v => v === null || (key === "KEY_GROUP" ? validKeyCell(v) : key === "COLOR" ? typeof v === "boolean" : key === "SWING" ? SWING_VALUES.includes(v) : key === "RATCHET" ? RATCHET_VALUES.includes(v) : key === "FLAM" ? Number.isInteger(v) && v >= 0 && v <= 100 : Number.isInteger(v) && v >= 1 && v <= 127))));
 function applyExplicitAttribute(motif, { instruments, steps }, key, value) {
     let changed = false;
     const rows = motif.attributes[key] ??= createAttributeRows();
@@ -32,7 +37,7 @@ function applyExplicitAttribute(motif, { instruments, steps }, key, value) {
 export const validATDestinationRow = row => Array.isArray(row) && row.length === 32 &&
     row.every(v => v === null || ["STEP", "INSTRUMENT", "MOTIF"].includes(v));
 export const validATDestinations = value => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET", "KEY_GROUP", "ROTATION"].includes(key) &&
+    Object.entries(value).every(([key, rows]) => ["VELOCITY", "COLOR", "SWING", "RATCHET", "FLAM", "KEY_GROUP", "CYCLE", "ROTATION"].includes(key) &&
         Array.isArray(rows) && rows.length === 16 && rows.every(validATDestinationRow));
 export const hasTargetEvents = (motif, target) => Boolean(motif && target && motif.events.some((row, voice) =>
     (!target.instruments.size || target.instruments.has(voice)) &&
@@ -137,10 +142,31 @@ export const AT_SLOTS = Object.freeze([
         },
         apply: applyKeyPatch
     }),
-    ...Array(3).fill(null),
+    cycleDefinition,
+    Object.freeze({ id: "FLAM", values: FLAM_VALUES,
+        isAssigned: (motif, voice, step) => (motif.attributes !== undefined
+            ? motif.attributes.FLAM?.[voice]?.[step] : motif.flams?.[voice]?.[step]) != null,
+        capture: motif => motif.flams?.map(row => row.slice()),
+        restore(motif, snapshot) {
+            if (snapshot === undefined) delete motif.flams;
+            else motif.flams = snapshot.map(row => row.slice());
+        },
+        apply(motif, { instruments, steps }, value) {
+            if (motif.attributes !== undefined) return applyExplicitAttribute(motif, { instruments, steps }, "FLAM", value);
+            let changed = false;
+            for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
+                if (!motif.events[voice][step] || instruments.size && !instruments.has(voice) || steps.size && !steps.has(step)) continue;
+                motif.flams ??= createAttributeRows();
+                motif.flams[voice][step] = value;
+                changed = true;
+            }
+            return changed;
+        }
+    }),
+    null,
     Object.freeze({ id: "ROTATION", values: Object.freeze([]),
         isAssigned: (motif, voice, step) => Boolean(motif.atDestinations?.ROTATION?.[voice]?.[step]),
-        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "ratchets", "keyGroups", "atDestinations", "attributes", "grooveMorph"]
+        capture: motif => Object.fromEntries(["events", "velocities", "colors", "swings", "ratchets", "flams", "cycles", "keyGroups", "atDestinations", "attributes", "grooveMorph"]
             .map(key => [key, structuredClone(motif[key])])),
         restore(motif, snapshot) {
             for (const [key, value] of Object.entries(snapshot)) {
@@ -167,11 +193,11 @@ export function visitPlaybackAttributes(state, motifId, instruments, visit) {
     for (const [snapshot, voices] of groups) visit(snapshot, voices);
 }
 function applyAttribute(motif, target, definition, value, scope = target) {
-    if (!definition.apply(motif, target, value)) return false;
+    if (!definition.apply(motif, target, value, scope)) return false;
     motif.atDestinations ??= {};
     const destinations = motif.atDestinations[definition.id] ??= createAttributeRows();
     for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
-        if ((motif.attributes === undefined && !motif.events[voice][step]) ||
+        if ((definition.id !== "CYCLE" && motif.attributes === undefined && !motif.events[voice][step]) ||
             (target.instruments.size && !target.instruments.has(voice)) ||
             (target.steps.size && !target.steps.has(step))) continue;
         destinations[voice][step] = definition.isAssigned(motif, voice, step)
@@ -180,7 +206,7 @@ function applyAttribute(motif, target, definition, value, scope = target) {
     return true;
 }
 function clearAttributes(motif) {
-    for (const key of ["velocities", "colors", "swings", "ratchets", "keyGroups", "atDestinations"]) delete motif[key];
+    for (const key of ["velocities", "colors", "swings", "ratchets", "flams", "cycles", "keyGroups", "atDestinations"]) delete motif[key];
     if (motif.attributes !== undefined) motif.attributes = {};
 }
 
@@ -239,7 +265,7 @@ export class ATTransaction {
         const definition = AT_SLOTS[slot];
         if (slot === EUCLIDEAN_SLOT) {
             const motif = this.state.getMotif(this.context().editingMotifId);
-            if (motif?.grooveMorph || !motif?.euclidean && motif?.events.some(row => row.some(Boolean))) return false;
+            if (motif?.grooveMorph) return false;
         }
         if (!this.isEnabled(slot) || this.state.atTransaction ||
             !(this.state.currentView === "PLAY" || mutation && this.state.currentView === "MOTIF_LIBRARY") ||
@@ -429,6 +455,8 @@ export class ATTransaction {
                 color: motif.colors?.[voice][step] ?? false,
                 swing: motif.swings?.[voice][step] ?? null,
                 ratchet: motif.ratchets?.[voice][step] ?? null,
+                flam: motif.flams?.[voice][step] ?? null,
+                cycle: motif.cycles?.steps[voice][step] ?? null,
                 keyGroup: structuredClone(motif.keyGroups?.[voice][step] ?? null),
                 destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
                     .map(([key, rows]) => [key, rows[voice][step]])) });
@@ -458,6 +486,8 @@ export class ATTransaction {
                 color: motif.colors?.[voice][to] ?? false,
                 swing: motif.swings?.[voice][to] ?? null,
                 ratchet: motif.ratchets?.[voice][to] ?? null,
+                flam: motif.flams?.[voice][to] ?? null,
+                cycle: motif.cycles?.steps[voice][to] ?? null,
                 keyGroup: structuredClone(motif.keyGroups?.[voice][to] ?? null),
                 destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {})
                     .map(([key, rows]) => [key, rows[voice][to]])) });
@@ -470,6 +500,8 @@ export class ATTransaction {
             if (motif.colors) motif.colors[voice][step] = false;
             if (motif.swings) motif.swings[voice][step] = null;
             if (motif.ratchets) motif.ratchets[voice][step] = null;
+            if (motif.flams) motif.flams[voice][step] = null;
+            if (motif.cycles) motif.cycles.steps[voice][step] = null;
             if (motif.keyGroups) motif.keyGroups[voice][step] = null;
             for (const rows of Object.values(motif.attributes ?? {})) rows[voice][step] = null;
             for (const rows of Object.values(motif.atDestinations)) rows[voice][step] = null;
@@ -482,17 +514,21 @@ export class ATTransaction {
             if (motif.colors) motif.colors[voice][to] = move.color;
             if (motif.swings) motif.swings[voice][to] = move.swing;
             if (motif.ratchets) motif.ratchets[voice][to] = move.ratchet;
+            if (motif.flams) motif.flams[voice][to] = move.flam;
+            if (motif.cycles) motif.cycles.steps[voice][to] = move.cycle;
             if (motif.keyGroups) motif.keyGroups[voice][to] = structuredClone(move.keyGroup);
             for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = move.destinations[key] ?? null;
             motif.atDestinations.ROTATION[voice][to] = destination;
         }
-        for (const { voice, to, event, attributes, velocity, color, swing, ratchet, keyGroup, destinations } of displaced) {
+        for (const { voice, to, event, attributes, velocity, color, swing, ratchet, flam, cycle, keyGroup, destinations } of displaced) {
             motif.events[voice][to] = event;
             for (const [key, rows] of Object.entries(motif.attributes ?? {})) rows[voice][to] = attributes[key] ?? null;
             if (motif.velocities) motif.velocities[voice][to] = velocity;
             if (motif.colors) motif.colors[voice][to] = color;
             if (motif.swings) motif.swings[voice][to] = swing;
             if (motif.ratchets) motif.ratchets[voice][to] = ratchet;
+            if (motif.flams) motif.flams[voice][to] = flam;
+            if (motif.cycles) motif.cycles.steps[voice][to] = cycle;
             if (motif.keyGroups) motif.keyGroups[voice][to] = structuredClone(keyGroup);
             for (const [key, rows] of Object.entries(motif.atDestinations)) rows[voice][to] = destinations[key] ?? null;
         }

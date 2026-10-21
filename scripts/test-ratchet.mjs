@@ -9,6 +9,7 @@ import { readATPanel } from "../src/PlayATUI.mjs";
 const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), "utf8");
 async function load(file, imports = {}) {
     let text = await source(file);
+    text = text.replace('"./LaunchpadATInput.mjs"', JSON.stringify(new URL("../src/hardware/launchpad/LaunchpadATInput.mjs", import.meta.url).href));
     imports["./ATTransaction.mjs"] = new URL("../src/ATTransaction.mjs", import.meta.url).href;
     for (const [key, value] of Object.entries(imports)) text = text.replace(JSON.stringify(key), JSON.stringify(value));
     return `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
@@ -336,4 +337,166 @@ test('Modulation DELETE+Step removes temporal attributes while DOUBLE remains pe
     assert.equal(snapshot.attributes.RATCHET[0][0], null);
     assert.equal(snapshot.voiceLengths[0], 4); assert.equal(layer.getVoiceLength(0), 8);
     assert.equal(layer.playheadPosition, 1);
+});
+
+
+test('FLAM Modulation entry, explicit zero, CANCEL, persistence and invalid values', () => {
+    const { state, actions } = setup();
+    assert.equal(actions.at.begin(6), true); actions.at.finish(false);
+    state.currentTimeline = 'MODULATION';
+    assert.ok(actions.at.begin(6));
+    actions.at.select('instruments', 2); actions.at.select('steps', 3);
+    assert.ok(actions.at.apply(3));
+    assert.equal(state.modulation.motifs[0].attributes.FLAM[2][3], 35);
+    assert.equal(readATPanel(state).values[3], '35 ms');
+    assert.equal(snapshotMotifBank(state).modulation.motifs[0].attributes.FLAM, undefined);
+    actions.at.finish(false);
+    assert.equal(state.modulation.motifs[0].attributes.FLAM, undefined);
+    actions.at.begin(6); actions.at.apply(7); actions.at.finish(true);
+    const bank = snapshotMotifBank(state);
+    assert.equal(bank.modulation.motifs[0].attributes.FLAM[0][0], 0);
+    const other = setup(); restoreMotifBank(other.state, bank);
+    assert.equal(other.state.modulation.motifs[0].attributes.FLAM[0][0], 0);
+    bank.modulation.motifs[0].attributes.FLAM[0][0] = 101;
+    assert.throws(() => restoreMotifBank(other.state, bank));
+});
+
+async function flamDispatcher(options = {}) {
+    const d = await dispatcher({ count: 1, ...options });
+    for (const voice of [1, 2]) {
+        d.state.motif[voice][1] = true;
+        d.state.padConfiguration.voices[voice] = { ...structuredClone(d.state.padConfiguration.voices[0]), note: 36 + voice };
+        d.state.motifs[0].swings[voice][1] = options.swing ?? 50;
+        d.state.motifs[0].ratchets[voice][1] = options.count ?? 1;
+    }
+    d.state.currentTimeline = 'MODULATION';
+    d.actions.at.begin(6); d.actions.at.apply(3); d.actions.at.finish(true);
+    d.state.modulation.motifs[0].attributes.FLAM.forEach(row => row.fill(8));
+    d.state.modulationActive = true;
+    return d;
+}
+
+test('FLAM actual dispatcher staggers simultaneous selected Voices by 8 ms and releases notes', async () => {
+    const d = await flamDispatcher(); d.trigger(1); d.time.run(200);
+    assert.deepEqual(d.notes.filter(n => n.msg[2]).map(n => n.time), [0, 8, 16]);
+    assert.equal(d.notes.filter(n => !n.msg[2]).length, 3);
+    assert.equal(d.state.playheadPosition, 1); assert.equal(d.clock.transportRevision, 0);
+});
+
+test('FLAM excludes absent, muted, zero, noncoincident and inactive participants', async () => {
+    for (const mode of ['absent', 'muted', 'zero', 'different', 'off']) {
+        const d = await flamDispatcher();
+        if (mode === 'absent') d.state.motif[1][1] = false;
+        if (mode === 'muted') d.state.isVoiceAudible = voice => voice !== 1;
+        if (mode === 'zero') d.state.modulation.motifs[0].attributes.FLAM[1].fill(0);
+        if (mode === 'different') d.state.motifs[0].swings[1][1] = 75;
+        if (mode === 'off') d.state.modulationActive = false;
+        d.trigger(1); d.time.run(200);
+        const voice2 = d.notes.find(n => n.msg[1] === 38 && n.msg[2]);
+        assert.equal(voice2.time, mode === 'off' ? 0 : 8, mode);
+    }
+});
+
+test('FLAM bounded with SWING/RATCHET on MIDI clock, STOP cancels delayed onsets', async () => {
+    const d = await flamDispatcher({ count: 8, swing: 75, tempo: 300 });
+    d.clock.source = 'MIDI';
+    for (let i = 0; i < 25; i++) { d.time.jump(i * 4); d.timing.observeMidiPulse(); }
+    d.trigger(1); const start = d.time.api.now(); d.time.run(start + 100);
+    const ons = d.notes.filter(n => n.msg[2]);
+    assert.equal(ons.length, 24);
+    assert.ok(ons.every(n => n.time >= start && n.time < start + d.timing.duration));
+    assert.equal(d.notes.filter(n => !n.msg[2]).length, 24);
+    const stopped = await flamDispatcher(); stopped.trigger(1); stopped.actions.stop(); stopped.time.run(200);
+    assert.deepEqual(stopped.notes.map(n => n.msg[2]), [100, 0]);
+});
+
+
+test('FLAM Launchpad seventh pad is available in both systems, all values display and cancel', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { state, actions } = setup(), leds = new Map();
+    const c = new LaunchpadMini({ send: (_, [, note, color]) => leds.set(note, color) }, state, actions, 'LP');
+    t.after(() => c.resetInputState());
+    const tap = note => { c.handleMidiMessage([0x90, note, 127]); c.handleMidiMessage([0x90, note, 0]); };
+    assert.equal(c.getATBookColor(6), 'RED');
+    tap(c.mapping.BOOKS[6]); assert.equal(state.atTransaction.slot, 6); tap(c.mapping.BOOKS[6]);
+    state.currentTimeline = 'MODULATION';
+    assert.equal(c.getATBookColor(6), 'RED');
+    tap(c.mapping.BOOKS[6]); assert.equal(state.atTransaction.slot, 6);
+    tap(c.mapping.INSTRUMENTS[2]); tap(c.mapping.MOTIF[3]);
+    for (const [index, value] of [100,75,50,35,20,10,5,0].entries()) {
+        tap(c.mapping.AT_VALUE[index]);
+        assert.equal(state.modulation.motifs[0].attributes.FLAM[2][3], value);
+        assert.equal(state.modulation.motifs[0].attributes.FLAM[1][3], null);
+        assert.equal(readATPanel(state).values[index], value + ' ms');
+    }
+    tap(c.mapping.BOOKS[6]);
+    assert.equal(state.modulation.motifs[0].attributes.FLAM, undefined);
+});
+
+
+test('FLAM Motif dispatch works without Modulation and explicit Modulation zero overrides it', async () => {
+    const d = await flamDispatcher({ tempo: 30 });
+    d.state.currentTimeline = 'MOTIF'; d.state.modulationActive = false;
+    assert.ok(d.actions.at.begin(6)); assert.ok(d.actions.at.apply(0)); d.actions.at.finish(true);
+    d.trigger(1); d.time.run(600);
+    assert.deepEqual(d.notes.filter(n => n.msg[2]).map(n => n.time), [0,100,200]);
+    d.notes.length = 0; d.state.modulationActive = true;
+    d.state.modulation.motifs[0].attributes.FLAM.forEach(row => row.fill(0));
+    d.trigger(1); d.time.run(1200);
+    assert.deepEqual(d.notes.filter(n => n.msg[2]).map(n => n.time), [600,600,600]);
+});
+
+test('FLAM Motif selection, CANCEL, persistence, copy, rotation, DOUBLE and deletion preserve lifecycle', () => {
+    const { state, actions } = setup();
+    state.motif[0][1] = true; state.selectedInstrument = 0;
+    actions.at.begin(6); actions.at.select('instruments',0); actions.at.select('steps',1);
+    actions.at.apply(1);
+    assert.equal(state.motifs[0].flams[0][1],75);
+    assert.equal(state.motifs[0].flams[0][2],null);
+    assert.equal(snapshotMotifBank(state).motifs[0].flams,undefined);
+    actions.at.finish(false); assert.equal(state.motifs[0].flams,undefined);
+    actions.at.begin(6); actions.at.apply(1); actions.at.finish(true);
+    const bank=snapshotMotifBank(state), other=setup(); restoreMotifBank(other.state,bank);
+    assert.equal(other.state.motifs[0].flams[0][1],75);
+    bank.motifs[0].flams[0][1]=101; assert.throws(()=>validateMotifBank(bank));
+    assert.ok(actions.applyMotifCopy(actions.captureMotifCopy(0),1));
+    assert.equal(state.motifs[1].flams[0][1],75);
+    assert.ok(actions.applyVoiceCopy(actions.captureMusicalCopy('VOICE',0),2));
+    assert.equal(state.motifs[0].flams[2][1],75);
+    actions.at.begin(8); actions.at.select('instruments',0); actions.at.select('steps',1);
+    assert.ok(actions.at.rotate(1)); actions.at.finish(true);
+    assert.equal(state.motifs[0].flams[0][2],75); assert.equal(state.motifs[0].flams[0][1],null);
+    state.motifs[0].voiceLengths[0]=16;
+    assert.ok(actions.doubleSelected());
+    assert.equal(state.motifs[0].flams[0][18],75);
+    actions.clearMotifEvents(0); assert.ok(state.motifs[0].flams[0].every(v=>v===null));
+    actions.at.resetMotif(); assert.equal(state.motifs[0].flams,undefined);
+});
+
+
+test('FLAM 100 ms at 120 BPM uses the requested gap for two Voices', async () => {
+    const d = await flamDispatcher();
+    d.state.motif[2][1] = false;
+    d.state.modulation.motifs[0].attributes.FLAM.forEach(row => row.fill(100));
+    d.trigger(1); d.time.run(200);
+    assert.deepEqual(d.notes.filter(n => n.msg[2]).map(n => n.time), [0,100]);
+    assert.equal(d.notes.filter(n => !n.msg[2]).length,2);
+});
+
+test('FLAM three Voices use nearly the entire Step when 100 ms gaps cannot fit', async () => {
+    const d = await flamDispatcher();
+    d.state.modulation.motifs[0].attributes.FLAM.forEach(row => row.fill(100));
+    d.trigger(1); d.time.run(200);
+    assert.deepEqual(d.notes.filter(n => n.msg[2]).map(n => n.time), [0,61.5,123]);
+    assert.equal(d.notes.filter(n => !n.msg[2]).length,3);
+});
+
+test('FLAM an unshifted ratchet anchor does not unnecessarily shrink a delayed single strike', async () => {
+    const d = await flamDispatcher({count:8});
+    d.state.motif[2][1]=false;
+    d.state.motifs[0].ratchets[1][1]=1;
+    d.state.modulation.motifs[0].attributes.FLAM.forEach(row=>row.fill(100));
+    d.trigger(1); d.time.run(200);
+    assert.equal(d.notes.find(n=>n.msg[1]===37 && n.msg[2]).time,100);
+    assert.equal(d.notes.filter(n=>n.msg[2]).length,9);
 });

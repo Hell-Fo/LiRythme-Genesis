@@ -11,6 +11,7 @@ import { readPlayFooter } from '../src/PlayFooterUI.mjs';
 const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), 'utf8');
 async function load(file, imports = {}) {
     let text = await source(file);
+    text = text.replace('"./LaunchpadATInput.mjs"', JSON.stringify(new URL("../src/hardware/launchpad/LaunchpadATInput.mjs", import.meta.url).href));
     imports['./ATTransaction.mjs'] = new URL('../src/ATTransaction.mjs', import.meta.url).href;
     for (const [name, value] of Object.entries(imports)) text = text.replace(JSON.stringify(name), JSON.stringify(value));
     return `data:text/javascript;base64,${Buffer.from(text).toString('base64')}`;

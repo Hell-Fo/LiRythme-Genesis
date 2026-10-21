@@ -1,5 +1,6 @@
 import { parseConfiguration, serializeConfiguration } from "./PadConfigurationFile.mjs";
-import { AT_SLOTS, validKeyGroups, validKeySettings, defaultKeyGroup, validSwings, validRatchets, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph, validEuclidean } from "./ATTransaction.mjs";
+import { validCycles } from "./Cycle.mjs";
+import { AT_SLOTS, validKeyGroups, validKeySettings, defaultKeyGroup, validSwings, validRatchets, validFlams, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph, validEuclidean } from "./ATTransaction.mjs";
 
 export function validateMotifBank(value, { modulation = false } = {}) {
     const length = n => n === null || Number.isInteger(n) && n >= 1 && n <= 32;
@@ -13,7 +14,9 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             (m.velocities === undefined || validVelocities(m.velocities)) &&
             (m.colors === undefined || validColors(m.colors)) &&
             (m.swings === undefined || validSwings(m.swings)) &&
+            (m.cycles === undefined || validCycles(m.cycles)) &&
             (m.ratchets === undefined || validRatchets(m.ratchets)) &&
+            (m.flams === undefined || validFlams(m.flams)) &&
             (m.keyGroups === undefined || validKeyGroups(m.keyGroups)) &&
             (m.euclidean === undefined || !modulation && !m.grooveMorph && validEuclidean(m.euclidean)) &&
             (m.grooveMorph === undefined || !modulation && validGrooveMorph(m.grooveMorph) && !m.events.some(row => row.some(Boolean))) &&
@@ -32,7 +35,9 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             ...(m.euclidean ? { euclidean: structuredClone(m.euclidean) } : {}),
             ...(m.grooveMorph ? { grooveMorph: structuredClone(m.grooveMorph) } : {}),
             ...(m.keyGroups ? { keyGroups: structuredClone(m.keyGroups) } : {}),
+            ...(m.cycles ? { cycles: structuredClone(m.cycles) } : {}),
             ...(m.ratchets ? { ratchets: m.ratchets.map(row => row.slice()) } : {}),
+            ...(m.flams ? { flams: m.flams.map(row => row.slice()) } : {}),
             ...(m.atDestinations ? { atDestinations: structuredClone(m.atDestinations) } : {}),
             ...(m.attributes !== undefined ? { attributes: structuredClone(m.attributes) } : {}),
             voiceLengths: m.voiceLengths.slice(), motifLength: m.motifLength })) };
@@ -46,18 +51,18 @@ export function validateMotifBank(value, { modulation = false } = {}) {
         result.modulation = { currentMotifId: bank.currentMotifId, motifs: bank.motifs, requested: m.requested,
             chainEnabled: m.chainEnabled, chain: m.chain.slice(), loopPoint: m.loopPoint };
     }
-    if (value.projects !== undefined) {
-        const p = value.projects;
-        if (!p || !Number.isInteger(p.active) || p.active < 0 || p.active > 15 || !Array.isArray(p.slots) || p.slots.length !== 16 || !p.slots[p.active]) throw new Error("Invalid Project Book");
-        result.projects = { active: p.active, slots: p.slots.map(slot => {
-            if (slot === null) return null;
-            if (!slot || typeof slot.name !== "string" || !slot.name.trim() || slot.name.length > 80 || slot.bank?.projects !== undefined) throw new Error("Invalid Project");
-            if (slot.description !== undefined && (typeof slot.description !== "string" || slot.description.length > 2000)) throw new Error("Invalid Project description");
-            if (slot.pads !== undefined) parseConfiguration(slot.pads);
-            return { ...(slot.pads !== undefined ? { pads: slot.pads } : {}), name: slot.name, description: slot.description ?? "", bank: validateMotifBank(slot.bank), chain: validateProjectChain(slot.chain) };
-        }) };
-    }
+    if (value.projects !== undefined) result.projects = validateProjectBook(value.projects);
     return result;
+}
+function validateProjectBook(p) {
+    if (!p || !Number.isInteger(p.active) || p.active < 0 || p.active > 15 || !Array.isArray(p.slots) || p.slots.length !== 16 || !p.slots[p.active]) throw new Error("Invalid Project Book");
+    return { active: p.active, slots: p.slots.map(slot => {
+        if (slot === null) return null;
+        if (!slot || typeof slot.name !== "string" || !slot.name.trim() || slot.name.length > 80 || slot.bank?.projects !== undefined) throw new Error("Invalid Project");
+        if (slot.description !== undefined && (typeof slot.description !== "string" || slot.description.length > 2000)) throw new Error("Invalid Project description");
+        if (slot.pads !== undefined) parseConfiguration(slot.pads);
+        return { ...(slot.pads !== undefined ? { pads: slot.pads } : {}), name: slot.name, description: slot.description ?? "", bank: validateMotifBank(slot.bank), chain: validateProjectChain(slot.chain) };
+    }) };
 }
 function validateProjectChain(chain) {
     if (!chain || typeof chain.enabled !== "boolean" || !Array.isArray(chain.ids) || !chain.ids.every(id => Number.isInteger(id) && id >= 0 && id < 16) || !(chain.loop === null || Number.isInteger(chain.loop) && chain.loop >= 0 && chain.loop < chain.ids.length)) throw new Error("Invalid Project Chain");
@@ -91,14 +96,17 @@ export function snapshotMotifBank(state, includeProjects = true) {
         doc.modulation = { currentMotifId: m.currentMotifId, motifs, requested: root.modulationRequested,
             chainEnabled: m.chainEnabled, chain: m.chain, loopPoint: m.chainLoopMasterIndex };
     }
+    const result = validateMotifBank(doc);
     if (includeProjects && root.projectBook) {
-        const p = structuredClone(root.projectBook);
-        p.slots[p.active].pads = serializeConfiguration(root.padConfiguration);
-        p.slots[p.active].bank = validateMotifBank(doc);
-        p.slots[p.active].chain = { enabled: root.chainEnabled, ids: root.chain.slice(), loop: root.chainLoopMasterIndex };
-        doc.projects = p;
+        const p = root.projectBook;
+        // The validator already isolates each bank. Do not first clone the whole
+        // Book or validate the active bank twice before validating it again.
+        result.projects = validateProjectBook({ active: p.active, slots: p.slots.map((slot, id) => id === p.active
+            ? { ...slot, pads: serializeConfiguration(root.padConfiguration), bank: doc,
+                chain: { enabled: root.chainEnabled, ids: root.chain.slice(), loop: root.chainLoopMasterIndex } }
+            : slot) });
     }
-    return validateMotifBank(doc);
+    return result;
 }
 export function restoreMotifBank(state, value) {
     const bank = validateMotifBank(value);
@@ -111,6 +119,7 @@ export function restoreMotifBank(state, value) {
     state.nextMotifId = null;
     state.playheadPosition = 0;
     state.liveLengthCycle = null;
+    state.resetCyclePasses?.();
     if (root.modulation) {
         const m = root.forSystem("MODULATION"), saved = bank.modulation;
         m.motifs = saved?.motifs ?? Array.from({ length: 16 }, () => ({ events: Array.from({ length: 16 }, () => Array(32).fill(false)),
@@ -122,6 +131,7 @@ export function restoreMotifBank(state, value) {
         m.nextMotifId = null;
         m.playheadPosition = 0;
         m.liveLengthCycle = null;
+        m.resetCyclePasses?.();
         m.chainPlayingIndex = -1;
         m.chainPlayingDetached = true;
         m.chainFocus = false;

@@ -31,7 +31,7 @@ export function readATPanel(state) {
             selected: voice === undefined ? null : settings?.mode === "POLYRHYTHMIC" ? 1 : 0 };
     }
     const definition = AT_SLOTS[tx.slot];
-    const valueIndex = hasTargetEvents(state.getMotif(tx.editingMotifId ?? state.currentMotifId), tx) ? tx.valueIndex : null;
+    const valueIndex = definition.id === "CYCLE" ? tx.valueIndex : hasTargetEvents(state.getMotif(tx.editingMotifId ?? state.currentMotifId), tx) ? tx.valueIndex : null;
     const instruments = [...tx.instruments].sort((a, b) => a - b).map(id =>
         state.padConfiguration.voices[id]?.name || `VOICE ${String(id + 1).padStart(2, "0")}`).join("+");
     const steps = [...tx.steps].sort((a, b) => a - b).map(id => String(id + 1).padStart(2, "0")).join("·");
@@ -42,7 +42,7 @@ export function readATPanel(state) {
         ...(tx.system === "MODULATION" ? { system: "MODULATION" } : {}),
         values: key ? definition.values.map(degree => degree >= key.count ? undefined : tx.system === "MODULATION"
             ? `+${degree} degré${degree === 1 ? "" : "s"}` : `Degré ${degree + 1} · +${SCALES[state.keyGroup.scale][degree]}`) : definition.id === "ROTATION" ? ["<<  −1 STEP", ">>  +1 STEP"]
-            : definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.id === "SWING" ? definition.values.map(value => `${value} %`) : definition.id === "RATCHET" ? definition.values.map(value => `${value}×`) : definition.values,
+            : definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.id === "SWING" ? definition.values.map(value => `${value} %`) : definition.id === "FLAM" ? definition.values.map(value => `${value} ms`) : definition.id === "CYCLE" ? definition.values.map(value => `1 / ${value}`) : definition.id === "RATCHET" ? definition.values.map(value => `${value}×`) : definition.values,
         selected: definition.id === "COLOR" ? (valueIndex === null ? null : 0) : valueIndex };
 }
 

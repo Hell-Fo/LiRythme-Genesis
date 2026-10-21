@@ -133,19 +133,25 @@ ipcMain.handle("motif-bank", async (event, request) => {
 ipcMain.on("motif-bank-ready", event => {
     if (event.sender === mainWindow?.webContents) motifBankReady = true;
 });
-ipcMain.on("motif-bank-flushed", (event, ok) => {
+ipcMain.on("motif-bank-flushed", async (event, ok) => {
     if (event.sender !== mainWindow?.webContents || !motifBankClosing) return;
+    if (ok === true) await motifBankStorage.pending;
     motifBankClosing = false;
     if (ok === true) { motifBankCloseAllowed = true; mainWindow.close(); }
     else console.error("Motif Bank save failed: close cancelled to preserve edits");
 });
 let midiClockUtility;
 let midiClockUtilityReady = false;
-let midiClockCommandQueue = [];
+const { PendingMidiCommands } = require("./src/hardware/midi/PendingMidiCommands.cjs");
+const midiClockCommandQueue = new PendingMidiCommands();
+let midiClockUtilityFailed = false;
+let midiUnavailableReported = false;
 let nextNativeMidiRequestId = 1;
 const nativeMidiRequests = new Map();
 
 function startMidiClockUtility() {
+    midiClockUtilityFailed = false;
+    midiUnavailableReported = false;
     midiClockUtility = utilityProcess.fork(
         path.join(
             __dirname,
@@ -170,11 +176,10 @@ function startMidiClockUtility() {
     midiClockUtility.on("spawn", () => {
         midiClockUtilityReady = true;
 
-        for (const command of midiClockCommandQueue) {
+        for (const command of midiClockCommandQueue.drain()) {
             midiClockUtility.postMessage(command);
         }
 
-        midiClockCommandQueue = [];
     });
 
     midiClockUtility.on("message", message => {
@@ -232,6 +237,8 @@ function startMidiClockUtility() {
     midiClockUtility.on("exit", code => {
         midiClockUtility = null;
         midiClockUtilityReady = false;
+        midiClockUtilityFailed = true;
+        midiClockCommandQueue.drain();
 
         for (const request of nativeMidiRequests.values()) {
             request.reject(
@@ -252,7 +259,18 @@ function startMidiClockUtility() {
 
 function sendMidiClockCommand(command) {
     if (!midiClockUtility || !midiClockUtilityReady) {
-        midiClockCommandQueue.push(command);
+        if (!midiClockUtilityFailed && midiClockCommandQueue.enqueue(command)) return;
+        const error = new Error("MIDI utility unavailable; command was not queued for later playback");
+        if (command?.requestId !== undefined) {
+            nativeMidiRequests.get(command.requestId)?.reject(error);
+            nativeMidiRequests.delete(command.requestId);
+        }
+        if (!midiUnavailableReported) {
+            midiUnavailableReported = true;
+            console.error(error.message);
+            if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed())
+                mainWindow.webContents.send("native-midi-status", { type: "ERROR", operation: "UTILITY_UNAVAILABLE", error: { message: error.message } });
+        }
         return;
     }
 
@@ -358,6 +376,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", async () => {
+    await motifBankStorage?.pending;
     await shutdownMidiClockUtility();
     app.quit();
 });

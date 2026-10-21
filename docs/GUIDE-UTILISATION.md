@@ -157,7 +157,29 @@ SWITCH affiche le Book A/T. Les fonctions disponibles sont :
 | Première rangée, deuxième pad | COLOR |
 | Première rangée, troisième pad | SWING |
 | Première rangée, quatrième pad | RATCHET |
+| Deuxième rangée, deuxième pad | CYCLE |
+| Deuxième rangée, troisième pad | FLAM (Motif et Modulation) |
 | Troisième rangée, premier pad | ROTATION |
+
+Dans Motif et Modulation, **FLAM** espace légèrement les Voices qui frappent au même
+instant. A–H : **100, 75, 50, 35, 20, 10, 5, 0 ms**. La première Voice reste sur
+le temps ; les suivantes sont retardées dans l'ordre des Voices. Sélectionner
+les Voices et Steps concernés avec les gestes A/T habituels. À 20 ms, trois
+Voices jouent à 0, +20 et +40 ms ; 0 désactive leur participation.
+Voir [FLAM](FLAM.md) pour les interactions avec SWING et RATCHET.
+
+### CYCLE : une fois sur n passages
+
+CYCLE joue au premier passage, puis une fois sur 2 à 8 passages. Les boutons
+A–H donnent respectivement 8, 7, 6, 5, 4, 3, 2 et 1 ; H joue toujours.
+Sans sélection, le réglage porte sur le Motif ; sélectionner des Voices ou des
+Steps pour créer des exceptions. La priorité est STEP > VOICE > MOTIF, même
+si le réglage général est modifié ensuite.
+
+Le décompte suit les passages du Motif pour une cible Motif, et les boucles
+locales des Voices pour une cible Voice ou Step. STOP remet les compteurs à
+zéro ; PAUSE les conserve. Exemple : F = 1 sur 3 joue aux passages 1, 4, 7…
+La préécoute manuelle reste audible. Voir [CYCLE](CYCLE.md) pour les détails.
 
 ### Une gestuelle commune
 
@@ -168,13 +190,16 @@ SWITCH affiche le Book A/T. Les fonctions disponibles sont :
 5. **Appui long sur le pad de la fonction** : confirmer.
 6. **Clic court sur ce même pad** : annuler toutes les modifications de cette transaction.
 
-Autre méthode depuis PLAY, hors édition et hors Chain : maintenir **SHIFT** et appuyer sur
+Autre méthode depuis la vue A/T (PLAY), même avec une Chain active ou une édition
+A/T déjà ouverte : maintenir **SHIFT** et appuyer sur
 un pad A/T pour consulter son affichage. En gardant SHIFT enfoncé, appuyer sur
 d’autres pads A/T pour parcourir leurs affichages. Les commandes d’édition
 restent bloquées pendant cet aperçu. **Relâcher SHIFT** fait entrer le dernier
 A/T sélectionné en édition ; reprendre ensuite à l’étape 2 ci-dessus.
-Les emplacements vides ou désactivés sont ignorés : le dernier A/T valide reste
-sélectionné et le parcours continue tant que SHIFT est maintenu.
+Un emplacement vide ou désactivé libère la sélection pendant cet aperçu.
+Le parcours continue tant que SHIFT est maintenu : choisir ensuite un pad valide,
+ou relâcher SHIFT pour sortir sans attribut sélectionné. Hors aperçu, un clic sur
+un pad vide annule aussi l'édition A/T courante.
 
 SHIFT permet d’ajouter plusieurs Voices ou Steps à la sélection. Rappuyer sur
 un élément sélectionné le retire. La sélection temporaire commence vide à
@@ -196,7 +221,29 @@ Le motif cible est capturé à l’ouverture. Il reste la cible même si la Chai
 avance pendant l’édition. Les essais provisoires ne deviennent persistants
 qu’à la confirmation.
 
-### VELOCITY, SWING et RATCHET
+### Gate des Voices KEY GROUP
+
+Maintenir le pad Instrument d'une Voice KEY GROUP et appuyer sur `<<` pour
+raccourcir son gate, ou `>>` pour l'allonger. Les crans sont 12,5 %, 25 %,
+37,5 %, 50 %, 62,5 %, 75 %, 87,5 % et 100 % de la durée du Step local.
+Avec RATCHET, le pourcentage porte sur chaque subdivision après SWING.
+Pendant le maintien de la Voice, les deux flèches indiquent le gate : éteint
+= 12,5 % (défaut), Dim Amber = 25 %, Amber = 37,5 %, Yellow = 50 %, Dim Green
+= 62,5 %, Green = 75 %, Dim Red = 87,5 %, Red = 100 %. Au relâchement, elles
+retrouvent leur affichage normal. Le bas du panneau SELECTION de PLAY affiche
+les huit valeurs avec leurs couleurs et encadre la valeur courante.
+
+Ce réglage appartient à la Voice dans la configuration des pads et vaut pour
+tous ses Motifs. Il fonctionne aussi pendant PLAY et dans l'A/T KEY GROUP :
+Voice maintenue + flèche règle le gate ; les flèches seules gardent octave −/+.
+Le gate est sauvegardé immédiatement, indépendamment de la confirmation ou de
+l'annulation A/T. SHIFT, COPY, DELETE et SOLO/MUTE gardent leurs gestes propres.
+
+Sans réglage explicite, une Voice KEY GROUP utilise 12,5 %. Les autres types
+de Voices conservent leurs gates existants. Les notes déjà parties
+conservent leur durée. Aucun gate par Step ou de Modulation dans cette version.
+
+### Valeurs VELOCITY, SWING et RATCHET
 
 | Bouton | VELOCITY MIDI | SWING | RATCHET : frappes totales |
 | --- | --- | --- | --- |
@@ -241,7 +288,7 @@ sinon sa note habituelle. Les autres attributs restent indépendants.
 
 ### EUCLIDIEN
 
-Sur un Motif vide, choisir Euclidien puis un instrument. Shift + Step fixe
+Sur un Motif vide ou déjà programmé, choisir Euclidien puis un instrument. Shift + Step fixe
 sa résolution (rouge), un clic sur un Step fixe le nombre de frappes (vert).
 A choisit le mode polymétrique ; B choisit le mode polyrythmique. B maintenu
 + Step définit la durée du Motif entier. B clignote jusqu’à ce choix, puis reste
@@ -359,12 +406,12 @@ Les flèches ne programment pas de notes.
 
 Pendant PLAY, dans le Book Motif ou Modulation, **SHIFT + pad du bloc actif ou
 suivant** sélectionne cette occurrence pour la déplacer (pad rouge). Garder
-SHIFT enfoncé et appuyer sur **<< / >>** pour la déplacer d’une position à
+SHIFT et le pad enfoncés, puis appuyer sur **<< / >>** pour la déplacer d’une position à
 chaque appui. Le déplacement s’arrête aux extrémités. Relâcher SHIFT termine
 la sélection. La lecture continue sans redémarrer le bloc en cours ; NEXT est
 recalculé selon le nouvel ordre. Si actif et suivant partagent le même pad,
 l’occurrence active est prioritaire. Pour régler le **Loop Point** pendant PLAY,
-maintenir SHIFT et faire un **appui long sur le pad**, sans utiliser les flèches.
+maintenir SHIFT et faire un **clic court sur le pad**, sans utiliser les flèches.
 Les gestes Loop Point en STOP/PAUSE restent inchangés.
 
 Hors Chain, sélectionner un autre motif dans le Book pendant PLAY prépare
@@ -390,10 +437,14 @@ de PLAYING.
 
 Dans le Book de Chain, **SHIFT + le pad du Motif de l’occurrence courante**
 place ou retire le Loop Point. En STOP/PAUSE, sélectionner d’abord l’occurrence
-avec les flèches ; en PLAY, maintenir SHIFT et faire un appui long sur le pad
-de celle qui joue. Après cette occurrence,
+avec les flèches ; pendant la lecture, maintenir SHIFT et faire un clic court
+sur le pad de celle qui joue. Ce geste utilise la bibliothèque de Motifs ;
+sur la page PLAY, le Book reste réservé aux fonctions A/T. Après cette occurrence,
 la Chain revient à sa tête. Le Loop Point désigne une occurrence, pas toutes
 les apparitions du même numéro de Motif.
+
+Dans l'affichage Chain de la page PLAY, un bref clignotement marque le début
+de chaque occurrence, y compris lorsque deux Motifs identiques se suivent.
 
 ## 9. Copier, doubler et effacer
 

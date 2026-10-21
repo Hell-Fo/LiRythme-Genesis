@@ -8,6 +8,7 @@ import { readATPanel } from "../src/PlayATUI.mjs";
 const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), "utf8");
 async function load(file, imports = {}) {
     let text = await source(file);
+    text = text.replace('"./LaunchpadATInput.mjs"', JSON.stringify(new URL("../src/hardware/launchpad/LaunchpadATInput.mjs", import.meta.url).href));
     imports["./ATTransaction.mjs"] = new URL("../src/ATTransaction.mjs", import.meta.url).href;
     for (const [name, value] of Object.entries(imports)) text = text.replace(JSON.stringify(name), JSON.stringify(value));
     return `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
@@ -76,7 +77,7 @@ test('PLAY chain uses [GM] labels with existing occurrence styling and updates a
     const document = { getElementById: id => id === 'play-chain-occurrences' ? container : null,
         createElement: () => ({}) };
     const ui = initializePlayChainUI({ state, system: 'MOTIF', document });
-    assert.equal(container.children[1].className, 'chain-occurrence is-playing');
+    assert.equal(container.children[1].className, 'chain-occurrence is-playing is-entry');
     delete state.getMotif(1).grooveMorph; ui.render();
     assert.equal(container.children[1].textContent, '[02]');
 });

@@ -63,13 +63,16 @@ export function validateDocument(doc) {
                 if (typeof v.source !== "string" || (v.source !== "" && !/\.wav$/i.test(v.source))) error(`${key} → source`, "Chemin vers un fichier .wav requis.");
                 continue;
             }
-            if (!["NONE", "MIDI DRUM", "KEY GROUP"].includes(v.type)) { error(`${key} → type`, `type inconnu : ${JSON.stringify(v.type) ?? "champ absent"}.`); continue; }
-            fields(v, v.type === "NONE" ? ["name", "type"] : v.type === "KEY GROUP" ? ["name", "type", "output", "channel"] : ["name", "type", "output", "channel", "note", "colorNote"], key);
+            if (!["NONE", "MIDI DRUM", "MIDI CC", "KEY GROUP"].includes(v.type)) { error(`${key} → type`, `type inconnu : ${JSON.stringify(v.type) ?? "champ absent"}.`); continue; }
+            fields(v, v.type === "NONE" ? ["name", "type"] : v.type === "MIDI CC" ? ["name", "type", "output", "channel", "cc", "value"] : v.type === "KEY GROUP" ? ["name", "type", "output", "channel", "gate"] : ["name", "type", "output", "channel", "note", "colorNote"], key);
             if (v.type === "NONE") continue;
+            if (v.type === "KEY GROUP" && v.gate !== undefined && ![12.5, 25, 37.5, 50, 62.5, 75, 87.5, 100].includes(v.gate)) {
+                error(`${key} → gate`, "Pourcentage requis : 12.5, 25, 37.5, 50, 62.5, 75, 87.5 ou 100.");
+            }
             if (v.colorNote !== undefined && (!Number.isInteger(v.colorNote) || v.colorNote < 0 || v.colorNote > 127)) {
                 error(`${key} → colorNote`, "Un entier de 0 à 127 est requis ; omettre pour aucune note COLOR.");
             }
-            for (const [field, min, max] of (v.type === "KEY GROUP" ? [["channel", 1, 16]] : [["channel", 1, 16], ["note", 0, 127]])) {
+            for (const [field, min, max] of (v.type === "MIDI CC" ? [["channel", 1, 16], ["cc", 0, 127], ["value", 0, 127]] : v.type === "KEY GROUP" ? [["channel", 1, 16]] : [["channel", 1, 16], ["note", 0, 127]])) {
                 if (!Object.hasOwn(v, field)) error(`${key} → ${field}`, "champ obligatoire pour une Voice MIDI.");
                 else if (!Number.isInteger(v[field]) || v[field] < min || v[field] > max) error(`${key} → ${field}`, `valeur reçue : ${JSON.stringify(v[field])}. Un entier de ${min} à ${max} est requis.`);
             }

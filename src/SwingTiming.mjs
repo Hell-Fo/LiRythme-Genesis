@@ -56,6 +56,14 @@ export class SwingTiming {
     }
     delayFor(voice) { return readSwing(this.state, voice).fraction * this.duration; }
     planFor(voice, preview = null, onset = null) {
+        const plan = this.basePlanFor(voice, preview, onset);
+        const settings = this.state.padConfiguration?.voices[voice];
+        if (settings?.type === "KEY GROUP") {
+            plan.gate = plan.interval * (settings.gate ?? 12.5) / 100;
+        }
+        return plan;
+    }
+    basePlanFor(voice, preview = null, onset = null) {
         if (preview) {
             const layer = this.state.forSystem(preview.system);
             const motif = layer.getMotif(preview.motifId).grooveMorph && preview.motifId === layer.playingMotifId
@@ -69,6 +77,34 @@ export class SwingTiming {
             return { ...plan, gate: Math.min(plan.gate, plan.interval / 2), offsets: plan.offsets.map(offset => onset.offset * this.duration + offset) };
         }
         return ratchetPlan(this.duration, this.delayFor(voice), readRatchet(this.state, voice));
+    }
+    applyFlamPlans(strikes) {
+        const mod = this.state.forSystem("MODULATION"), base = this.state.forSystem("MOTIF"), groups = new Map();
+        for (const strike of strikes) {
+            const explicit = this.state.modulationActive ? mod.getPlaybackMotifForVoice(strike.voiceId).attributes?.FLAM?.[strike.voiceId]?.[mod.getVoiceStep(strike.voiceId)] : null;
+            const value = explicit ?? base.getPlaybackMotifForVoice(strike.voiceId).flams?.[strike.voiceId]?.[strike.step ?? base.getVoiceStep(strike.voiceId)] ?? 0;
+            if (value <= 0) continue;
+            const key = Math.round(strike.plan.offsets[0] * 1e6);
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push({ strike, value });
+        }
+        for (const group of groups.values()) {
+            group.sort((a, b) => a.strike.voiceId - b.strike.voiceId);
+            let total = 0;
+            const delays = group.map(({ value }, index) => total += index ? value : 0);
+            if (!total) continue;
+            // Only delayed Voices constrain the spread. Use their actual remaining
+            // room, keeping a small margin before cancellation at the boundary.
+            const scale = Math.min(1, ...group.slice(1).map(({ strike }, index) => {
+                const room = Math.max(0, strike.deadline - strike.plan.offsets.at(-1));
+                const margin = Math.min(2, room / 2);
+                return (room - margin) / delays[index + 1];
+            }));
+            group.forEach(({ strike }, index) => {
+                const delay = delays[index] * scale;
+                strike.plan.offsets = strike.plan.offsets.map(offset => offset + delay);
+            });
+        }
     }
     schedule(delay, emit, validUntil = this.duration, preview = false) {
         const revision = this.clock.transportRevision, source = this.clock.source;

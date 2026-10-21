@@ -6,7 +6,7 @@ export { initializeKeyGroupSettings } from "./KeyGroupUI.mjs";
 export function editPadVoice(state, id, field, value) {
     voiceKey(id); // Validate the canonical address before indexing.
     if (!["STOP", "PAUSE"].includes(state.transportState)) throw new Error("Édition refusée pendant PLAY. Passez en STOP ou PAUSE.");
-    if (!["name", "type", "channel", "note", "colorNote", "source", "audioOutput"].includes(field)) throw new Error("Paramètre non éditable.");
+    if (!["name", "type", "channel", "cc", "value", "note", "colorNote", "source", "audioOutput"].includes(field)) throw new Error("Paramètre non éditable.");
     const current = state.padConfiguration.voices[id];
     let voice = { ...current, [field]: value };
     if (field === "audioOutput") { delete voice.audioOutput; voice.output = value; }
@@ -15,6 +15,7 @@ export function editPadVoice(state, id, field, value) {
         if (value === "NONE") voice = { id, name: current.name, type: "NONE" };
         if (value === "AUDIO") voice = { id, name: current.name, type: "AUDIO", output: "LEFT", source: "" };
         if (value === "KEY GROUP") voice = { id, name: current.name, type: "KEY GROUP", output: { mode: "DEFAULT" }, channel: 1 };
+        if (value === "MIDI CC") voice = { id, name: current.name, type: "MIDI CC", output: { mode: "DEFAULT" }, channel: 1, cc: 0, value: 0 };
         if (value === "MIDI DRUM") voice = { id, name: current.name, type: "MIDI DRUM", output: { mode: "DEFAULT" }, channel: 10, note: 36 };
     }
     const voices = state.padConfiguration.voices.map((existing, index) => index === id ? voice : existing);

@@ -13,10 +13,12 @@ export function mutateMotif(source, index) {
     const defaults = key => key === "events" || key === "colors" ? false : key === "velocities" ? 100 : null;
     const positions = voice => Array.from({ length: limit(voice) }, (_, step) => step).filter(step => motif.events[voice][step]);
     const read = (voice, step) => ({
+        cycle: motif.cycles?.steps[voice][step] ?? null,
         fields: Object.fromEntries(matrices.map(key => [key, structuredClone(motif[key][voice][step])])),
         destinations: Object.fromEntries(Object.entries(motif.atDestinations ?? {}).map(([key, rows]) => [key, rows[voice][step]]))
     });
     const write = (voice, step, cell) => {
+        if (motif.cycles) motif.cycles.steps[voice][step] = cell?.cycle ?? null;
         for (const key of matrices) motif[key][voice][step] = cell ? structuredClone(cell.fields[key]) : defaults(key);
         for (const [key, rows] of Object.entries(motif.atDestinations ?? {})) rows[voice][step] = cell?.destinations[key] ?? null;
     };

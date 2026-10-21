@@ -1,4 +1,6 @@
 // Read-only projection of existing engine state. No musical commands or timers.
+const GATE_COLORS = ["#ffffff", "#ffe699", "#ffd966", "#ffff66",
+    "#ccff99", "#99ff33", "#ff9999", "#ff4d4d"];
 export function readPlayStatus(state, clock, midiManager) {
     state = state.editingState ?? state;
     const id = state.selectedInstrument;
@@ -34,6 +36,7 @@ export function initializePlayStatusUI({ state, clock, midiManager,
         .map(key => [key, document.getElementById(`play-${key}`)]));
     let frame = null;
     let disposed = false;
+    let gateColor;
     function render() {
         if (disposed) return;
         const status = readPlayStatus(state, clock, midiManager);
@@ -43,9 +46,13 @@ export function initializePlayStatusUI({ state, clock, midiManager,
             const label = document.getElementById("play-gate-current");
             if (label) {
                 const value = status.gate ?? 12.5;
-                label.textContent = `GATE ${String(value).replace(".", ",")} %`;
-                label.style.color = ["#ffffff", "#ffe699", "#ffd966", "#ffff66",
-                    "#ccff99", "#99ff33", "#ff9999", "#ff4d4d"][value / 12.5 - 1];
+                const text = `GATE ${String(value).replace(".", ",")} %`;
+                if (label.textContent !== text) label.textContent = text;
+                const color = GATE_COLORS[value / 12.5 - 1];
+                if (gateColor !== color) {
+                    label.style.color = color;
+                    gateColor = color;
+                }
             }
         }
         for (const [key, element] of Object.entries(fields)) {

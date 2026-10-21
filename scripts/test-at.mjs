@@ -1,3 +1,4 @@
+import { noteOns, assertReleasedNotes } from './midi-assertions.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -8,6 +9,7 @@ import { readATPanel, initializePlayATUI } from "../src/PlayATUI.mjs";
 const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), "utf8");
 async function load(file, imports = {}) {
     let text = await source(file);
+    text = text.replace('"./LaunchpadATInput.mjs"', JSON.stringify(new URL("../src/hardware/launchpad/LaunchpadATInput.mjs", import.meta.url).href));
     imports["./ATTransaction.mjs"] = new URL("../src/ATTransaction.mjs", import.meta.url).href;
     for (const [name, value] of Object.entries(imports)) text = text.replace(JSON.stringify(name), JSON.stringify(value));
     return `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
@@ -68,19 +70,20 @@ test("SHIFT browsing owns inputs even when starting on an empty A/T slot", t => 
     const { state, c, press, release, tap } = setup(t);
     const shift = c.mapping.TOP_CONTROLS.SHIFT;
     press(shift, 0xB0);
-    tap(c.mapping.BOOKS[5]);
+    tap(c.mapping.BOOKS[7]);
     assert.equal(c.atBrowsing, true);
     assert.equal(state.atTransaction, null);
     tap(c.mapping.AT_VALUE[7]);
     assert.equal(c.switchPressed, false);
-    for (const slot of [0, 5, 2, 6, 3, 7, 4, 15, 8]) {
+    for (const slot of [0, 5, 2, 7, 3, 7, 4, 15, 8]) {
         tap(c.mapping.BOOKS[slot]);
         t.mock.timers.tick(500);
         assert.equal(c.atBrowsing, true);
         assert.equal(c.shiftPressed, true);
         assert.equal(c.atPadHold, null);
         tap(c.mapping.AT_VALUE[0]);
-        assert.equal(state.atTransaction.touched.size, 0);
+        assert.equal(state.atTransaction?.touched.size ?? 0, 0);
+        if ([6, 7, 15].includes(slot)) assert.equal(state.atTransaction, null);
     }
     release(shift, 0xB0);
     assert.equal(c.atBrowsing, false);
@@ -243,7 +246,7 @@ test("A/T navigation is inert; VELOCITY available and COLOR disabled by default 
     }
     actions.toggleView(); actions.toggleView();
     assert.equal(AT_SLOTS.length, 16);
-    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 8 && slot !== 9)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 5 && slot !== 6 && slot !== 8 && slot !== 9)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.equal(state.atTransaction.slot, 0);
     assert.deepEqual([...state.atTransaction.instruments], []);
     assert.deepEqual([...state.atTransaction.steps], []);
@@ -477,10 +480,10 @@ for (const commit of [false, true]) test(`existing PLAY A/T surface: all 16 fami
     const { state, c, leds, tap, press, release } = setup(t);
     const colors = () => c.mapping.BOOKS.map(note => leds.get(`144:${note}`));
     const expected = lit => Array.from({ length: 16 }, (_, i) =>
-        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : (i === 2 || i === 3 || i === 4) ? "RED" : i < 8 ? "DIM_RED" : (i === 8 || i === 9) ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
+        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : (i === 2 || i === 3 || i === 4 || i === 5 || i === 6) ? "RED" : i < 8 ? "DIM_RED" : (i === 8 || i === 9) ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
     assert.equal(state.currentView, "PLAY");
     c.drawBooks(); assert.deepEqual(colors(), expected(true));
-    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 8 && slot !== 9)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 5 && slot !== 6 && slot !== 8 && slot !== 9)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.ok(state.atTransaction); assert.deepEqual(colors(), expected(true));
     t.mock.timers.tick(160); drainAT(t, c); assert.deepEqual(colors(), expected(false));
     c.drawBooks(); assert.deepEqual(colors(), expected(false));
@@ -584,8 +587,8 @@ for (const mode of ["INTERNAL", "MIDI"]) test(`audible live velocity and unchang
         assert.equal(clock.transportRevision, revision);
         assert.equal(notes.at(-1)[2], i < 20 ? 127 : i < 40 ? 16 : 100);
     }
-    const ons = notes.slice(); pending.forEach(fn => fn());
-    assert.deepEqual(notes.slice(ons.length), ons.map(([s, n]) => [s, n, 0]));
+    pending.forEach(fn => fn());
+    assertReleasedNotes(notes);
     c.resetInputState();
 });
 
@@ -1203,13 +1206,14 @@ for (const mode of ["INTERNAL", "MIDI"]) test(`COLOR MIDI variant/fallback, velo
         }
         if (mode === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
         else clock.receiveInternalClockStep({ sequence: tick, transportRevision: revision });
-        assert.equal(notes.at(-2)[1], tick < 4 ? 0 : 36);
-        assert.equal(notes.at(-2)[2], 48); assert.equal(notes.at(-1)[1], 37); // no COLOR note => main
+        const latest = noteOns(notes).slice(-2);
+        assert.equal(latest[0][1], tick < 4 ? 0 : 36);
+        assert.equal(latest[0][2], 48); assert.equal(latest[1][1], 37); // no COLOR note => main
         assert.equal(state.playheadPosition, tick % 8); assert.equal(clock.transportRevision, revision);
     }
-    const ons = notes.slice(); state.padConfiguration.voices[12].colorNote = 127;
+    state.padConfiguration.voices[12].colorNote = 127;
     actions.stop(); offs.forEach(fn => fn());
-    assert.deepEqual(notes.slice(ons.length), ons.map(([s, n]) => [s, n, 0]));
+    assertReleasedNotes(notes);
     c.resetInputState();
 });
 
@@ -1837,4 +1841,85 @@ for (const afterBoundary of [false, true]) test(`ROTATION cancel ${afterBoundary
     assert.equal(state.getPlaybackMotifForVoice(0).events[0][afterBoundary ? 1 : 0], true);
     do { actions.nextStep(); } while (state.getVoiceStep(0) !== 0);
     assert.equal(state.getPlaybackMotifForVoice(0).events[0][0], true);
+});
+
+for (const transport of ['STOP','PAUSE','PLAY']) for (const chain of [false,true])
+    test(`SHIFT previews and selects A/T from an existing editor: ${transport}, Chain ${chain}`, t => {
+        const {state,actions,c,press,release,tap}=setup(t);
+        state.currentView='PLAY'; state.transportState=transport;
+        state.chainEnabled=chain; state.chain=[0,1];
+        state.motif[0][0]=true;
+        assert.ok(actions.at.begin(0));
+        const before=structuredClone(state.motifs);
+        const shift=c.mapping.TOP_CONTROLS.SHIFT;
+        press(shift,0xB0);
+        for(const slot of [2,3,4,5,0]) {
+            press(c.mapping.BOOKS[slot]);
+            assert.equal(state.atTransaction.slot,slot);
+            assert.equal(readATPanel(state).name,actions.at.definition(slot).id.replace('_',' '));
+            t.mock.timers.tick(600);
+            release(c.mapping.BOOKS[slot]);
+            tap(c.mapping.AT_VALUE[0]);
+            assert.equal(state.atTransaction.touched.size,0);
+            assert.equal(c.atPadHold,null);
+        }
+        release(shift,0xB0);
+        assert.equal(c.atBrowsing,false);
+        assert.equal(state.atTransaction.slot,0);
+        assert.deepEqual(state.motifs,before);
+        assert.deepEqual(state.chain,[0,1]);
+        assert.equal(state.chainLoopMasterIndex,null);
+        tap(c.mapping.AT_VALUE[0]);
+        assert.equal(state.motifs[0].velocities[0][0],127);
+    });
+
+test('SHIFT browsing enters CYCLE with Chain active and consumes a pad released after SHIFT', t => {
+    const {state,c,press,release,tap}=setup(t);
+    state.currentView='PLAY'; state.chainEnabled=true; state.chain=[0];
+    const shift=c.mapping.TOP_CONTROLS.SHIFT;
+    press(shift,0xB0); press(c.mapping.BOOKS[5]);
+    assert.equal(readATPanel(state).name,'CYCLE');
+    release(shift,0xB0); release(c.mapping.BOOKS[5]);
+    assert.equal(state.atTransaction.slot,5);
+    assert.equal(c.atPadHold,null);
+    tap(c.mapping.AT_VALUE[5]);
+    assert.equal(state.motifs[0].cycles.motif,3);
+});
+
+for (const shiftFirst of [false,true]) test(`empty A/T releases selection and permits a new editor, SHIFT released first: ${shiftFirst}`, t => {
+    const {state,actions,c,press,release,tap}=setup(t);
+    state.currentView='PLAY'; state.chainEnabled=true; state.chain=[0];
+    state.motif[0][0]=true;
+    assert.ok(actions.at.begin(5));
+    const shift=c.mapping.TOP_CONTROLS.SHIFT;
+    press(shift,0xB0); press(c.mapping.BOOKS[7]);
+    assert.equal(state.atTransaction,null);
+    assert.equal(c.atBrowsing,true);
+    if(shiftFirst){release(shift,0xB0);release(c.mapping.BOOKS[7]);}
+    else {release(c.mapping.BOOKS[7]);release(shift,0xB0);}
+    assert.equal(c.atBrowsing,false);
+    assert.equal(c.atPadHold,null);
+    assert.equal(c.atHeld.size,0);
+    assert.equal(c.switchPressed,false);
+    tap(c.mapping.BOOKS[5]);
+    assert.equal(state.atTransaction.slot,5);
+    tap(c.mapping.AT_VALUE[5]);
+    assert.equal(state.motifs[0].cycles.motif,3);
+    tap(c.mapping.BOOKS[5]);
+    assert.equal(state.atTransaction,null);
+});
+
+test('an empty A/T pad releases a normal editor without SHIFT and browsing can resume', t => {
+    const {state,c,tap,press,release}=setup(t);
+    state.currentView='PLAY'; tap(c.mapping.BOOKS[0]);
+    assert.equal(state.atTransaction.slot,0);
+    tap(c.mapping.BOOKS[7]);
+    assert.equal(state.atTransaction,null);
+    assert.equal(c.atHeld.size,0);
+    press(c.mapping.TOP_CONTROLS.SHIFT,0xB0);
+    tap(c.mapping.BOOKS[7]); tap(c.mapping.BOOKS[5]);
+    assert.equal(readATPanel(state).name,'CYCLE');
+    release(c.mapping.TOP_CONTROLS.SHIFT,0xB0);
+    tap(c.mapping.AT_VALUE[6]);
+    assert.equal(state.motifs[0].cycles.motif,2);
 });

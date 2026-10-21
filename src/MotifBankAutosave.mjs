@@ -13,18 +13,30 @@ export async function initializeMotifBankAutosave(state, bridge, {
         if (timer !== null) cancel(timer);
         timer = schedule(() => { timer = null; flush().catch(report); }, delay);
     }
-    async function flush() {
+    function flush() {
         if (timer !== null) { cancel(timer); timer = null; }
-        if (inFlight) await inFlight;
+        if (inFlight) return inFlight;
+        // Publish one promise for the entire drain, including edits made during save.
+        let resolve, reject;
+        const pending = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+        inFlight = pending;
+        const failed = error => { inFlight = null; reject(error); };
+        const finished = () => {
+            // An edit can arrive between drain's final await and this reaction.
+            if (dirty) drain().then(finished, failed);
+            else { inFlight = null; resolve(); }
+        };
+        drain().then(finished, failed);
+        return pending;
+    }
+    async function drain() {
         while (dirty) {
             dirty = false;
             try {
                 // Only called by debounce or close, never by the musical tick.
                 const bank = snapshotMotifBank(state);
-                inFlight = bridge.save(bank);
-                await inFlight;
+                await bridge.save(bank);
             } catch (e) { dirty = true; throw e; }
-            finally { inFlight = null; }
         }
     }
     state.onBankChange = markDirty;

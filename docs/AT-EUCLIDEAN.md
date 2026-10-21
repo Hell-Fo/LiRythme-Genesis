@@ -1,8 +1,10 @@
 # Euclidien — génération par instrument
 
 Euclidien occupe le deuxième pad de la troisième rangée du Book A/T,
-à droite de ROTATION. La première entrée exige un Motif vide. Un Motif
-déjà créé avec Euclidien peut être rouvert pour ajuster ses paramètres.
+à droite de ROTATION. Il s'ouvre sur un Motif vide ou déjà programmé.
+L'ouverture ne modifie aucun événement ; les réglages génèrent ensuite le rythme
+de la Voice choisie, en conservant les autres Voices. Un Motif déjà créé avec
+Euclidien peut être rouvert pour ajuster ses paramètres.
 La transformation concerne MOTIF. La Voice sélectionnée reste allumée en jaune,
 même si sa timeline est vide.
 

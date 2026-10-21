@@ -10,6 +10,7 @@ import { initializeProjectBook, connectProjectController } from "../src/ProjectB
 const source = file => fs.readFile(new URL(`../src/${file}`, import.meta.url), "utf8");
 async function load(file, imports = {}) {
     let text = await source(file);
+    text = text.replace('"./LaunchpadATInput.mjs"', JSON.stringify(new URL("../src/hardware/launchpad/LaunchpadATInput.mjs", import.meta.url).href));
     imports["./ATTransaction.mjs"] = new URL("../src/ATTransaction.mjs", import.meta.url).href;
     for (const [key, value] of Object.entries(imports)) text = text.replace(JSON.stringify(key), JSON.stringify(value));
     return `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
@@ -74,6 +75,71 @@ async function dispatcher({ count = 4, swing = 50, tempo = 120, type = 'MIDI DRU
 function melodic(state, ...voices) {
     for (const id of voices) state.padConfiguration.voices[id] = { id, name: 'Keys', type: 'KEY GROUP', output: {mode:'DEFAULT'}, channel: 2 };
 }
+
+test('Voice gate chord owns arrows in and outside Key Group, including staggered releases', t => {
+    const { state, actions } = setup(); melodic(state, 0);
+    const c = new LaunchpadMini({ send() {} }, state, actions, 'LP');
+    t.after(() => c.resetInputState());
+    const voice = c.mapping.INSTRUMENTS[0], next = c.mapping.TOP_CONTROLS.NEXT;
+    const send = (status, number, value) => c.handleMidiMessage([status, number, value]);
+    state.padConfiguration.voices[0].gate = 50;
+    const position = state.playheadPosition;
+    send(0x90, voice, 127); send(0xB0, next, 127);
+    send(0x90, voice, 0); send(0xB0, next, 0);
+    assert.equal(state.padConfiguration.voices[0].gate, 62.5);
+    assert.equal(state.playheadPosition, position);
+    actions.at.begin(4);
+    send(0x90, voice, 127); send(0xB0, next, 127);
+    send(0xB0, next, 0); send(0x90, voice, 0);
+    assert.equal(state.padConfiguration.voices[0].gate, 75);
+    assert.equal(state.motifs[0].keyGroups?.[0]?.[0] ?? null, null);
+    actions.at.finish(false);
+    assert.equal(state.padConfiguration.voices[0].gate, 75);
+    assert.equal(parseConfiguration(serializeConfiguration(state.padConfiguration)).voices[0].gate, 75);
+    state.padConfiguration.voices[0].gate = 101;
+    assert.throws(() => serializeConfiguration(state.padConfiguration));
+});
+
+test('Voice gate extends synth Note Off, captures duration and scales ratchet subdivisions', async () => {
+    const d = await dispatcher({ count: 1 }); melodic(d.state, 0);
+    d.state.padConfiguration.voices[0].gate = 100;
+    d.trigger(1);
+    d.state.padConfiguration.voices[0].gate = 12.5;
+    d.time.run(50); assert.equal(d.notes.length, 1);
+    d.time.run(125); assert.equal(d.notes.length, 2);
+    assert.equal(d.notes[1].time, 125);
+    d.state.padConfiguration.voices[0].gate = 75;
+    assert.equal(d.timing.planFor(0).gate, 93.75);
+    assert.equal(d.timing.planFor(0, null, { interval: 0.5, offset: 0, step: 1 }).gate, 46.875);
+    d.state.motifs[0].ratchets[0][1] = 4;
+    assert.equal(d.timing.planFor(0).gate, 23.4375);
+    assert.equal(d.timing.planFor(0, { system: 'MOTIF', motifId: 0, step: 1 }).gate, 23.4375);
+});
+
+test('GATE arrows show all eight colors while held and restore octave feedback on release', t => {
+    const { state, actions } = setup(); melodic(state, 0);
+    const leds = new Map();
+    const c = new LaunchpadMini({ send: (_, [status, note, color]) => leds.set(`${status}:${note}`, color) }, state, actions, 'LP');
+    t.after(() => c.resetInputState());
+    const voice = c.mapping.INSTRUMENTS[0];
+    const previous = c.mapping.TOP_CONTROLS.PREVIOUS, next = c.mapping.TOP_CONTROLS.NEXT;
+    const color = note => leds.get(`176:${note}`) & 0x33;
+    actions.at.begin(4);
+    c.handleMidiMessage([0x90, voice, 127]);
+    assert.equal(color(previous), c.colors.OFF & 0x33);
+    assert.equal(color(next), c.colors.OFF & 0x33);
+    assert.equal(new SwingTiming(state, { source: 'INTERNAL' }).planFor(0).gate, state.getStepDurationMs() / 8);
+    const colors = ['DIM_AMBER', 'AMBER', 'YELLOW', 'DIM_GREEN', 'GREEN', 'DIM_RED', 'RED'];
+    for (const name of colors) {
+        c.handleMidiMessage([0xB0, next, 127]); c.handleMidiMessage([0xB0, next, 0]);
+        assert.equal(color(previous), c.colors[name] & 0x33);
+        assert.equal(color(next), c.colors[name] & 0x33);
+    }
+    c.handleMidiMessage([0x90, voice, 0]);
+    assert.equal(color(previous), c.colors.DIM_RED & 0x33);
+    assert.equal(color(next), c.colors.DIM_RED & 0x33);
+    actions.at.finish(false);
+});
 test('editable catalogue: 36 supplied scales, custom names, strict intervals and absent degrees', () => {
     assert.equal(Object.keys(SCALES).length, 36);
     assert.deepEqual([...validateScales({scales:[{'my scale':[0,3,7]}]})['my scale']], [0,3,7]);

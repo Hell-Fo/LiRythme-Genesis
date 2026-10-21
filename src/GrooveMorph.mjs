@@ -12,7 +12,7 @@ export function composeGroove(previous, next, recipe) {
     const result = structuredClone(recipe);
     delete result.grooveMorph;
     const length = recipe.motifLength ?? 32, level = recipe.grooveMorph.level;
-    const fields = { events: false, velocities: 100, colors: false, swings: null, ratchets: null, keyGroups: null };
+    const fields = { events: false, velocities: 100, colors: false, swings: null, ratchets: null, flams: null, keyGroups: null };
     for (const [field, value] of Object.entries(fields)) result[field] =
         Array.from({ length: 16 }, () => Array(32).fill(value));
     delete result.atDestinations;

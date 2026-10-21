@@ -7,7 +7,9 @@ import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const build = path.resolve(process.argv[2] ?? path.join(root, "dist/LiRythme-Genesis-1.0.0-field1-win32-x64"));
+if (!process.argv[2]) throw new Error('Usage: node scripts/test-windows-portable.mjs <portable-build-directory>');
+const build = path.resolve(process.argv[2]);
+await fs.access(path.join(build, 'BUILD-MANIFEST.json'));
 const testRoot = await fs.mkdtemp(path.join(root, "dist/field-smoke-"));
 const userData = path.join(testRoot, "userData");
 const documents = path.join(testRoot, "Documents");

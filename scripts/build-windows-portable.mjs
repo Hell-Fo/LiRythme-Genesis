@@ -15,6 +15,7 @@ const electron = require("electron/package.json");
 const fieldBuild = Number(process.argv[2] ?? 1);
 if (!Number.isSafeInteger(fieldBuild) || fieldBuild < 1) throw new Error("Invalid field build number.");
 const gitCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const gitStatus = execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=normal"], { cwd: root, encoding: "utf8" }).trim();
 const output = path.join(root, "dist", `LiRythme-Genesis-${pkg.version}-field${fieldBuild}-win32-x64`);
 // Never replace a previous field artifact implicitly.
 await fs.mkdir(path.dirname(output), { recursive: true });
@@ -70,7 +71,7 @@ async function hashTree(directory, prefix = "") {
 }
 await hashTree(output);
 await fs.writeFile(path.join(output, "BUILD-MANIFEST.json"), JSON.stringify({
-    fieldBuild, gitCommit, version: pkg.version, electron: electron.version,
+    fieldBuild, gitCommit, gitDirty: Boolean(gitStatus), gitStatus, createdAt: new Date().toISOString(), version: pkg.version, electron: electron.version,
     platform: process.platform, arch: process.arch, files: hashes
 }, null, 2) + "\n");
 console.log(output);

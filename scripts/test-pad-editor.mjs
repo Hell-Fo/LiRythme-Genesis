@@ -227,6 +227,27 @@ test("integrated UI: 16 pads, values, immediate names/star, invalid input, SAVE 
         let canceledAgain = false;
         await lifecycle.beforeunload({ preventDefault() { canceledAgain = true; } });
         assert.equal(canceledAgain, false);
+        // Project selection clears the library preset association, but Voices stay editable.
+        state.padLibrarySession.active = null;
+        choose(3);
+        assert.equal(get("voice-type").disabled, true);
+        edit("type", "MIDI CC");
+        assert.match(get("voice-error").textContent, /preset/);
+        state.projectBook = { active: 0, slots: [{ name: "Project", description: "" }] };
+        choose(3);
+        assert.equal(get("voice-type").disabled, false);
+        assert.match(get("voice-editor-status").textContent, /projet courant/);
+        edit("type", "MIDI CC"); edit("channel", "2"); edit("cc", "74"); edit("value", "63");
+        assert.equal(get("voice-error").textContent, "");
+        assert.equal(state.padConfiguration.voices[3].type, "MIDI CC");
+        assert.equal(state.padConfiguration.voices[3].cc, 74);
+        assert.equal(state.padConfiguration.voices[3].value, 63);
+        state.transportState = "PLAY"; choose(3);
+        assert.equal(get("voice-value").disabled, true);
+        edit("value", "100");
+        assert.equal(state.padConfiguration.voices[3].value, 63);
+        assert.match(get("voice-error").textContent, /PLAY/);
+
     } finally {
         lifecycle.pagehide?.();
         for (const [key, value] of Object.entries(savedGlobals)) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }

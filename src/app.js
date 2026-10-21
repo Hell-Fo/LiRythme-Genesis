@@ -661,6 +661,7 @@ function triggerMotifStep(step) {
     const previewState = state.forSystem?.(previewSystem) ?? state;
     state.noteTiming?.beginStep();
     const triggeredInstruments = [];
+    const strikes = [];
     for (let voiceId = 0; voiceId < 16; voiceId++) {
         const playingMotif = previewMotifId !== null ? previewState.getMotif(previewMotifId).grooveMorph && previewMotifId === previewState.playingMotifId
             ? previewState.getOccurrenceMotif() : previewState.getMotif(previewMotifId)
@@ -682,7 +683,7 @@ function triggerMotifStep(step) {
             const voice = structuredClone(state.padConfiguration.voices[voiceId]);
             const keyGroupNote = voice?.type === "KEY GROUP" ? state.getKeyGroupNote(voiceId,
                 previewMotifId !== null ? { motif: playingMotif, step: localStep } : null, localStep) : null;
-            const midiOutputName = ["MIDI DRUM", "KEY GROUP"].includes(voice?.type)
+            const midiOutputName = ["MIDI DRUM", "MIDI CC", "KEY GROUP"].includes(voice?.type)
                 ? (voice.type === "KEY GROUP" && state.keyGroupOutputName) || midiOutputSelector.options[midiOutputSelector.selectedIndex]?.textContent : null;
             const delay = previewMotifId === null ? state.noteTiming?.delayFor(voiceId) ?? 0 : 0;
             const plan = state.noteTiming?.planFor(voiceId, previewMotifId === null ? null
@@ -698,6 +699,14 @@ function triggerMotifStep(step) {
                     if (audioPlayer.trigger(voice, event.velocity)) feedback(delayed);
                     return;
                 }
+                if (voice?.type === "MIDI CC") {
+                    if (voice.output?.mode !== "DEFAULT" || !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
+                        ![voice.cc, voice.value].every(value => Number.isInteger(value) && value >= 0 && value <= 127)) return;
+                    midiManager.send(midiOutputName, [0xB0 | (voice.channel - 1), voice.cc, voice.value],
+                        undefined, { preview: previewMotifId !== null });
+                    if (midiManager.findOutput(midiOutputName) !== null) feedback(delayed);
+                    return;
+                }
                 if (!["MIDI DRUM", "KEY GROUP"].includes(voice?.type) || voice.output?.mode !== "DEFAULT" ||
                     !Number.isInteger(voice.channel) || voice.channel < 1 || voice.channel > 16 ||
                     (voice.type === "KEY GROUP" ? keyGroupNote === null : !Number.isInteger(voice.note) || voice.note < 0 || voice.note > 127)) {
@@ -709,6 +718,11 @@ function triggerMotifStep(step) {
                 const status = 0x90 | (voice.channel - 1);
                 // A delayed Note Off must never cut the following ratchet strike.
                 releasePrevious?.();
+                // Ownership spans Steps and Voices sharing a physical MIDI note.
+                // Retrigger only after releasing its previous generation.
+                const releases = midiManager.noteReleases ??= new Map();
+                const noteKey = JSON.stringify([midiOutputName, status, note]);
+                releases.get(noteKey)?.();
                 midiManager.send(
                     midiOutputName,
                     [status, note, event.velocity],
@@ -719,11 +733,14 @@ function triggerMotifStep(step) {
                 const release = () => {
                     if (released) return;
                     released = true;
+                    if (releases.get(noteKey) !== release) return;
+                    releases.delete(noteKey);
                     midiManager.send(
                         midiOutputName,
                         [status, note, 0], undefined, { keyGroup: voice.type === "KEY GROUP" }
                     );
                 };
+                releases.set(noteKey, release);
                 releasePrevious = release;
                 setTimeout(release, plan.gate);
 
@@ -731,12 +748,16 @@ function triggerMotifStep(step) {
                     feedback(delayed);
                 }
             };
-            for (const [index, offset] of plan.offsets.entries()) {
-                if (offset > 0) state.noteTiming.schedule(offset, () => emit(true),
-                    Math.min(plan.offsets[index + 1] ?? state.noteTiming.duration,
-                        onsets[onsetIndex + 1] ? onsets[onsetIndex + 1].offset * state.noteTiming.duration : state.noteTiming.duration), previewMotifId !== null);
-                else emit();
-            }
+            strikes.push({ voiceId, step: localStep, plan, emit, deadline: Math.min(state.noteTiming?.duration ?? Infinity,
+                onsets[onsetIndex + 1] ? onsets[onsetIndex + 1].offset * state.noteTiming.duration : Infinity) });
+        }
+    }
+    if (previewMotifId === null) state.noteTiming?.applyFlamPlans(strikes);
+    for (const { plan, emit, deadline } of strikes) {
+        for (const [index, offset] of plan.offsets.entries()) {
+            if (offset > 0) state.noteTiming.schedule(offset, () => emit(true),
+                Math.min(plan.offsets[index + 1] ?? deadline, deadline), previewMotifId !== null);
+            else emit();
         }
     }
 

@@ -107,6 +107,7 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     function setText(id, value) {
         if (get(id).textContent !== value) get(id).textContent = value;
     }
+    const hasVoiceConfiguration = () => libraryUI.hasActivePreset || Boolean(state.projectBook);
     function renderVoice(force = false) {
         for (const [id, button] of [...get("voice-slots").children].entries()) {
             const slot = state.padConfiguration.voices[id];
@@ -115,16 +116,17 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
         }
         const voice = state.padConfiguration.voices[selectedVoice];
         setText("voice-editor-title", `VOICE ${String(selectedVoice + 1).padStart(2, "0")}`);
-        const locked = libraryUI.busy || (!libraryUI.hasActivePreset && !state.projectBook) || !["STOP", "PAUSE"].includes(state.transportState);
-        for (const field of ["name", "type", "channel", "note", "colorNote"]) {
+        const locked = libraryUI.busy || !hasVoiceConfiguration() || !["STOP", "PAUSE"].includes(state.transportState);
+        for (const field of ["name", "type", "channel", "cc", "value", "note", "colorNote"]) {
             const input = get(`voice-${field}`);
             input.disabled = locked;
             if (force || locked || document.activeElement !== input) input.value = String(voice[field] ?? "");
         }
-        get("voice-midi-fields").hidden = !["MIDI DRUM", "KEY GROUP"].includes(voice.type);
-        if (get("voice-fixed-note-field")) get("voice-fixed-note-field").hidden = voice.type === "KEY GROUP";
-        if (get("voice-color-field")) get("voice-color-field").hidden = voice.type === "KEY GROUP";
-        if (get("voice-color-help")) get("voice-color-help").hidden = voice.type === "KEY GROUP";
+        get("voice-midi-fields").hidden = !["MIDI DRUM", "MIDI CC", "KEY GROUP"].includes(voice.type);
+        if (get("voice-cc-fields")) get("voice-cc-fields").hidden = voice.type !== "MIDI CC";
+        if (get("voice-fixed-note-field")) get("voice-fixed-note-field").hidden = voice.type !== "MIDI DRUM";
+        if (get("voice-color-field")) get("voice-color-field").hidden = voice.type !== "MIDI DRUM";
+        if (get("voice-color-help")) get("voice-color-help").hidden = voice.type !== "MIDI DRUM";
         if (get("voice-audio-fields")) {
             get("voice-audio-fields").hidden = voice.type !== "AUDIO";
             get("voice-audioOutput").disabled = locked;
@@ -138,7 +140,8 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
         setText("voice-editor-status", state.transportState === "PLAY"
             ? "Édition verrouillée pendant PLAY. Passez en STOP ou PAUSE."
             : libraryUI.busy ? "Opération de bibliothèque en cours…"
-                : !libraryUI.hasActivePreset ? "Chargez ou créez un preset pour activer l’éditeur."
+                : !hasVoiceConfiguration() ? "Chargez ou créez un preset pour activer l’éditeur."
+                    : state.projectBook ? "Les changements sont actifs dans le projet courant."
                     : "Les changements sont actifs en mémoire. SAVE les sauvegarde dans le preset.");
     }
 
@@ -146,9 +149,10 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
         const input = get(`voice-${field}`);
         let rejected = false;
         try {
-            if (libraryUI.busy || !libraryUI.hasActivePreset) throw new Error("Édition indisponible pendant une opération de bibliothèque ou sans preset actif.");
+            if (libraryUI.busy) throw new Error("Une op\u00e9ration de biblioth\u00e8que est en cours. Patientez avant de modifier la Voice.");
+            if (!hasVoiceConfiguration()) throw new Error("Chargez ou cr\u00e9ez un preset pour activer l\u2019\u00e9diteur.");
             const value = field === "colorNote" && input.value === "" ? null
-                : ["channel", "note", "colorNote"].includes(field) ? input.valueAsNumber : input.value;
+                : ["channel", "cc", "value", "note", "colorNote"].includes(field) ? input.valueAsNumber : input.value;
             editPadVoice(state, selectedVoice, field, value);
             audioPlayer?.stop();
             audioPlayer?.sync(state.padConfiguration.voices);
@@ -162,7 +166,7 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
     get("voice-browse")?.addEventListener("click", async () => {
         const id = selectedVoice, configuration = state.padConfiguration;
         try {
-            if (libraryUI.busy || !libraryUI.hasActivePreset || !["STOP", "PAUSE"].includes(state.transportState)) return;
+            if (libraryUI.busy || !hasVoiceConfiguration() || !["STOP", "PAUSE"].includes(state.transportState)) return;
             const result = await window.audioSampleFiles.pick();
             if (result.error) throw new Error(result.error);
             if (result.canceled || state.padConfiguration !== configuration || selectedVoice !== id) return;
@@ -174,7 +178,7 @@ export function initializeSettingsUI({ state, clock, actions, audioPlayer }) {
         renderVoice(true); libraryUI.refresh();
     });
     get("voice-name").addEventListener("blur", () => renderVoice(true));
-    for (const field of ["type", "channel", "note", "colorNote"]) {
+    for (const field of ["type", "channel", "cc", "value", "note", "colorNote"]) {
         get(`voice-${field}`).addEventListener("change", () => applyVoiceEdit(field));
     }
 
