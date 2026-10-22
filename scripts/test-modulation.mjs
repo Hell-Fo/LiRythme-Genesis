@@ -403,7 +403,7 @@ test('Modulation palette uses independent data, DIM/FULL RED cursor and GREEN bo
     assert.equal(c.getLibraryMotifColor(2), 'OFF');
     assert.equal(readPlayMotif(state).title, 'MODULATION 01');
     state.modulationRequested = true;
-    assert.match(readPlayFooter(state, c).states, /MODULATION OFF → ON/);
+    assert.doesNotMatch(readPlayFooter(state, c).states, /MODULATION/);
 });
 
 test('save/reload preserves explicit presence, lengths, independent Chain, and loads legacy bank empty/inactive', t => {

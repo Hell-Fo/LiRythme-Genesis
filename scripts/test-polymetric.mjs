@@ -108,6 +108,8 @@ for (const system of ["MOTIF", "MODULATION"]) test(`SHIFT moves exact active/nex
     const top = controller.mapping.TOP_CONTROLS;
     send(0xB0, top.SHIFT, 127);
     send(0x90, controller.mapping.BOOKS[4], 127);
+    assert.equal(layer.chainMoveIndex, null);
+    t.mock.timers.tick(300);
     assert.equal(layer.chainMoveIndex, 1); // Active wins over identical NEXT.
     tap(0xB0, top.NEXT);
     assert.deepEqual(layer.chain, [0, 4, 4, 2]);
@@ -123,6 +125,7 @@ for (const system of ["MOTIF", "MODULATION"]) test(`SHIFT moves exact active/nex
     assert.equal(layer.chainMoveIndex, 3);
     send(0x90, controller.mapping.BOOKS[4], 0);
     send(0x90, controller.mapping.BOOKS[0], 127); // NEXT wraps to the head.
+    t.mock.timers.tick(300);
     assert.equal(layer.chainMoveIndex, 0);
     tap(0xB0, top.PREVIOUS);
     assert.equal(layer.chainMoveIndex, 0);
@@ -428,8 +431,8 @@ test("physical playhead remains within 32 pads when resolution exceeds 32", () =
     controller.setLed = (note, color) => leds.push([note, color]);
     state.playheadPosition = 34;
     controller.drawPlayhead();
-    assert.equal(controller.lastPlayheadStep, 2);
-    assert.equal(leds.at(-1)[0], controller.mapping.MOTIF[2]);
+    assert.equal(controller.lastPlayheadStep, 6);
+    assert.equal(leds.at(-1)[0], controller.mapping.MOTIF[6]);
     controller.drawClockStep(controller.lastPlayheadStep, 0);
     assert.equal(controller.lastPlayheadStep, 0);
     assert.ok(leds.every(([note]) => Number.isInteger(note)));
@@ -1152,7 +1155,7 @@ test("THE GATE redraws BOOK on view changes and restores PLAY reservations", () 
         status === 0x90 && controller.mapping.BOOKS.includes(note));
     const expected = library => controller.mapping.BOOKS.map((note, i) => [0x90, note,
         ((library ? (i === 0 ? controller.colors.GREEN : controller.colors.OFF)
-            : i === 0 || i === 2 || i === 3 || i === 4 || i === 5 || i === 6 ? controller.colors.RED : i < 8 ? controller.colors.DIM_RED : (i === 8 || i === 9) ? controller.colors.YELLOW : controller.colors.DIM_AMBER) & 0x33) | 4]);
+            : i === 0 || i === 2 || i === 3 || i === 4 || i === 5 || i === 6 ? controller.colors.RED : i < 8 ? controller.colors.DIM_RED : (i === 8 || i === 9 || i === 10) ? controller.colors.YELLOW : controller.colors.DIM_AMBER) & 0x33) | 4]);
     const check = library => {
         assert.deepEqual(bookMessages(), expected(library));
         assert.ok(messages.every(([status, note]) => status === 0x90 &&
@@ -1599,7 +1602,7 @@ test("NEXT: live geometry boundary and Footer follow PLAYING, not the armed moti
     for(let i=1;i<=6;i++) clock.receiveInternalClockStep({sequence:i,transportRevision:clock.transportRevision});
     assert.deepEqual(frames,[[0,3],[0,4],[0,5],[0,6],[0,7],[4,0]]);
     assert.equal(readPlayFooter(state,controller).zone1,"MOTIF 05");
-    assert.equal(readPlayFooter(state,controller).resolution,"3 STEPS \u00b7 1/16");
+    assert.equal(readPlayFooter(state,controller).book,"Motif");
     assert.equal(readPlayFooter(state,controller).states,"");
     assert.equal(controller.nextMotifBlinkTimer,null);
     assert.equal(state.liveLengthCycle,null);
@@ -3541,4 +3544,57 @@ test("DOUBLE: LED rendering is deferred and fused, no synchronous controller bur
     assert.equal(c.instrumentFeedbackPending, true);
     t.mock.timers.tick(4); assert.ok(sent.length <= 4);
     press("SHIFT", 0); c.resetInputState();
+});
+
+for (const system of ["MOTIF", "MODULATION"]) for (const shiftFirst of [false, true])
+test("SHIFT long Motif press selects movement without toggling Loop Point: " + system + "/shiftFirst=" + shiftFirst, t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, controller, actions } = setup(); t.after(() => controller.resetInputState());
+    state.currentTimeline = system; state.currentView = "MOTIF_LIBRARY"; state.transportState = "PLAY";
+    const layer = state.forSystem(system);
+    layer.chainEnabled = true; layer.chain = [0,4,2]; layer.playingMotifId = 4;
+    layer.chainPlayingIndex = 1; layer.chainPlayingDetached = false; layer.chainLoopMasterIndex = 2;
+    layer.playheadPosition = 7; actions.refreshChainNext();
+    const send = (status, note, value) => controller.handleMidiMessage([status, note, value]);
+    const top = controller.mapping.TOP_CONTROLS, pad = controller.mapping.BOOKS[4];
+    send(0xB0, top.SHIFT, 127); send(0x90, pad, 127);
+    t.mock.timers.tick(299); assert.equal(layer.chainMoveIndex, null); assert.equal(layer.chainLoopMasterIndex, 2);
+    t.mock.timers.tick(1); assert.equal(layer.chainMoveIndex, 1); assert.equal(layer.chainLoopMasterIndex, 2);
+    assert.equal(controller.getLibraryMotifColor(4), "RED");
+    if (shiftFirst) {
+        send(0xB0, top.SHIFT, 0); send(0x90, pad, 0);
+        assert.equal(layer.chainMoveIndex, null);
+    } else {
+        send(0x90, pad, 0); assert.equal(layer.chainMoveIndex, 1);
+        send(0xB0, top.PREVIOUS, 127); send(0xB0, top.PREVIOUS, 0);
+        assert.deepEqual(layer.chain, [4,0,2]); assert.equal(layer.chainMoveIndex, 0);
+        send(0xB0, top.SHIFT, 0); assert.equal(layer.chainMoveIndex, null);
+    }
+    assert.equal(layer.chainLoopMasterIndex, 2); assert.equal(layer.playheadPosition, 7);
+    assert.equal(state.currentTimeline, system); assert.equal(controller.chainMotifHolds.size, 0);
+    assert.equal(controller.deleteConsumedInputs.size, 0);
+});
+
+for (const system of ["MOTIF", "MODULATION"]) test("PLAY Chain highlights exact move selection and clears it on SHIFT release: " + system, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { state, actions, controller } = setup(); t.after(() => controller.resetInputState());
+    state.currentTimeline = system; state.currentView = "MOTIF_LIBRARY"; state.transportState = "PLAY";
+    const layer = state.forSystem(system);
+    layer.chainEnabled = true; layer.chain = [0,4,4,2]; layer.playingMotifId = 4;
+    layer.chainPlayingIndex = 1; layer.chainPlayingDetached = false; actions.refreshChainNext();
+    const { initializePlayChainUI } = await import("../src/PlayChainUI.mjs");
+    const container = { children: [], replaceChildren(...items) { this.children = items; } };
+    initializePlayChainUI({ state, actions, system, document: {
+        getElementById: id => id.endsWith("chain-occurrences") ? container : null,
+        createElement: () => ({ className: "", textContent: "" })
+    } });
+    const selected = () => container.children.flatMap((e, i) => e.className.includes("is-moving") ? [i] : []);
+    const send = (status, note, value) => controller.handleMidiMessage([status, note, value]);
+    const top = controller.mapping.TOP_CONTROLS;
+    send(0xB0, top.SHIFT, 127); send(0x90, controller.mapping.BOOKS[4], 127);
+    assert.deepEqual(selected(), []); t.mock.timers.tick(300); assert.deepEqual(selected(), [1]);
+    send(0x90, controller.mapping.BOOKS[4], 0);
+    send(0xB0, top.NEXT, 127); send(0xB0, top.NEXT, 0);
+    assert.deepEqual(selected(), [2]);
+    send(0xB0, top.SHIFT, 0); assert.deepEqual(selected(), []);
 });

@@ -12,6 +12,7 @@ export function readPlayChain(state, system) {
         label: state.getMotif?.(id)?.grooveMorph ? "[GM]" : `[${String(id + 1).padStart(2, "0")}]`,
         playing: index === playing,
         selected: enabled && stopped && !state.chainPlayingDetached && index === state.chainPlayingIndex,
+        moving: enabled && state.transportState === "PLAY" && index === state.chainMoveIndex,
         loopMaster: enabled && index === state.chainLoopMasterIndex,
         next: index === next
     }));
@@ -37,7 +38,7 @@ export function initializePlayChainUI({ state, actions, system, document = globa
         if (title) title.textContent = modulation ? "CHAIN MODULATION" : "CHAIN";
         container.replaceChildren(...occurrences.map(occurrence => {
             const element = document.createElement("span");
-            element.className = `chain-occurrence${occurrence.playing || occurrence.selected ? " is-playing" : ""}${occurrence.loopMaster ? " is-loop-master" : ""}${flash && occurrence.playing ? " is-entry" : ""}`;
+            element.className = `chain-occurrence${occurrence.playing || occurrence.selected ? " is-playing" : ""}${occurrence.moving ? " is-moving" : ""}${occurrence.loopMaster ? " is-loop-master" : ""}${flash && occurrence.playing ? " is-entry" : ""}`;
             element.textContent = occurrence.label;
             return element;
         }));

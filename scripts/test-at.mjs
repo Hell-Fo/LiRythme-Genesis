@@ -70,7 +70,7 @@ test("SHIFT browsing owns inputs even when starting on an empty A/T slot", t => 
     const { state, c, press, release, tap } = setup(t);
     const shift = c.mapping.TOP_CONTROLS.SHIFT;
     press(shift, 0xB0);
-    tap(c.mapping.BOOKS[7]);
+    tap(c.mapping.BOOKS[15]);
     assert.equal(c.atBrowsing, true);
     assert.equal(state.atTransaction, null);
     tap(c.mapping.AT_VALUE[7]);
@@ -83,7 +83,7 @@ test("SHIFT browsing owns inputs even when starting on an empty A/T slot", t => 
         assert.equal(c.atPadHold, null);
         tap(c.mapping.AT_VALUE[0]);
         assert.equal(state.atTransaction?.touched.size ?? 0, 0);
-        if ([6, 7, 15].includes(slot)) assert.equal(state.atTransaction, null);
+        if ([15].includes(slot)) assert.equal(state.atTransaction, null);
     }
     release(shift, 0xB0);
     assert.equal(c.atBrowsing, false);
@@ -246,7 +246,7 @@ test("A/T navigation is inert; VELOCITY available and COLOR disabled by default 
     }
     actions.toggleView(); actions.toggleView();
     assert.equal(AT_SLOTS.length, 16);
-    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 5 && slot !== 6 && slot !== 8 && slot !== 9)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 5 && slot !== 6 && slot !== 8 && slot !== 9 && slot !== 10)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.equal(state.atTransaction.slot, 0);
     assert.deepEqual([...state.atTransaction.instruments], []);
     assert.deepEqual([...state.atTransaction.steps], []);
@@ -480,10 +480,10 @@ for (const commit of [false, true]) test(`existing PLAY A/T surface: all 16 fami
     const { state, c, leds, tap, press, release } = setup(t);
     const colors = () => c.mapping.BOOKS.map(note => leds.get(`144:${note}`));
     const expected = lit => Array.from({ length: 16 }, (_, i) =>
-        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : (i === 2 || i === 3 || i === 4 || i === 5 || i === 6) ? "RED" : i < 8 ? "DIM_RED" : (i === 8 || i === 9) ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
+        (c.colors[i === 0 ? (lit ? "RED" : "OFF") : (i === 2 || i === 3 || i === 4 || i === 5 || i === 6) ? "RED" : i < 8 ? "DIM_RED" : (i === 8 || i === 9 || i === 10) ? "YELLOW" : "DIM_AMBER"] & 0x33) | 4);
     assert.equal(state.currentView, "PLAY");
     c.drawBooks(); assert.deepEqual(colors(), expected(true));
-    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 5 && slot !== 6 && slot !== 8 && slot !== 9)) { tap(note); assert.equal(state.atTransaction, null); }
+    for (const note of c.mapping.BOOKS.filter((_, slot) => slot !== 0 && slot !== 2 && slot !== 3 && slot !== 4 && slot !== 5 && slot !== 6 && slot !== 8 && slot !== 9 && slot !== 10)) { tap(note); assert.equal(state.atTransaction, null); }
     tap(68); assert.ok(state.atTransaction); assert.deepEqual(colors(), expected(true));
     t.mock.timers.tick(160); drainAT(t, c); assert.deepEqual(colors(), expected(false));
     c.drawBooks(); assert.deepEqual(colors(), expected(false));
@@ -498,7 +498,9 @@ test("A/T implemented Transformations use their YELLOW family without enabling a
     const { c, state, actions } = setup(t);
     assert.equal(c.getATBookColor(8), "YELLOW");
     assert.equal(c.getATBookColor(9), "YELLOW");
-    assert.equal(c.getATBookColor(10), "DIM_AMBER");
+    assert.equal(c.getATBookColor(10), "YELLOW");
+    assert.equal(c.getATBookColor(11), "DIM_AMBER");
+    assert.equal(actions.at.isEnabled(7), false);
     const definition = actions.at.definition.bind(actions.at);
     actions.at.definition = slot => slot === 8 ? { id: "TEST_ONLY" } : definition(slot);
     assert.equal(c.getATBookColor(8), "YELLOW");
@@ -1892,11 +1894,11 @@ for (const shiftFirst of [false,true]) test(`empty A/T releases selection and pe
     state.motif[0][0]=true;
     assert.ok(actions.at.begin(5));
     const shift=c.mapping.TOP_CONTROLS.SHIFT;
-    press(shift,0xB0); press(c.mapping.BOOKS[7]);
+    press(shift,0xB0); press(c.mapping.BOOKS[15]);
     assert.equal(state.atTransaction,null);
     assert.equal(c.atBrowsing,true);
-    if(shiftFirst){release(shift,0xB0);release(c.mapping.BOOKS[7]);}
-    else {release(c.mapping.BOOKS[7]);release(shift,0xB0);}
+    if(shiftFirst){release(shift,0xB0);release(c.mapping.BOOKS[15]);}
+    else {release(c.mapping.BOOKS[15]);release(shift,0xB0);}
     assert.equal(c.atBrowsing,false);
     assert.equal(c.atPadHold,null);
     assert.equal(c.atHeld.size,0);
@@ -1913,13 +1915,213 @@ test('an empty A/T pad releases a normal editor without SHIFT and browsing can r
     const {state,c,tap,press,release}=setup(t);
     state.currentView='PLAY'; tap(c.mapping.BOOKS[0]);
     assert.equal(state.atTransaction.slot,0);
-    tap(c.mapping.BOOKS[7]);
+    tap(c.mapping.BOOKS[15]);
     assert.equal(state.atTransaction,null);
     assert.equal(c.atHeld.size,0);
     press(c.mapping.TOP_CONTROLS.SHIFT,0xB0);
-    tap(c.mapping.BOOKS[7]); tap(c.mapping.BOOKS[5]);
+    tap(c.mapping.BOOKS[15]); tap(c.mapping.BOOKS[5]);
     assert.equal(readATPanel(state).name,'CYCLE');
     release(c.mapping.TOP_CONTROLS.SHIFT,0xB0);
     tap(c.mapping.AT_VALUE[6]);
     assert.equal(state.motifs[0].cycles.motif,2);
+});
+
+test("PLAY MODE motif ping-pong plays a full round trip and cursor follows during editing", t => {
+    const { state, actions, c } = setup(t);
+    state.motifLength = 4; state.selectedInstrument = 0; state.motif[0].fill(true);
+    assert.equal(actions.at.begin(10), true);
+    assert.equal(actions.at.apply(1), true);
+    assert.deepEqual(readATPanel(state).values, ["Forward", "Ping-pong", "Backward"]);
+    assert.equal(actions.at.apply(3), false);
+    assert.equal(actions.at.select("steps", 2), false);
+    assert.equal(state.getMotifDuration(), 6);
+    state.transportState = "PLAY";
+    const played = [], cursors = [];
+    for (let i = 0; i < 13; i++) {
+        played.push(state.getVoiceOnsets(0)[0].step);
+        c.drawClockStep(c.lastPlayheadStep ?? 0, state.playheadPosition);
+        cursors.push(c.lastPlayheadStep);
+        assert.ok(state.getPlayingEvent(0));
+        state.advanceLiveLengthCycle();
+    }
+    assert.deepEqual(played, [0,1,2,3,2,1,0,1,2,3,2,1,0]);
+    assert.deepEqual(cursors, played);
+    actions.at.finish(true);
+    assert.equal(state.getMotif(0).playModes.motif, "PING_PONG");
+});
+
+test("PLAY MODE inspection changes cursor without moving transport or edit selection", t => {
+    const { state, actions, c } = setup(t);
+    state.voiceLengths[0] = 4; state.voiceLengths[1] = 3;
+    actions.at.begin(10); actions.at.select("instruments", 0); actions.at.apply(1); actions.at.finish(true);
+    state.transportState = "PLAY"; state.playheadPosition = 4;
+    state.selectedInstrument = 0; c.drawPlayhead(); assert.equal(c.lastPlayheadStep, 2);
+    state.selectedInstrument = 1; c.drawPlayhead(); assert.equal(c.lastPlayheadStep, 1);
+    assert.equal(state.playheadPosition, 4);
+    actions.at.begin(0); actions.at.select("instruments", 0); actions.at.select("steps", 3);
+    c.drawPlayhead(); assert.equal(c.lastPlayheadStep, 2);
+    assert.deepEqual([...state.atTransaction.steps], [3]);
+    assert.equal(state.playheadPosition, 4);
+    state.advanceLiveLengthCycle(); assert.equal(state.getCyclePass(0, "INSTRUMENT"), 0);
+    state.advanceLiveLengthCycle(); assert.equal(state.getCyclePass(0, "INSTRUMENT"), 1);
+});
+
+test("PLAY MODE cancel, provisional autosave, persistence and copy", t => {
+    const { state, actions } = setup(t);
+    actions.at.begin(10); actions.at.select("instruments", 0); actions.at.apply(1);
+    assert.equal(snapshotMotifBank(state).motifs[0].playModes, undefined);
+    actions.at.finish(false); assert.equal(state.getMotif(0).playModes, undefined);
+    actions.at.begin(10); actions.at.select("instruments", 0); actions.at.apply(1); actions.at.finish(true);
+    const bank = snapshotMotifBank(state);
+    assert.equal(bank.motifs[0].playModes.voices[0], "PING_PONG");
+    const restored = new LiRythmeState(); restoreMotifBank(restored, bank);
+    assert.deepEqual(restored.motifs[0].playModes, state.motifs[0].playModes);
+    assert.equal(actions.applyVoiceCopy(actions.captureMusicalCopy("VOICE", 0), 1), true);
+    assert.equal(state.motifs[0].playModes.voices[1], "PING_PONG");
+    bank.motifs[0].playModes.voices[0] = "INVALID"; assert.throws(() => validateMotifBank(bank));
+});
+
+for (const length of [1, 2]) test("PLAY MODE ping-pong short length " + length, t => {
+    const { state, actions } = setup(t); state.motifLength = length;
+    actions.at.begin(10); actions.at.apply(1); actions.at.finish(true);
+    const steps = [];
+    for (let i = 0; i < 6; i++) { steps.push(state.getVoiceStep(0)); state.advanceLiveLengthCycle(); }
+    assert.deepEqual(steps, length === 1 ? [0,0,0,0,0,0] : [0,1,0,1,0,1]);
+});
+
+test("PLAY MODE instrument completes ping-pong with an explicit motif length", t => {
+    const { state, actions } = setup(t); state.motifLength = 4; state.voiceLengths[0] = 4;
+    actions.at.begin(10); actions.at.select("instruments", 0); actions.at.apply(1); actions.at.finish(true);
+    const steps = [];
+    for (let i = 0; i < 12; i++) { steps.push(state.getVoiceStep(0)); state.advanceLiveLengthCycle(); }
+    assert.deepEqual(steps, [0,1,2,3,2,1,0,1,2,3,2,1]);
+});
+
+test("PLAY MODE Modulation has its own traversal and survives bank persistence", t => {
+    const { state, actions, c } = setup(t);
+    state.currentTimeline = "MODULATION"; state.modulation.motifLength = 4;
+    state.selectedInstrument = 0;
+    actions.at.begin(10); actions.at.apply(1); actions.at.finish(true);
+    state.playheadPosition = 4; state.modulation.playheadPosition = 4;
+    assert.equal(state.getVoiceStep(0), 4);
+    assert.equal(state.modulation.getVoiceStep(0), 2);
+    c.drawPlayhead(); assert.equal(c.lastPlayheadStep, 2);
+    const bank = snapshotMotifBank(state);
+    assert.equal(bank.modulation.motifs[0].playModes.motif, "PING_PONG");
+    assert.equal(bank.motifs[0].playModes, undefined);
+});
+
+test("PLAY MODE Euclidean polyrhythmic onsets traverse both directions", t => {
+    const { state, actions } = setup(t);
+    state.motifLength = 4; state.voiceLengths[0] = 4;
+    state.motif[0].fill(false); state.motif[0][1] = state.motif[0][2] = true;
+    state.motifs[0].euclidean = Array(16).fill(null);
+    state.motifs[0].euclidean[0] = { resolution: 4, hits: 2, mode: "POLYRHYTHMIC" };
+    actions.at.begin(10); actions.at.apply(1); actions.at.finish(true);
+    const played = [];
+    for (let pos = 0; pos < 6; pos++) for (const onset of state.getVoiceOnsets(0, pos)) played.push(onset.step);
+    assert.deepEqual(played, [1,2,2,1]);
+});
+
+test("PLAY MODE eleventh transformation pad offers A/B/C and preserves running phase", t => {
+    const { state, c, tap, leds } = setup(t);
+    state.transportState = "PLAY"; state.playheadPosition = 7;
+    tap(c.mapping.BOOKS[10]);
+    assert.equal(state.atTransaction.slot, 10);
+    assert.equal(readATPanel(state).selected, 0);
+    tap(c.mapping.INSTRUMENTS[0]); tap(c.mapping.AT_VALUE[1]); drainAT(t, c);
+    assert.equal(state.motifs[0].playModes.voices[0], "PING_PONG");
+    assert.equal(state.playheadPosition, 7);
+    assert.equal(leds.get('144:' + c.mapping.AT_VALUE[1]) & 0x33, c.colors.RED & 0x33);
+    assert.equal(leds.get('144:' + c.mapping.AT_VALUE[3]) & 0x33, c.colors.OFF & 0x33);
+});
+
+test("PLAY MODE polyrhythmic cursor uses Euclidean resolution when motif is shorter", t => {
+    const { state, actions } = setup(t);
+    state.motifLength = 2; state.voiceLengths[0] = 4; state.motif[0].fill(true);
+    state.motifs[0].euclidean = Array(16).fill(null);
+    state.motifs[0].euclidean[0] = { resolution: 4, hits: 4, mode: "POLYRHYTHMIC" };
+    actions.at.begin(10); actions.at.apply(1); actions.at.finish(true);
+    for (let position = 0; position < 2; position++) {
+        assert.equal(state.getVoiceStep(0, position), state.getVoiceOnsets(0, position)[0].step);
+    }
+});
+
+for (const system of ["MOTIF", "MODULATION"]) test("BACKWARD reads last to first and synchronizes cursor in " + system, t => {
+    const { state, actions, c, tap } = setup(t);
+    state.currentTimeline = system; state.selectedInstrument = 0;
+    const layer = state.forSystem(system); layer.motifLength = 4;
+    tap(c.mapping.BOOKS[10]); tap(c.mapping.AT_VALUE[2]);
+    assert.equal(readATPanel(state).selected, 2);
+    const steps = [], cursors = [];
+    for (let i = 0; i < 8; i++) {
+        steps.push(layer.getVoiceStep(0)); c.drawPlayhead(); cursors.push(c.lastPlayheadStep);
+        layer.advanceLiveLengthCycle();
+    }
+    assert.deepEqual(steps, [3,2,1,0,3,2,1,0]); assert.deepEqual(cursors, steps);
+    assert.equal(layer.getMotifDuration(), 4);
+    actions.at.finish(true);
+    const bank = snapshotMotifBank(state);
+    assert.equal((system === "MOTIF" ? bank : bank.modulation).motifs[0].playModes.motif, "BACKWARD");
+    const copy = actions.captureMusicalCopy("VOICE", 0);
+    assert.equal(actions.applyVoiceCopy(copy, 1), true);
+    assert.equal(layer.motifs[0].playModes.voices[1], "BACKWARD");
+});
+
+test("BACKWARD instrument selection preserves phase and CANCEL restores Forward", t => {
+    const { state, actions } = setup(t);
+    state.voiceLengths[0] = 4; state.transportState = "PLAY"; state.playheadPosition = 1;
+    actions.at.begin(10); actions.at.select("instruments", 0); actions.at.apply(2);
+    assert.equal(state.getVoiceStep(0), 2); assert.equal(state.getVoiceStep(1), 1);
+    assert.equal(state.playheadPosition, 1);
+    actions.at.finish(false); assert.equal(state.getVoiceStep(0), 1);
+    state.motifLength = 1;
+    actions.at.begin(10); actions.at.apply(2);
+    assert.equal(state.getVoiceStep(0), 0);
+});
+
+for (const source of ["INTERNAL", "MIDI"]) for (const geometry of ["MOTIF", "VOICE"])
+for (const mode of ["FORWARD", "BACKWARD", "PING_PONG"])
+test("CHAIN exits after final played step: " + mode + "/" + geometry + "/" + source, t => {
+    const { state, actions, clock } = setup(t);
+    const motif = state.motifs[0];
+    if (geometry === "MOTIF") motif.motifLength = 4;
+    else motif.voiceLengths[0] = 4;
+    motif.playModes = { motif: mode, voices: Array(16).fill(null) };
+    state.motifs[1].motifLength = 3;
+    state.chain = [0, 1]; state.chainEnabled = true;
+    clock.setSource(source); actions.startPlayback();
+    const expected = mode === "FORWARD" ? [0,1,2,3] : mode === "BACKWARD" ? [3,2,1,0] : [0,1,2,3,2,1,0];
+    const played = [state.getVoiceStep(0)];
+    let sequence = 0;
+    const tick = () => {
+        if (source === "MIDI") for (let p = 0; p < 6; p++) clock.receiveMidiClockPulse();
+        else clock.receiveInternalClockStep({ sequence: ++sequence, transportRevision: clock.transportRevision });
+    };
+    for (let i = 1; i < expected.length; i++) {
+        tick(); assert.equal(state.playingMotifId, 0); played.push(state.getVoiceStep(0));
+    }
+    assert.deepEqual(played, expected);
+    tick(); assert.equal(state.playingMotifId, 1); assert.equal(state.getVoiceStep(0), 0);
+    assert.equal(state.chainPlayingIndex, 1);
+    for (let i = 0; i < 3; i++) tick();
+    assert.equal(state.playingMotifId, 0); assert.equal(state.getVoiceStep(0), expected[0]);
+});
+
+for (const mode of ["BACKWARD", "PING_PONG"]) test("Modulation CHAIN completes " + mode + " independently", t => {
+    const { state, actions, clock } = setup(t);
+    const layer = state.modulation;
+    layer.motifs[0].voiceLengths[0] = 4;
+    layer.motifs[0].playModes = { motif: mode, voices: Array(16).fill(null) };
+    layer.chain = [0,1]; layer.chainEnabled = true;
+    actions.startPlayback();
+    const expected = mode === "BACKWARD" ? [3,2,1,0] : [0,1,2,3,2,1,0];
+    const steps = [layer.getVoiceStep(0)];
+    for (let i = 1; i < expected.length; i++) {
+        clock.advanceStepPipeline(); assert.equal(layer.playingMotifId, 0); steps.push(layer.getVoiceStep(0));
+    }
+    assert.deepEqual(steps, expected);
+    actions.pausePlayback(); actions.continuePlayback();
+    clock.advanceStepPipeline(); assert.equal(layer.playingMotifId, 1);
+    assert.equal(state.playingMotifId, 0);
 });

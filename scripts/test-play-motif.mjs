@@ -89,9 +89,9 @@ test("PLAY keeps both banks and Chains visible and reports effective modulation 
     }
 });
 
-test("current single Motif convention, actual matrix duration and unavailable Play Mode", () => {
+test("current single Motif convention, actual matrix duration and default Forward Play Mode", () => {
     const state = new LiRythmeState();
-    assert.deepEqual(readPlayMotif(state), { title: "MOTIF 01", duration: "32 STEPS", step: "32", mode: "Non disponible" });
+    assert.deepEqual(readPlayMotif(state), { title: "MOTIF 01", duration: "32 STEPS", step: "32", mode: "FORWARD" });
     state.stepDivision = 8;
     state.motif[0][31] = true;
     assert.equal(readPlayMotif(state).duration, "32 STEPS");
@@ -156,7 +156,7 @@ test("existing PLAY render loop propagates Motif changes read-only and disposes 
     frame();
     assert.equal(value("step"), "16");
     assert.equal(value("duration"), "16 STEPS");
-    assert.equal(value("mode"), "Non disponible");
+    assert.equal(value("mode"), "FORWARD");
     assert.deepEqual(structuredClone(state), before);
     ui.dispose();
     assert.equal(canceled, true);
@@ -175,10 +175,10 @@ test("MOTIF layout preserves order, empty CHAIN and reserved clock without contr
     assert.ok(zone.indexOf('id="play-modulation"') < zone.indexOf('id="play-selection"'));
     for (const field of ["title", "active", "duration", "step", "mode", "chain-occurrences"])
         assert.ok(zone.includes(`id="play-modulation-${field}"`));
-    assert.match(zone, /<h3 id="play-selection-title">SELECTION<\/h3>\s*<p id="play-selected"/);
+    assert.match(zone, /<h3 id="play-selection-title">SELECTION<\/h3><\/header>\s*<p id="play-selected"/);
     const footer = zone.match(/<footer id="play-footer-3"[^>]*>([\s\S]*?)<\/footer>/)[1];
     assert.deepEqual([...footer.matchAll(/<span id="play-footer-(\w+)"[^>]*><\/span>/g)].map(match => match[1]),
-        ["zone1", "project", "states", "resolution"]);
+        ["zone1", "project", "states", "book"]);
     assert.equal((footer.match(/<span\b/g) || []).length, 4);
     assert.match(html, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
     assert.doesNotMatch(await source("src/PlayMotifUI.mjs"), /addEventListener|requestAnimationFrame|setInterval|setTimeout|innerHTML/);

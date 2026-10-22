@@ -777,7 +777,7 @@ actions.setClockStepHandler(() => {
     triggerMotifStep(state.playheadPosition);
 
     // A reset may jump from any physical pad to zero, not necessarily pad 32.
-    launchpad.drawClockStep(launchpad.lastPlayheadStep ?? 0, launchpad.state.playheadPosition % 32);
+    launchpad.drawClockStep(launchpad.lastPlayheadStep ?? 0, launchpad.state.playheadPosition);
     launchpad.pulseMotifCycle();
 });
 

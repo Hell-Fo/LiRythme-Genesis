@@ -1,3 +1,4 @@
+import { readPlayMode } from "./ATTransaction.mjs";
 // Read-only projection of the selected bank entry.
 export function readPlayMotif(state, system) {
     state = system ? (state.forSystem?.(system) ?? state) : (state.editingState ?? state);
@@ -12,7 +13,7 @@ export function readPlayMotif(state, system) {
         step: available && validTarget
             ? String(id === null ? state.getMotifDuration() : state.getVoiceLength(id))
             : "Non disponible",
-        mode: "Non disponible"
+        mode: available && validTarget ? readPlayMode(state.getMotif(state.currentMotifId), id).replace("_", "-") : "Non disponible"
     };
 }
 

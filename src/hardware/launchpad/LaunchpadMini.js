@@ -376,7 +376,7 @@ export class LaunchpadMini {
         const definition = this.actions.at.definition(tx.slot);
         // Older banks contain event values only; show these at their known step location.
         const assignedDestination = definition?.destination?.(motif, voice, step) ?? motif.atDestinations?.[definition?.id]?.[voice]?.[step] ?? "STEP";
-        return Boolean(assignedDestination === destination && (definition.id === "CYCLE" || motif.attributes !== undefined || motif.events[voice]?.[step]) &&
+        return Boolean(assignedDestination === destination && (["CYCLE", "PLAY_MODE"].includes(definition.id) || motif.attributes !== undefined || motif.events[voice]?.[step]) &&
             this.actions.at.definition(tx.slot)?.isAssigned?.(motif, voice, step));
     }
 
@@ -571,7 +571,7 @@ export class LaunchpadMini {
         if (this.state.atTransaction) {
             const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId());
             const events = motif.events[i];
-            const step = this.state.playheadPosition % 32;
+            const step = this.state.getVoiceStep(i);
             const event = this.state.systemName === "MODULATION"
                 ? this.actions.at.definition(5).isAssigned(motif, i, step) || Object.values(motif.attributes ?? {}).some(rows => rows[i][step] !== null) : events?.[step];
             const selected = this.state.atTransaction.instruments.has(i);
@@ -994,6 +994,8 @@ export class LaunchpadMini {
 
     drawPlayhead(step = this.state.playheadPosition) {
         if (this.state.atTransaction?.kind === "EUCLIDEAN") return;
+        step = this.state.getCursorStep(step);
+        if (this.lastPlayheadStep !== undefined && this.lastPlayheadStep !== step) this.drawMotifStep(this.lastPlayheadStep);
         if (this.state.atTransaction) {
             step %= this.mapping.MOTIF.length;
             const collecting = this.collectATLEDs;
@@ -1052,7 +1054,7 @@ export class LaunchpadMini {
     }
 
     drawClockStep(previousStep, currentStep) {
-        this.drawMotifStep(previousStep);
+        this.drawMotifStep(this.lastPlayheadStep ?? previousStep);
         this.drawPlayhead(currentStep);
         this.swapBuffers();
     }
@@ -1415,14 +1417,19 @@ export class LaunchpadMini {
         let colorCount = 0;
         if (tx) {
             const motif = this.state.getDisplayMotif(this.actions.at.getEditingMotifId());
-            const step = this.state.playheadPosition % 32;
+            const step = this.state.getCursorStep();
+            if (tx.slot === 10) for (let voice = 0; voice < 16; voice++) {
+                if (!tx.instruments.size || tx.instruments.has(voice)) velocities.add(this.actions.at.definition(10).read(motif, voice));
+            }
             // Monitoring follows every timeline step; selection only limits editing.
             if (velocityMeter || !tx.steps.size || tx.steps.has(step)) {
                 for (let voice = 0; voice < 16; voice++) {
                     if ((!tx.instruments.size || tx.instruments.has(voice)) &&
                         (motif.events[voice][step] || motif.attributes !== undefined)) {
                         if (motif.attributes !== undefined ? motif.attributes.COLOR?.[voice]?.[step] === true : motif.colors?.[voice]?.[step]) colorCount++;
-                        const velocity = tx.slot === 6
+                        const velocity = tx.slot === 10
+                            ? this.actions.at.definition(10).read(motif, voice)
+                            : tx.slot === 6
                             ? (motif.attributes !== undefined ? motif.attributes.FLAM?.[voice]?.[step] : motif.flams?.[voice]?.[step])
                             : tx.slot === 5
                             ? this.actions.at.definition(5).read?.(motif, voice, step)
@@ -1467,6 +1474,7 @@ export class LaunchpadMini {
                     ? index === 0 ? this.colors.RED : index <= 2 ? this.colors.YELLOW : this.colors.GREEN
                     : index < tailRow ? this.colors.OFF
                     : index === 0 ? this.colors.DIM_RED : index <= 2 ? this.colors.DIM_AMBER : this.colors.DIM_GREEN)
+                : tx?.slot === 10 ? index > 2 ? this.colors.OFF : velocities.has(this.actions.at.definition(10).values[index]) ? this.colors.RED : this.colors.DIM_AMBER
                 : tx ? (velocities.has(this.actions.at.definition(tx.slot).values[index]) ? this.colors.RED : this.colors.DIM_AMBER)
                 : this.colors.OFF;
             this.sendController(this.deviceName, [0x90, note, (color & 0x33) | 4]);
@@ -1578,6 +1586,7 @@ export class LaunchpadMini {
             if (!this.shiftPressed) {
                 for (const hold of this.chainMotifHolds.values()) if (hold.moveIntent) clearTimeout(hold.timer);
                 this.actions.forEachSystem(() => { this.actions.state.chainMoveIndex = null; });
+                this.actions.onChainChange?.();
                 this.drawBooks();
             }
             this.drawShiftStatus();
@@ -1694,15 +1703,25 @@ export class LaunchpadMini {
             !atActive && !this.deleteArmed && !this.copyStage && !this.performanceHolds.size) {
             if (controlType === "BOOK" && this.state.currentView === "MOTIF_LIBRARY" && value > 0) {
                 this.deleteConsumedInputs.add(inputKey);
-                this.actions.selectChainMove(controlPosition);
-                const hold = { moveIntent: true, fired: true, loopPending: true, id: controlPosition, timer: null };
+                this.state.chainMoveIndex = null;
+                const hold = { moveIntent: true, fired: false, loopPending: true, id: controlPosition, timer: null };
                 this.chainMotifHolds.set(inputKey, hold);
+                hold.timer = setTimeout(() => {
+                    hold.fired = true;
+                    hold.loopPending = false;
+                    if (this.shiftPressed && this.state.currentView === "MOTIF_LIBRARY" &&
+                        this.state.chainEnabled && this.state.transportState === "PLAY") {
+                        this.actions.selectChainMove(hold.id);
+                        this.drawBooks();
+                    }
+                }, TEMPO_HOLD_DELAY_MS);
                 this.drawBooks();
                 return;
             }
-            if (["PREVIOUS", "NEXT"].includes(controlName) && this.state.chainMoveIndex !== null) {
+            if (["PREVIOUS", "NEXT"].includes(controlName) && (this.state.chainMoveIndex !== null ||
+                [...this.chainMotifHolds.values()].some(hold => hold.moveIntent))) {
                 if (value > 0) {
-                    for (const hold of this.chainMotifHolds.values()) { clearTimeout(hold.timer); hold.loopPending = false; }
+                    for (const hold of this.chainMotifHolds.values()) hold.loopPending = false;
                     this.deleteConsumedInputs.add(inputKey);
                     this.actions.moveChainSelection(controlName === "PREVIOUS" ? -1 : 1);
                     this.drawBooks();

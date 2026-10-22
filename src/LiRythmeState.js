@@ -15,7 +15,7 @@ Elias (OpenAI)
 */
 
 import { PadConfiguration } from "./PadConfiguration.js";
-import { readCycle, composeGroove, defaultKeyGroup, readKeyCell, keyNote, euclideanOnsets } from "./ATTransaction.mjs";
+import { readCycle, composeGroove, defaultKeyGroup, readKeyCell, keyNote, euclideanOnsets, readPlayMode, traversalPeriod, traversalStep } from "./ATTransaction.mjs";
 
 export class LiRythmeState {
     constructor({ system = "MOTIF" } = {}) {
@@ -180,11 +180,26 @@ export class LiRythmeState {
         return this.getMotif(motifId).voiceLengths[voiceId] ?? 32;
     }
 
+    getMotifSpan(motif = this.getMotif(this.playingMotifId)) {
+        const lengths = motif.voiceLengths.filter(length => length !== null);
+        return motif.motifLength ?? (lengths.length ? Math.max(...lengths) : 32);
+    }
+
     getMotifDuration(motifId = this.currentMotifId) {
         const motif = this.getMotif(motifId);
-        if (motif.motifLength !== null) return motif.motifLength;
-        const lengths = motif.voiceLengths.filter(length => length !== null);
-        if (lengths.length === 0) return 32;
+        if (motif.motifLength !== null) {
+            let duration = traversalPeriod(motif.motifLength, readPlayMode(motif));
+            for (let voice = 0; voice < 16; voice++) if (readPlayMode(motif, voice) === "PING_PONG") {
+                const period = traversalPeriod(Math.min(motif.motifLength, motif.voiceLengths[voice] ?? 32), "PING_PONG");
+                let a = duration, b = period;
+                while (b) [a, b] = [b, a % b];
+                duration = duration / a * period;
+            }
+            return duration;
+        }
+        const lengths = motif.voiceLengths.map((length, voice) => length !== null
+            ? traversalPeriod(length, readPlayMode(motif, voice)) : null).filter(length => length !== null);
+        if (lengths.length === 0) return traversalPeriod(32, readPlayMode(motif));
         const gcd = (a, b) => {
             while (b !== 0) [a, b] = [b, a % b];
             return a;
@@ -199,16 +214,33 @@ export class LiRythmeState {
             ?? [{ step: this.getVoiceStep(voiceId, position), offset: 0, interval: 1 }];
     }
 
+    getVoicePhase(voiceId, position = this.playheadPosition) {
+        if (this.liveLengthCycle && position === this.playheadPosition) return this.liveLengthCycle.steps[voiceId];
+        const motif = this.getPlaybackMotifForVoice(voiceId);
+        const length = readPlayMode(motif, voiceId) !== "FORWARD"
+            ? Math.min(this.getMotifSpan(motif), motif.voiceLengths[voiceId] ?? this.getMotifSpan(motif)) : motif.voiceLengths[voiceId] ?? 32;
+        return position % traversalPeriod(length, readPlayMode(motif, voiceId));
+    }
+
     getVoiceStep(voiceId, position = this.playheadPosition) {
         const motif = this.getPlaybackMotifForVoice(voiceId);
+        const rawLength = this.liveLengthCycle?.lengths[voiceId] ?? motif.voiceLengths[voiceId] ?? 32;
+        const length = readPlayMode(motif, voiceId) !== "FORWARD" ? Math.min(this.getMotifSpan(motif), rawLength) : rawLength;
         if (motif.euclidean?.[voiceId]?.mode === "POLYRHYTHMIC") {
             const duration = this.liveLengthCycle?.duration ?? this.getMotifDuration(this.playingMotifId);
-            return Math.floor((position % duration) * (motif.voiceLengths[voiceId] ?? motif.euclidean[voiceId].resolution) / duration);
+            const resolution = motif.voiceLengths[voiceId] ?? motif.euclidean[voiceId].resolution;
+            const phase = Math.floor((position % duration) * traversalPeriod(resolution, readPlayMode(motif, voiceId)) / duration);
+            return traversalStep(phase, resolution, readPlayMode(motif, voiceId));
         }
-        if (this.liveLengthCycle && position === this.playheadPosition) {
-            return this.liveLengthCycle.steps[voiceId];
-        }
-        return position % this.getVoiceLength(voiceId, this.playingMotifId);
+        return traversalStep(this.getVoicePhase(voiceId, position), length, readPlayMode(motif, voiceId));
+    }
+
+    getCursorStep(position = this.playheadPosition) {
+        const tx = this.atTransaction;
+        const voice = tx ? tx.instruments.size ? [...tx.instruments][0] : null : this.selectedInstrument;
+        if (voice !== null && voice !== undefined) return this.getVoiceStep(voice, position);
+        const motif = this.getMotif(this.playingMotifId);
+        return traversalStep(position, this.getMotifSpan(motif), readPlayMode(motif));
     }
 
     resetCyclePasses() { this.cyclePasses = []; this.grooveEntryToken++; }
@@ -219,29 +251,39 @@ export class LiRythmeState {
     }
 
     advanceLiveLengthCycle() {
-        const previous = Array.from({ length: 16 }, (_, voice) => this.getVoiceStep(voice));
+        const previous = Array.from({ length: 16 }, (_, voice) => this.getVoicePhase(voice));
         this.advanceLiveLengthPosition();
         if (this.transportState !== "PLAY") return;
         const passes = this.cyclePasses[this.playingMotifId] ??= { motif: 0, voices: Array(16).fill(0) };
         const boundary = this.playheadPosition === 0;
+        const duration = this.liveLengthCycle?.duration ?? this.getMotifDuration(this.playingMotifId);
+        if (this.playheadPosition === duration) return; // Chain return Step belongs to the ending pass.
         if (boundary) this.grooveEntryToken++;
         // 840 is divisible by every supported period, keeping counters bounded.
         if (boundary) passes.motif = (passes.motif + 1) % 840;
         for (let voice = 0; voice < 16; voice++) {
             const polyrhythmic = this.getPlaybackMotifForVoice(voice).euclidean?.[voice]?.mode === "POLYRHYTHMIC";
-            if (boundary || !polyrhythmic && this.getVoiceStep(voice) <= previous[voice])
+            if (boundary || !polyrhythmic && this.getVoicePhase(voice) <= previous[voice])
                 passes.voices[voice] = (passes.voices[voice] + 1) % 840;
         }
     }
 
     advanceLiveLengthPosition() {
         const cycle = this.liveLengthCycle;
+        const duration = cycle?.duration ?? this.getMotifDuration(this.playingMotifId);
+        // A chained round trip includes its final first Step before the next clip.
+        // A free-running loop shares that Step with the start of its next pass.
+        const returning = this.chainEnabled && this.chain.length > 0 && duration > 1 &&
+            Array.from({ length: 16 }, (_, voice) => readPlayMode(this.getPlaybackMotifForVoice(voice), voice))
+                .includes("PING_PONG");
+        const next = this.playheadPosition + 1;
+        const returnStep = returning && next === duration;
         if (!cycle) {
-            this.playheadPosition = (this.playheadPosition + 1) % this.getMotifDuration(this.playingMotifId);
+            this.playheadPosition = next >= duration && !returnStep ? 0 : next;
             return;
         }
-        this.playheadPosition++;
-        if (this.playheadPosition >= cycle.duration) {
+        this.playheadPosition = next;
+        if (this.playheadPosition >= duration && !returnStep) {
             this.playheadPosition = 0;
             // The global boundary still resets incomplete local cycles.
             this.liveLengthCycle = null;
@@ -249,7 +291,9 @@ export class LiRythmeState {
         }
         for (let id = 0; id < 16; id++) {
             cycle.steps[id]++;
-            if (cycle.steps[id] >= cycle.lengths[id]) {
+            const motif = this.getPlaybackMotifForVoice(id), mode = readPlayMode(motif, id);
+            const length = mode !== "FORWARD" ? Math.min(cycle.lengths[id], this.getMotifSpan(motif)) : cycle.lengths[id];
+            if (cycle.steps[id] >= traversalPeriod(length, mode)) {
                 cycle.steps[id] = 0;
                 if (!cycle.doubleMotif && (!cycle.untilEntry || cycle.doubleVoices?.has(id))) {
                     cycle.lengths[id] = this.getVoiceLength(id, this.playingMotifId);
@@ -306,7 +350,7 @@ export class LiRythmeState {
             untilEntry: this.chainEnabled,
             duration: this.getMotifDuration(this.playingMotifId),
             lengths: Array.from({ length: 16 }, (_, id) => this.getVoiceLength(id, this.playingMotifId)),
-            steps: Array.from({ length: 16 }, (_, id) => this.getVoiceStep(id))
+            steps: Array.from({ length: 16 }, (_, id) => this.getVoicePhase(id))
         };
         const cycle = this.liveLengthCycle;
         cycle.doubleVoices ??= new Map();
@@ -335,7 +379,7 @@ export class LiRythmeState {
                 untilEntry: this.chainEnabled,
                 duration: this.getMotifDuration(this.playingMotifId),
                 lengths: Array.from({ length: 16 }, (_, voice) => this.getVoiceLength(voice, this.playingMotifId)),
-                steps: Array.from({ length: 16 }, (_, voice) => this.getVoiceStep(voice))
+                steps: Array.from({ length: 16 }, (_, voice) => this.getVoicePhase(voice))
             };
         }
         if (id === null) this.motifLength = length;

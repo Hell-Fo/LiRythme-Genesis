@@ -404,9 +404,9 @@ Les flèches ne programment pas de notes.
 
 ### Déplacer un bloc pendant PLAY
 
-Pendant PLAY, dans le Book Motif ou Modulation, **SHIFT + pad du bloc actif ou
+Pendant PLAY, dans le Book Motif ou Modulation, **SHIFT maintenu + appui long (300 ms) sur le pad du bloc actif ou
 suivant** sélectionne cette occurrence pour la déplacer (pad rouge). Garder
-SHIFT et le pad enfoncés, puis appuyer sur **<< / >>** pour la déplacer d’une position à
+SHIFT, puis appuyer sur **<< / >>** pour la déplacer d’une position à
 chaque appui. Le déplacement s’arrête aux extrémités. Relâcher SHIFT termine
 la sélection. La lecture continue sans redémarrer le bloc en cours ; NEXT est
 recalculé selon le nouvel ordre. Si actif et suivant partagent le même pad,

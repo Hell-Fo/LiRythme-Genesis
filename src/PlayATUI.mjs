@@ -1,4 +1,4 @@
-import { AT_SLOTS, hasTargetEvents, SCALES, keyGroupFeedback } from "./ATTransaction.mjs";
+import { AT_SLOTS, hasTargetEvents, SCALES, keyGroupFeedback, readPlayMode } from "./ATTransaction.mjs";
 import { MUTATION_METHODS } from "./Mutation.mjs";
 import { GROOVE_METHODS } from "./GrooveMorph.mjs";
 
@@ -31,17 +31,19 @@ export function readATPanel(state) {
             selected: voice === undefined ? null : settings?.mode === "POLYRHYTHMIC" ? 1 : 0 };
     }
     const definition = AT_SLOTS[tx.slot];
-    const valueIndex = definition.id === "CYCLE" ? tx.valueIndex : hasTargetEvents(state.getMotif(tx.editingMotifId ?? state.currentMotifId), tx) ? tx.valueIndex : null;
+    const modes = definition.id === "PLAY_MODE" ? new Set((tx.instruments.size ? [...tx.instruments] : Array.from({ length: 16 }, (_, i) => i))
+        .map(voice => readPlayMode(state.getMotif(tx.editingMotifId), voice))) : null;
+    const valueIndex = modes ? modes.size === 1 ? definition.values.indexOf([...modes][0]) : null : definition.id === "CYCLE" ? tx.valueIndex : hasTargetEvents(state.getMotif(tx.editingMotifId ?? state.currentMotifId), tx) ? tx.valueIndex : null;
     const instruments = [...tx.instruments].sort((a, b) => a - b).map(id =>
         state.padConfiguration.voices[id]?.name || `VOICE ${String(id + 1).padStart(2, "0")}`).join("+");
     const steps = [...tx.steps].sort((a, b) => a - b).map(id => String(id + 1).padStart(2, "0")).join("·");
     const key = tx.slot === 4 ? keyGroupFeedback(state, tx, false) : null;
-    return { name: definition.id === "KEY_GROUP" ? "KEY GROUP" : definition.id, target: key ? `${instruments || "VOICES KEY GROUP"}${steps ? ` · ${steps}` : ""}` : instruments
+    return { name: definition.id === "KEY_GROUP" ? "KEY GROUP" : definition.id === "PLAY_MODE" ? "PLAY MODE" : definition.id, target: key ? `${instruments || "VOICES KEY GROUP"}${steps ? ` · ${steps}` : ""}` : instruments
         ? instruments + (steps ? ` · ${steps}` : "") : steps ? `STEPS ${steps}` : "MOTIF",
         motif: (tx.editingMotifId ?? state.currentMotifId) + 1,
         ...(tx.system === "MODULATION" ? { system: "MODULATION" } : {}),
         values: key ? definition.values.map(degree => degree >= key.count ? undefined : tx.system === "MODULATION"
-            ? `+${degree} degré${degree === 1 ? "" : "s"}` : `Degré ${degree + 1} · +${SCALES[state.keyGroup.scale][degree]}`) : definition.id === "ROTATION" ? ["<<  −1 STEP", ">>  +1 STEP"]
+            ? `+${degree} degré${degree === 1 ? "" : "s"}` : `Degré ${degree + 1} · +${SCALES[state.keyGroup.scale][degree]}`) : definition.id === "PLAY_MODE" ? ["Forward", "Ping-pong", "Backward"] : definition.id === "ROTATION" ? ["<<  −1 STEP", ">>  +1 STEP"]
             : definition.id === "COLOR" ? [valueIndex === null ? "—" : valueIndex === 0 ? "ON" : "OFF"] : definition.id === "SWING" ? definition.values.map(value => `${value} %`) : definition.id === "FLAM" ? definition.values.map(value => `${value} ms`) : definition.id === "CYCLE" ? definition.values.map(value => `1 / ${value}`) : definition.id === "RATCHET" ? definition.values.map(value => `${value}×`) : definition.values,
         selected: definition.id === "COLOR" ? (valueIndex === null ? null : 0) : valueIndex };
 }

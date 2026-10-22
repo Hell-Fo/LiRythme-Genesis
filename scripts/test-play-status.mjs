@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { readPlayStatus, initializePlayStatusUI } from "../src/PlayStatusUI.mjs";
-import { initializePlayFooterUI } from "../src/PlayFooterUI.mjs";
+import { initializePlayFooterUI, readPlayFooter } from "../src/PlayFooterUI.mjs";
 
 const source = file => fs.readFile(new URL(`../${file}`, import.meta.url), "utf8");
 const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text.replace('"./ATTransaction.mjs"', JSON.stringify(new URL("../src/ATTransaction.mjs", import.meta.url).href))).toString("base64")}`;
@@ -65,7 +65,7 @@ test("footer observes all independent active flags and COPY stages through the e
     const context = setup();
     const controller = { copyStage: null, deleteArmed: false };
     const keys = ["solo", "mute", "copy", "delete"];
-    const zones = ["zone1", "project", "states", "resolution"];
+    const zones = ["zone1", "project", "states", "book"];
     const elements = new Map(zones.map(key => [`play-footer-${key}`, { textContent: "" }]));
     const footer = initializePlayFooterUI({ state: context.state, controller,
         document: { getElementById: id => elements.get(id) } });
@@ -74,7 +74,7 @@ test("footer observes all independent active flags and COPY stages through the e
     assert.equal(value("states"), "");
     assert.equal(value("zone1"), "MOTIF 01");
     assert.equal(value("project"), "Non disponible");
-    assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
+    assert.equal(value("book"), "A/T Motifs");
     for (let mask = 0; mask < 16; mask++) {
         context.state.soloActive = Boolean(mask & 1);
         context.state.muteActive = Boolean(mask & 2);
@@ -84,7 +84,7 @@ test("footer observes all independent active flags and COPY stages through the e
         tick();
         assert.equal(value("states"), keys.filter((key, bit) => mask & (1 << bit)).map(key => key.toUpperCase()).join("  "));
         assert.equal(value("project"), "Non disponible");
-        assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
+        assert.equal(value("book"), "A/T Motifs");
         assert.equal(value("zone1"), "MOTIF 01");
         assert.deepEqual(structuredClone({ state: context.state, controller }), before);
     }
@@ -98,10 +98,10 @@ test("footer observes all independent active flags and COPY stages through the e
     assert.equal(value("states"), "");
     assert.equal(value("zone1"), "MOTIF 01");
     assert.equal(value("project"), "Non disponible");
-    assert.equal(value("resolution"), "32 STEPS \u00b7 1/16");
+    assert.equal(value("book"), "A/T Motifs");
     context.state.motifLength = 8; context.state.stepDivision = 8;
     context.state.soloActive = true; tick();
-    assert.equal(value("resolution"), "8 STEPS \u00b7 1/8");
+    assert.equal(value("book"), "A/T Motifs");
     assert.equal(value("project"), "Non disponible");
     assert.equal(value("states"), "SOLO");
     assert.equal(value("zone1"), "MOTIF 01");
@@ -205,4 +205,35 @@ test("PLAY has only informational markup and app wires rendering before transpor
     assert.match(app, /initializePlayStatusUI\(\{ state, clock, midiManager,\s*renderMotif: \(\) => \{ motifUI.render\(\); modulationUI.render\(\); cycleUI.forEach\(ui => ui.render\(\)\); \}, renderFooter:/);
     assert.match(app, /setTransportTransitionHandler\(\s*\(\{ from, to, origin, transportRevision \}\) => \{\s*playStatusUI.render\(\);/);
     assert.doesNotMatch(await source("src/PlayStatusUI.mjs"), /innerHTML|\.actions|\.setTempo\(|\.setSource\(|\.send\(/);
+});
+
+test("footer states include FREEZE and LOCK without repeating Modulation activation", () => {
+    const { state } = setup(), controller = { copyStage: "TARGET", deleteArmed: true };
+    state.soloActive = state.muteActive = state.freezeMode = state.lockMode = true;
+    state.modulationActive = state.modulationRequested = true;
+    assert.equal(readPlayFooter(state, controller).states, "SOLO  MUTE  FREEZE  LOCK  COPY  DELETE");
+    state.soloActive = state.muteActive = state.freezeMode = state.lockMode = false;
+    controller.copyStage = null; controller.deleteArmed = false;
+    state.modulationRequested = false;
+    assert.equal(readPlayFooter(state, controller).states, "");
+});
+
+test("footer fourth block follows Books and Settings independently of transport", () => {
+    const { state } = setup(), controller = {};
+    const elements = new Map(["zone1", "project", "states", "book"].map(key => [`play-footer-${key}`, { textContent: "" }]));
+    elements.set("settings-page", { hidden: true });
+    const footer = initializePlayFooterUI({ state, controller, document: { getElementById: id => elements.get(id) } });
+    const book = () => { footer.render(); return elements.get("play-footer-book").textContent; };
+    for (const transport of ["PLAY", "PAUSE", "STOP"]) {
+        state.transportState = transport;
+        state.currentTimeline = "MOTIF"; state.currentView = "MOTIF_LIBRARY";
+        assert.equal(book(), "Motif");
+        state.currentTimeline = "MODULATION"; assert.equal(book(), "Modulation");
+        state.currentView = "PLAY"; assert.equal(book(), "A/T Modulation");
+        state.currentTimeline = "MOTIF"; assert.equal(book(), "A/T Motifs");
+        state.atTransaction = { system: "MODULATION" };
+        assert.equal(book(), "A/T Modulation"); state.atTransaction = null;
+        elements.get("settings-page").hidden = false; assert.equal(book(), "Settings");
+        elements.get("settings-page").hidden = true; assert.equal(book(), "A/T Motifs");
+    }
 });

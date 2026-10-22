@@ -12,7 +12,7 @@ de lecture. La progression sera représentée par la future horloge graphique.
 | DURATION | `state.getMotifDuration()` : durée explicite, sinon PPCM des longueurs explicites de Voices, sinon 32. |
 | GRAPHIC CLOCK | Espace central réservé par CSS, sans graphique, animation ni calcul de phase. |
 | STEP | `state.getVoiceLength(id)` pour la Voice sélectionnée (32 si libre), sinon `state.getMotifDuration()`. Indépendant de la tête de lecture. |
-| PLAY MODE | Non disponible : aucun champ de mode exposé. Aucun état LINEAR inventé. |
+| PLAY MODE | Mode effectif du motif ou de la Voice selectionnee : FORWARD, PING-PONG ou BACKWARD. Voir [AT-PLAY-MODE.md](AT-PLAY-MODE.md). |
 | CHAIN | Section titrée vide en bas, sans données ou comportement. |
 
 La fondation polymétrique expose désormais les longueurs via les méthodes moteur.

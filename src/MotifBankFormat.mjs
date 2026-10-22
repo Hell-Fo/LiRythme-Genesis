@@ -1,6 +1,6 @@
 import { parseConfiguration, serializeConfiguration } from "./PadConfigurationFile.mjs";
 import { validCycles } from "./Cycle.mjs";
-import { AT_SLOTS, validKeyGroups, validKeySettings, defaultKeyGroup, validSwings, validRatchets, validFlams, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph, validEuclidean } from "./ATTransaction.mjs";
+import { AT_SLOTS, validKeyGroups, validKeySettings, defaultKeyGroup, validSwings, validRatchets, validFlams, validVelocities, validColors, validATDestinations, validExplicitAttributes, validGrooveMorph, validEuclidean, validPlayModes } from "./ATTransaction.mjs";
 
 export function validateMotifBank(value, { modulation = false } = {}) {
     const length = n => n === null || Number.isInteger(n) && n >= 1 && n <= 32;
@@ -17,6 +17,7 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             (m.cycles === undefined || validCycles(m.cycles)) &&
             (m.ratchets === undefined || validRatchets(m.ratchets)) &&
             (m.flams === undefined || validFlams(m.flams)) &&
+            (m.playModes === undefined || validPlayModes(m.playModes)) &&
             (m.keyGroups === undefined || validKeyGroups(m.keyGroups)) &&
             (m.euclidean === undefined || !modulation && !m.grooveMorph && validEuclidean(m.euclidean)) &&
             (m.grooveMorph === undefined || !modulation && validGrooveMorph(m.grooveMorph) && !m.events.some(row => row.some(Boolean))) &&
@@ -32,6 +33,7 @@ export function validateMotifBank(value, { modulation = false } = {}) {
             ...(m.velocities ? { velocities: m.velocities.map(row => row.slice()) } : {}),
             ...(m.colors ? { colors: m.colors.map(row => row.slice()) } : {}),
             ...(m.swings ? { swings: m.swings.map(row => row.slice()) } : {}),
+            ...(m.playModes ? { playModes: structuredClone(m.playModes) } : {}),
             ...(m.euclidean ? { euclidean: structuredClone(m.euclidean) } : {}),
             ...(m.grooveMorph ? { grooveMorph: structuredClone(m.grooveMorph) } : {}),
             ...(m.keyGroups ? { keyGroups: structuredClone(m.keyGroups) } : {}),

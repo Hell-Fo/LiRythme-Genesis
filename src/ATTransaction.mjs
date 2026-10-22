@@ -1,3 +1,5 @@
+import { playModeDefinition } from "./PlayMode.mjs";
+export { readPlayMode, traversalPeriod, traversalStep, validPlayModes } from "./PlayMode.mjs";
 export { hasCycles, readCycle, createCycles, validCycles, validVoiceCycle } from "./Cycle.mjs";
 import { EUCLIDEAN_SLOT, euclideanDefinition, euclideanPattern } from "./Euclidean.mjs";
 export { EUCLIDEAN_SLOT, validEuclidean, validEuclideanVoice, euclideanOnsets } from "./Euclidean.mjs";
@@ -175,7 +177,7 @@ export const AT_SLOTS = Object.freeze([
             }
         }
     }),
-    euclideanDefinition, ...Array(6).fill(null)
+    euclideanDefinition, playModeDefinition, ...Array(5).fill(null)
 ]);
 export const validVelocities = value => Array.isArray(value) && value.length === 16 &&
     value.every(row => Array.isArray(row) && row.length === 32 &&
@@ -194,6 +196,7 @@ export function visitPlaybackAttributes(state, motifId, instruments, visit) {
 }
 function applyAttribute(motif, target, definition, value, scope = target) {
     if (!definition.apply(motif, target, value, scope)) return false;
+    if (definition.id === "PLAY_MODE") return true;
     motif.atDestinations ??= {};
     const destinations = motif.atDestinations[definition.id] ??= createAttributeRows();
     for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
@@ -206,7 +209,7 @@ function applyAttribute(motif, target, definition, value, scope = target) {
     return true;
 }
 function clearAttributes(motif) {
-    for (const key of ["velocities", "colors", "swings", "ratchets", "flams", "cycles", "keyGroups", "atDestinations"]) delete motif[key];
+    for (const key of ["velocities", "colors", "swings", "ratchets", "flams", "cycles", "keyGroups", "playModes", "atDestinations"]) delete motif[key];
     if (motif.attributes !== undefined) motif.attributes = {};
 }
 
@@ -289,6 +292,7 @@ export class ATTransaction {
         const tx = this.state.atTransaction;
         if (tx?.kind === "MUTATION" || tx?.kind === "GROOVE_MORPH") return false;
         const limit = category === "instruments" ? 16 : category === "steps" ? 32 : 0;
+        if (tx?.slot === 10 && category === "steps") return false;
         if (!tx || !Number.isInteger(id) || id < 0 || id >= limit) return false;
         if (tx.kind === "EUCLIDEAN") {
             if (category !== "instruments") return false;
@@ -367,6 +371,7 @@ export class ATTransaction {
         }
         const definition = AT_SLOTS[tx.slot];
         if (definition.id === "KEY_GROUP") return this.applyKeyGroup({ degree: definition.values[index] });
+        if (definition.id !== "ROTATION" && index >= definition.values.length) return false;
         if (definition.id === "ROTATION") return false; // Controlled exclusively by << / >>.
         if (definition.id === "COLOR") {
             if (index !== 0) return false;

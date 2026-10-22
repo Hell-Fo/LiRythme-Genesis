@@ -1,3 +1,4 @@
+import { readPlayMode } from "./ATTransaction.mjs";
 // Pure projections of the engaged playback geometry, never of a future edit.
 export function readPlayCycle(root, system = "MOTIF") {
     const state = root.forSystem(system);
@@ -11,7 +12,7 @@ export function readPlayCycle(root, system = "MOTIF") {
     const voiceLength = selected ? cycle?.lengths[id] ?? state.getVoiceLength(id, motifId) : null;
     const recipe = selected ? running ? state.getPlaybackMotifForVoice(id) : state.getMotif(motifId) : null;
     const polyrythmic = recipe?.euclidean?.[id]?.mode === "POLYRHYTHMIC";
-    const voicePosition = selected ? polyrythmic ? position * voiceLength / length
+    const voicePosition = selected ? polyrythmic && readPlayMode(recipe, id) === "FORWARD" ? position * voiceLength / length
         : running ? state.getVoiceStep(id) : position % voiceLength : null;
     return {
         length, position, motifId,

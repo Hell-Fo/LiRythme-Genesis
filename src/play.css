@@ -94,7 +94,7 @@ body:has(#play-page:not([hidden])) :focus-visible { outline-color: #97cce8; }
 #play-motif { --accent: var(--motif); }
 #play-modulation { --accent: var(--modulation); }
 #play-page #play-motif-title, #play-page #play-modulation-title { color: var(--accent); }
-#play-page #play-selection-title { color: var(--secondary); font-size: 18px; }
+#play-page #play-selection-title { color: #f0cf80; }
 #play-page .play-motif, #play-page .play-modulation { position: relative; display: flex; flex-direction: column; }
 #play-page .play-motif > dl, #play-page .play-modulation > dl { margin: 0 0 16px; }
 #play-page #play-modulation-active { color: var(--secondary); }
@@ -134,6 +134,8 @@ body:has(#play-page:not([hidden])) :focus-visible { outline-color: #97cce8; }
 #play-page .chain-occurrence.is-playing { color: #191d20; background: var(--accent); border-radius: 3px; font-weight: 750; }
 #play-page .chain-occurrence.is-loop-master { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 5px; }
 #play-page .chain-occurrence.is-loop-master.is-playing { text-decoration-color: #191d20; }
+#play-page .chain-occurrence.is-moving { color: #f3a59f; background: transparent; font-weight: 900; }
+#play-page .chain-occurrence.is-loop-master.is-moving { text-decoration-color: #f3a59f; }
 #play-page .selection-name { font-size: 25px; }
 #play-page #play-selection { display: flex; flex-direction: column; min-width: 0; }
 #play-page #play-project-description {

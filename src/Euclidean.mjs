@@ -1,3 +1,4 @@
+import { readPlayMode, traversalPeriod, traversalStep } from "./PlayMode.mjs";
 export const EUCLIDEAN_SLOT = 9;
 export const validEuclideanVoice = v => v && Number.isInteger(v.resolution) && v.resolution >= 1 && v.resolution <= 32 &&
     Number.isInteger(v.hits) && v.hits >= 0 && v.hits <= v.resolution && ["POLYMETRIC", "POLYRHYTHMIC"].includes(v.mode);
@@ -17,11 +18,14 @@ export function euclideanOnsets(motif, voice, position, duration) {
     if (settings?.mode !== "POLYRHYTHMIC") return null;
     const resolution = motif.voiceLengths[voice] ?? settings.resolution;
     const phase = position % duration;
-    return motif.events[voice].flatMap((event, step) => {
-        const numerator = step * duration;
-        return event && step < resolution && numerator >= phase * resolution && numerator < (phase + 1) * resolution
-            ? [{ step, offset: numerator / resolution - phase, interval: duration / resolution }] : [];
-    });
+    const mode = readPlayMode(motif, voice), period = traversalPeriod(resolution, mode);
+    const onsets = [];
+    for (let tick = 0; tick < period; tick++) {
+        const step = traversalStep(tick, resolution, mode), numerator = tick * duration;
+        if (motif.events[voice][step] && numerator >= phase * period && numerator < (phase + 1) * period)
+            onsets.push({ step, offset: numerator / period - phase, interval: duration / period });
+    }
+    return onsets;
 }
 
 export const euclideanDefinition = Object.freeze({ id: "EUCLIDEAN", values: Object.freeze(["POLYMETRIC", "POLYRHYTHMIC"]),

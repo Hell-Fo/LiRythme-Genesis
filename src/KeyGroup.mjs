@@ -65,7 +65,7 @@ export function keyGroupFeedback(state, tx, cursorOnly = true) {
     for (let voice = 0; voice < 16; voice++) for (let step = 0; step < 32; step++) {
         if (state.padConfiguration.voices[voice]?.type !== "KEY GROUP" ||
             tx.instruments.size && !tx.instruments.has(voice) || tx.steps.size && !tx.steps.has(step) ||
-            cursorOnly && step !== state.playheadPosition % 32) continue;
+            cursorOnly && step !== state.getVoiceStep(voice)) continue;
         const cell = readKeyCell(motif, voice, step);
         if (motif.attributes !== undefined ? cell === null : !motif.events[voice][step]) continue;
         if (motif.attributes === undefined || cell?.degree !== undefined) degrees.add(cell?.degree ?? 0);
