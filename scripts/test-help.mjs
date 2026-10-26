@@ -7,7 +7,7 @@ const guide = await fs.readFile(new URL("../docs/GUIDE-UTILISATION.md", import.m
 const articles = parseGuide(guide);
 
 test("guide articles retain their chapter context and complete subsection content", () => {
-    assert.equal(articles.filter(article => !article.child).length, 15);
+    assert.equal(articles.filter(article => !article.child).length, 16);
     const loop = articles.find(article => article.title === "Loop Point");
     assert.match(loop.section, /Chain, NEXT et FOCUS/);
     assert.match(loop.body, /SHIFT/);

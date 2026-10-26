@@ -1,6 +1,6 @@
 # LiRythme — Guide d’utilisation
 
-**Genesis · Édition du 8 octobre 2026**  
+**Genesis · Édition du 23 octobre 2026**  
 Guide pratique pour jouer au Launchpad Mini, créer des rythmes et les faire évoluer.
 
 Ce guide décrit la version actuelle, incluant RATCHET et Mutation. Les numéros
@@ -22,6 +22,7 @@ cette page lorsqu’elle est cochée.
 - Pour organiser une performance : sections 8 à 10 — Chain, copies et SOLO/MUTE.
 - Pour comprendre le résultat : sections 11 et 12 — activation, cadrans et sauvegarde.
 - Pour expérimenter et dépanner : sections 13 à 15 — exercices, repères et suite du projet.
+- Pour retrouver un geste rapidement : section 16 — HotKeys et combinaisons.
 
 ## 1. Les trois idées musicales
 
@@ -646,3 +647,94 @@ attendant ce résultat.
 La palette Mutation est une première proposition musicale concrète. Les essais
 à l’oreille pourront faire évoluer les méthodes sans changer la gestuelle
 d’exploration, de confirmation et d’annulation.
+
+## 16. HotKeys et combinaisons
+
+Ce mémo rassemble les raccourcis et gestes du Launchpad. Les noms entre
+crochets désignent ses boutons physiques : **[Shift]+[Play] active ou désactive
+le mode Chain Motif**. La touche P du clavier de l’ordinateur ouvre la page PLAY.
+
+**+** signifie maintenir le premier bouton pendant l’appui sur le suivant ;
+**→** indique des appuis successifs. Un appui long de confirmation dure environ
+**300 ms**. Le rôle d’un bouton dépend du mode actif : terminer une transaction
+A/T ou Mutation pour retrouver les commandes ordinaires COPY et DELETE.
+
+### Clavier de l’ordinateur
+
+| HotKey | Action |
+| --- | --- |
+| [H] | Ouvre ou referme HELP |
+| [P] | Affiche la page PLAY, sans changer le transport |
+| [S] | Affiche SETTINGS, sans changer le transport |
+
+Ces raccourcis sont suspendus dans les champs de saisie et ne s’exécutent pas
+avec Ctrl, Alt ou la touche système maintenue.
+
+### Transport, affichage et longueurs
+
+| Geste Launchpad | Action / contexte |
+| --- | --- |
+| [Play], appui court | Démarre, met en pause ou reprend la lecture |
+| [Play], appui long | STOP et retour au départ |
+| [Mod] | Active ou désactive l’effet de Modulation ; en PLAY, attend sa prochaine frontière globale |
+| [Play] maintenu + [<<] / [>>] | Diminue / augmente le tempo en Clock Internal |
+| [<<] / [>>] en PLAY | Affiche la Timeline Motif / Modulation, hors commande prioritaire |
+| [<<] / [>>] en STOP/PAUSE | Parcourt les Steps ; en Chain sans FOCUS, parcourt les maillons |
+| [Shift]+[<<] en STOP/PAUSE, hors Chain | Affiche la Timeline Motif |
+| [Shift]+[>>] en STOP/PAUSE, hors Chain | Affiche la Timeline Modulation |
+| [Switch] (H de la colonne A–H) | Bascule entre le Book Motif et le Book A/T |
+| [Shift]+[Step], avec une Voice sélectionnée | Fixe sa longueur ; refaire le geste sur la même fin retire la longueur explicite |
+| [Shift]+[Step], sans Voice sélectionnée | Fixe la fin du Motif ; refaire le geste sur la même fin la retire |
+| [Shift]+[>>] en PLAY, hors Chain et hors transaction | DOUBLE : double la Voice sélectionnée ou le Motif sans sélection, selon les conditions de la section 9 |
+
+### Chain, FOCUS et Projets
+
+| Combinaison | Action / contexte |
+| --- | --- |
+| [Shift]+[Play] | Active ou désactive Chain Motif |
+| [Shift]+[Mod] | Active ou désactive Chain Modulation, indépendamment de Chain Motif |
+| Pad Motif du Book, appui long en Chain | Ajoute une occurrence ; en STOP/PAUSE, insère après l’occurrence sélectionnée |
+| [<<]+[>>] en Chain | Entre ou sort de FOCUS pour éditer VIEW indépendamment de PLAYING |
+| Pad Motif du Book, clic court en FOCUS | Choisit le Motif affiché pour l’édition |
+| [Shift]+pad de l’occurrence courante | Place ou retire le Loop Point ; en PLAY, utiliser un clic court sur le pad qui joue |
+| [Shift]+appui long sur le pad actif ou suivant, en PLAY | Sélectionne cette occurrence pour la déplacer ; garder Shift et utiliser [<<] / [>>], puis relâcher Shift pour terminer |
+| [Shift]+[Switch] | Ouvre ou ferme le Book Projets, hors transaction A/T ou Mutation |
+
+Le Loop Point et le déplacement se règlent dans le Book de Chain du système
+concerné. En mode Projet, les pads du Book sélectionnent les projets et les
+combinaisons de jeu avec Shift sont bloquées ; [Shift]+[Switch] permet d’en sortir.
+
+### Édition A/T, sélection et performance
+
+| Geste | Action / contexte |
+| --- | --- |
+| Pad A/T, clic court | Ouvre une transaction ; un nouveau clic sur le même pad annule |
+| Pad A/T, appui long pendant l’édition | Confirme la transaction |
+| [Shift]+pad A/T depuis la vue A/T | Consulte l’affichage ; parcourir les pads en gardant Shift, puis relâcher Shift pour éditer le dernier A/T choisi |
+| [Shift]+Voice(s) ou Step(s) pendant l’édition A/T | Ajoute ou retire des éléments de la sélection multiple |
+| [A] à [H] pendant l’édition | Choisit une valeur de l’A/T actif ; ces boutons ne servent plus à COPY, DELETE ou SWITCH |
+| [<<] / [>>] dans ROTATION | Décale les événements ciblés d’un Step dans leur cycle |
+| Voice KEY GROUP maintenue + [<<] / [>>] | Raccourcit / allonge son gate ; sauvegarde immédiate |
+| [Shift]+[Step] dans EUCLIDIEN | Fixe la résolution de la Voice sélectionnée |
+| [B] maintenu + [Step] dans EUCLIDIEN | Fixe la durée du Motif entier en mode polyrythmique |
+| [Mutation], clic court | Ouvre la transaction ; un nouveau clic annule |
+| [A] à [H] dans Mutation | Choisit une méthode de variation |
+| [Mutation], appui long | Confirme la variation |
+| [Solo] ou [Mute] maintenu + Instrument(s) | Modifie le groupe ; relâcher pour l’appliquer |
+| [Solo] ou [Mute], clic sans modifier le groupe | Active ou désactive le groupe mémorisé |
+| [Shift]+[Solo] | Commande le filtre visuel des Instruments sur la Timeline |
+
+### Copier et effacer
+
+| Séquence, hors transaction | Action |
+| --- | --- |
+| [Copy] (G) → source → destination | Copie une partition de Voice, un Motif ou un Projet selon le mode ; [Copy] à nouveau annule |
+| [Delete] (F) → cible | Arme l’effacement puis efface la cible ; [Delete] à nouveau annule l’armement |
+| [Delete] → [Play] | Vide Chain Motif si elle est active ; sinon efface le contenu du Motif courant de Motif |
+| [Delete] → [Mod] | Vide Chain Modulation si elle est active ; sinon efface le contenu du motif courant de Modulation |
+| [Delete] → clic court sur un pad du Book en Chain | Retire une seule occurrence |
+| [Delete] → appui long sur un pad du Book en Chain | Efface le motif de banque et retire ses occurrences |
+| [Delete] → [Solo] ou [Mute] | Efface le groupe mémorisé de la fonction |
+
+Les protections des cibles pendant la lecture restent applicables. Voir les
+sections 5, 8, 9, 10 et 12 pour les détails des transactions, Chains et Projets.

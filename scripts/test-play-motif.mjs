@@ -177,9 +177,12 @@ test("MOTIF layout preserves order, empty CHAIN and reserved clock without contr
         assert.ok(zone.includes(`id="play-modulation-${field}"`));
     assert.match(zone, /<h3 id="play-selection-title">SELECTION<\/h3><\/header>\s*<p id="play-selected"/);
     const footer = zone.match(/<footer id="play-footer-3"[^>]*>([\s\S]*?)<\/footer>/)[1];
-    assert.deepEqual([...footer.matchAll(/<span id="play-footer-(\w+)"[^>]*><\/span>/g)].map(match => match[1]),
-        ["zone1", "project", "states", "book"]);
-    assert.equal((footer.match(/<span\b/g) || []).length, 4);
+    const fields = ['play-footer-project', 'play-footer-description', 'play-footer-states', 'play-footer-book', 'play-key-root', 'play-key-scale', 'play-keyboard'];
+    for (let index = 0; index < fields.length; index++) {
+        assert.ok(footer.includes(`id="${fields[index]}"`));
+        if (index) assert.ok(footer.indexOf(`id="${fields[index - 1]}"`) < footer.indexOf(`id="${fields[index]}"`));
+    }
+    assert.doesNotMatch(footer, /play-footer-zone1/);
     assert.match(html, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
     assert.doesNotMatch(await source("src/PlayMotifUI.mjs"), /addEventListener|requestAnimationFrame|setInterval|setTimeout|innerHTML/);
     assert.match(await source("src/app.js"), /initializePlayMotifUI\(\{ state \}\)/);

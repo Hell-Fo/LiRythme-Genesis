@@ -1188,7 +1188,7 @@ test("THE GATE retains functional COPY/DELETE, blink phase and Footer Zone 3 in 
     controller.midiManager.send = (_, [status, note, color]) => leds.set(`${status}:${note}`, color);
     const fields = new Map();
     const footer = initializePlayFooterUI({ state, controller, document: {
-        getElementById(id) { if (!fields.has(id)) fields.set(id, { textContent: "" }); return fields.get(id); }
+        getElementById(id) { if (id === "play-keyboard") return null; if (!fields.has(id)) fields.set(id, { textContent: "" }); return fields.get(id); }
     } });
     const states = () => { footer.render(); return fields.get("play-footer-states").textContent; };
     const tap = (note, status = 0x90) => {
@@ -1320,7 +1320,7 @@ test("PHASE A: BOOK current slot, Footer Zone 1 and PLAY projections follow sele
     const leds = new Map(), elements = new Map();
     controller.midiManager.send = (_, [status, note, color]) => leds.set(`${status}:${note}`, color);
     const footer = initializePlayFooterUI({ state, controller, document: {
-        getElementById(id) { if (!elements.has(id)) elements.set(id, { textContent: "" }); return elements.get(id); }
+        getElementById(id) { if (id === "play-keyboard") return null; if (!elements.has(id)) elements.set(id, { textContent: "" }); return elements.get(id); }
     } });
     actions.setMotifChangeHandler(() => { controller.drawSelectedMotif(); footer.render(); });
     state.selectedInstrument = null;

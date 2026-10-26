@@ -53,13 +53,6 @@ export function initializePlayATUI({ state, document = globalThis.document }) {
     const panel = field("play-at"), title = field("play-selection-title"), normal = field("play-selected");
     let previous;
     function render() {
-        const description = field("play-project-description");
-        const book = (state.rootState ?? state).projectBook;
-        const text = book?.slots[book.active]?.description ?? "";
-        if (description) {
-            if (description.textContent !== text) description.textContent = text;
-            description.hidden = !state.projectMode || !text.trim();
-        }
         const status = readATPanel(state);
         const signature = JSON.stringify(status);
         // Do not mutate the aria-live region on every animation frame.

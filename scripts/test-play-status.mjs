@@ -218,7 +218,7 @@ test("footer states include FREEZE and LOCK without repeating Modulation activat
     assert.equal(readPlayFooter(state, controller).states, "");
 });
 
-test("footer fourth block follows Books and Settings independently of transport", () => {
+test("footer Book follows Books and Settings independently of transport", () => {
     const { state } = setup(), controller = {};
     const elements = new Map(["zone1", "project", "states", "book"].map(key => [`play-footer-${key}`, { textContent: "" }]));
     elements.set("settings-page", { hidden: true });
